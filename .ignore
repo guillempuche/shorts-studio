@@ -1,0 +1,3 @@
+# Keep vendored library source out of ripgrep searches of our own code.
+# Search it on purpose with: git grep -n <pattern> -- docs/vendors/<folder>
+docs/vendors/
