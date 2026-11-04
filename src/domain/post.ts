@@ -34,6 +34,9 @@ export const Pending = Schema.Struct({
 	provider: Schema.String,
 	model: Schema.String,
 	requestId: Schema.String,
+	/** Saved from the submit reply, so a re-run polls this request instead of paying again. */
+	statusUrl: Schema.String,
+	responseUrl: Schema.String,
 	inputHash: Schema.String,
 	seed: Schema.Int,
 	ledgerId: Schema.String,

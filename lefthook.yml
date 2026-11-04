@@ -5,7 +5,7 @@ pre-commit:
   commands:
     biome:
       glob: "*.{json,js,ts}"
-      run: pnpm exec biome check --write --no-errors-on-unmatched --max-diagnostics=none {staged_files}
+      run: node_modules/.bin/biome check --write --no-errors-on-unmatched --max-diagnostics=none {staged_files}
       stage_fixed: true
     skills:
       # .claude/skills holds copies of .agents/skills; refuse a commit where they differ.

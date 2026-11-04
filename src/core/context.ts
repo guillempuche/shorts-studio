@@ -55,8 +55,15 @@ export type Brand = typeof Brand.Type;
 
 export const DEFAULT_CAPS = { dailyUsd: 5, postUsd: 2 } as const;
 
+/** Provider base URLs; overridable so tests and local fakes stand in for the real services. */
+export interface Endpoints {
+	readonly fal: string;
+	readonly together: string;
+}
+
 export interface Context {
 	readonly paths: Paths;
+	readonly endpoints: Endpoints;
 	readonly config: Config;
 	readonly brand: Brand;
 	/** An API key from the environment, or on macOS from the Keychain. Never logged. */
@@ -117,6 +124,10 @@ export const makeContext = (env: NodeJS.ProcessEnv = process.env): Context => {
 	const paths = resolvePaths(env);
 	return {
 		paths,
+		endpoints: {
+			fal: env["SHORTS_FAL_URL"] || "https://queue.fal.run",
+			together: env["SHORTS_TOGETHER_URL"] || "https://api.together.ai",
+		},
 		config: readJson(join(paths.data, "config.json"), Config) ?? {},
 		brand: readJson(join(paths.data, "brand.json"), Brand) ?? {},
 		secret: async (name) => env[name] || (await keychain(SECRETS[name])),

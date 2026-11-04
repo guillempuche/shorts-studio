@@ -24,6 +24,10 @@ export const hashFile = (file: string): Promise<string> =>
 			.on("end", () => resolve(hash.digest("hex")));
 	});
 
+/** SHA-256 of bytes already in memory. */
+export const hashBytes = (bytes: Uint8Array): string =>
+	createHash("sha256").update(bytes).digest("hex");
+
 /** A stable hash of the values an output was made from. */
 export const hashOf = (...parts: ReadonlyArray<unknown>): string =>
 	createHash("sha256").update(JSON.stringify(parts)).digest("hex");

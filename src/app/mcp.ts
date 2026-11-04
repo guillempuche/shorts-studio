@@ -24,10 +24,16 @@ export const SERVER_INSTRUCTIONS = [
 export const mcpOperations = (operations: ReadonlyArray<Operation>): ReadonlyArray<Operation> =>
 	operations.filter((op) => op.surface === "cli-and-mcp");
 
+// MCP requires an object root for parameters; an empty Struct doesn't encode to one.
+const parametersOf = (op: Operation) =>
+	Object.keys(op.params).length === 0 && !op.spends
+		? Tool.EmptyParams
+		: (toolInputSchema(op) as Schema.Struct<Schema.Struct.Fields>);
+
 const toTool = (op: Operation) =>
 	Tool.make(op.name, {
 		description: op.description,
-		parameters: toolInputSchema(op) as Schema.Struct<Schema.Struct.Fields>,
+		parameters: parametersOf(op),
 		success: op.output,
 		failure: ShortsError,
 		failureMode: "return",
