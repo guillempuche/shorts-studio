@@ -1,0 +1,36 @@
+# Dependencies and tooling
+node_modules/
+.corepack/
+.direnv/
+coverage/
+
+# Secrets: names live in .env.example, values never in git
+.env
+.env.*
+!.env.example
+.mcp.json
+*.secret
+*.tokens
+**/credentials*
+*.p8
+client_secret*.json
+
+# Private material: anything third-party, copyrighted or personal
+**/private/
+*.local.md
+
+# Your content lives under SHORTS_POSTS_DIR / SHORTS_DATA_DIR, never in the repo.
+# Anchored with a leading slash so they match only at the top level.
+/posts/
+/data/
+
+# Agents
+.claude/settings.local.json
+.claude/worktrees/
+
+# OS and editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp

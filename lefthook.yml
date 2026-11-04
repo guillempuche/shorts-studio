@@ -1,0 +1,29 @@
+# Hooks are a convenience, not the gate: CI is the gate, and it can't be skipped with
+# --no-verify. Each command degrades rather than fails when its tool is absent, so a
+# contributor outside the Nix shell can still commit; CI tells them what was wrong.
+pre-commit:
+  commands:
+    biome:
+      glob: "*.{json,js,ts}"
+      run: pnpm exec biome check --write --no-errors-on-unmatched --max-diagnostics=none {staged_files}
+      stage_fixed: true
+    skills:
+      # .claude/skills holds copies of .agents/skills; refuse a commit where they differ.
+      glob: "{.agents,.claude}/skills/**"
+      run: node scripts/skills-sync.ts --check
+# Slower checks run before a push, not on every commit, where they would get skipped.
+pre-push:
+  parallel: true
+  commands:
+    check-types:
+      run: |
+        pnpm --version >/dev/null 2>&1 || { echo "↷ pnpm unavailable: skipping type check (CI will check)"; exit 0; }
+        pnpm check-types
+    secrets:
+      run: |
+        pnpm --version >/dev/null 2>&1 || { echo "↷ pnpm unavailable: skipping secret scan (CI will check)"; exit 0; }
+        pnpm lint-secrets
+    openspec:
+      run: |
+        command -v openspec >/dev/null 2>&1 || { echo "↷ openspec not installed: skipping (CI will check)"; exit 0; }
+        openspec validate --all --strict

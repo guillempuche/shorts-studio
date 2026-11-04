@@ -1,0 +1,19 @@
+# EditorConfig for consistent formatting across editors
+# https://editorconfig.org
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = tab
+insert_final_newline = true
+tab_width = 2
+
+[*.md]
+max_line_length = off
+trim_trailing_whitespace = false
+
+[*.json]
+indent_style = space
+indent_size = 2

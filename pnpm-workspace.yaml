@@ -1,0 +1,27 @@
+# Supply-chain policy, copied from content-studio. pnpm refuses any version published less
+# than seven days ago, transitive dependencies included: most npm compromises are found and
+# pulled within hours.
+#
+# An exception takes an exact `name@version`, never a bare package name, and says why it is
+# here and when it can go: the moment its version passes the window on its own
+# (`npm view <package> time`).
+minimumReleaseAge: 10080
+minimumReleaseAgeExclude:
+  # The project tracks the latest Effect on purpose (its CLI and MCP modules move fast).
+  # 4.1.2 was published 2026-11-02T04:27Z and passes the window on 2026-11-09; delete then.
+  - effect@4.1.2
+  # Released with effect 4.1.2 and must match it. Passes the window on 2026-11-09.
+  - "@effect/platform-node-shared@4.1.2"
+  # Required (^8.22.1) by @effect/platform-node-shared@4.1.2, so no older version satisfies
+  # it. Published 2026-10-31T09:58Z; passes the window on 2026-11-07; delete then.
+  - ws@8.22.1
+# Refuse a version whose publishing trust dropped against earlier releases of the package:
+# the shape of a stolen-token release.
+trustPolicy: no-downgrade
+trustPolicyIgnoreAfter: 259200
+# Transitive dependencies resolve from the registry only, never a git URL or a tarball.
+blockExoticSubdeps: true
+# Install scripts are opt-in: pnpm fails the install for any script not listed here.
+allowBuilds:
+  # Git hooks: its postinstall places the platform binary.
+  lefthook: true
