@@ -1,0 +1,45 @@
+schema: spec-driven
+
+context: |
+  shorts-studio is a CLI and MCP server; every operation exists on both, except decisions that
+  belong to the user (approving a script or a draft), which are CLI-only.
+  It must stay brand-neutral and portable (macOS, Linux; Windows best effort): no personal paths,
+  brand values or keys in the repository.
+  Media never enters git. Paid calls must be reserved in the spend ledger and resumable.
+
+rules:
+  proposal:
+    - State what is out of scope
+  specs:
+    - Keep each requirement under 500 characters
+
+# Project context (optional)
+# Add only constraints that should guide OpenSpec artifacts and workflows.
+# Include constraints an agent cannot infer by reading the code.
+# Keep general project documentation and discoverable codebase facts out.
+# Example:
+#   context: |
+#     Designs and tasks must cover Windows, macOS, and Linux
+#     Write all artifacts in Spanish
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always state what is out of scope
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing

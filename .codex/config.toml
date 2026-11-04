@@ -1,0 +1,23 @@
+# Codex settings for this repository. Codex reads this file only in a folder you've marked as
+# trusted. Setup steps are in docs/getting-started.md#codex.
+
+# The ai-standards plugin marketplace: test-bdd, commit and pr. Fetch it with
+# `codex plugin marketplace upgrade`; if that finds no Git marketplaces, run
+# `codex plugin marketplace add guillempuche/ai-standards` once.
+[marketplaces.ai-standards]
+source_type = "git"
+source = "https://github.com/guillempuche/ai-standards.git"
+
+[plugins."test-bdd@ai-standards"]
+enabled = true
+
+[plugins."commit@ai-standards"]
+enabled = true
+
+[plugins."pr@ai-standards"]
+enabled = true
+
+# shorts-studio's own MCP server, the same one Claude Code reads from .mcp.json.
+[mcp_servers.shorts-studio]
+command = "bin/shorts-studio"
+args = ["mcp", "serve"]

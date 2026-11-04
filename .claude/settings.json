@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(commit)",
+      "Skill(pr)",
+      "Skill(make-shorts)",
+      "Bash(bin/shorts-studio config show:*)",
+      "Bash(bin/shorts-studio post show:*)",
+      "Bash(bin/shorts-studio post list:*)",
+      "mcp__shorts-studio__config_show",
+      "mcp__shorts-studio__post_list",
+      "mcp__shorts-studio__post_show"
+    ],
+    "ask": [
+      "mcp__shorts-studio__image_generate",
+      "Bash(bin/shorts-studio image generate:*)",
+      "Bash(bin/shorts-studio script approve:*)"
+    ],
+    "deny": ["Read(**/.env)", "Read(**/.env.*)", "Read(**/client_secret*.json)", "Read(**/*.p8)"]
+  },
+  "claudeMdExcludes": ["**/docs/vendors/**"],
+  "enabledPlugins": {
+    "commit@ai-standards": true,
+    "pr@ai-standards": true,
+    "test-bdd@ai-standards": true
+  },
+  "extraKnownMarketplaces": {
+    "ai-standards": {
+      "source": {
+        "source": "github",
+        "repo": "guillempuche/ai-standards"
+      }
+    }
+  }
+}

@@ -1,0 +1,48 @@
+# post-manifest Specification
+
+## Purpose
+
+`post.json`, the single source of truth for one post: what has been made, from what, and what the user decided. Commands write it; its stage is computed from it.
+
+## Requirements
+
+### Requirement: The manifest SHALL be written only through commands, safely
+
+Commands SHALL change `post.json` under a per-post lock, re-reading it first and bumping `revision`, and SHALL write it through a temporary file and a rename. A lock held by a process that no longer exists SHALL be taken over.
+
+#### Scenario: Two commands on one post
+
+- **WHEN** a command holds a post's lock and another asks for it
+- **THEN** the second waits, and after the wait names the holder and its command
+
+#### Scenario: A lock left by a crash
+
+- **WHEN** the lock file names a process that isn't running
+- **THEN** the next command takes the lock
+
+### Requirement: A hand-edited manifest SHALL be validated on read
+
+Reading `post.json` SHALL decode it against its Schema and report every invalid field with its path, with a fix that says commands write this file.
+
+#### Scenario: Two wrong fields
+
+- **WHEN** `slug` is a number and `revision` a string
+- **THEN** reading fails naming both paths
+
+### Requirement: Generated outputs SHALL record what they were made from
+
+Each transcript, beat plan, image and draft SHALL store an `inputHash` of its inputs, including upstream outputs' hashes and the producing code's version, and SHALL count as up to date only while that hash matches.
+
+#### Scenario: A changed prompt
+
+- **WHEN** a beat's prompt changes after its image was made
+- **THEN** the next `image generate` makes that beat's image again and skips the others
+
+### Requirement: The stage SHALL be computed, not stored
+
+A post's stage SHALL be derived from the manifest: `idea`, `script-ready`, `script-approved`, `assets` or `draft`.
+
+#### Scenario: An edited approved script
+
+- **WHEN** the script changes after approval
+- **THEN** the post is back at `script-ready`
