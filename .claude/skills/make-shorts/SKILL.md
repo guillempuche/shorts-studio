@@ -19,9 +19,9 @@ The order of the steps. The rules behind them are in [AGENTS.md](../../../AGENTS
 1. `post create --post <slug> --title "…"`
 2. `source import --post <slug> --file <audio-or-video> --origin mine|others|ai --kind speech|music`. Use `others` for someone else's reel: it's a guide track, and the post must be published with the platform's in-app sound.
 3. `audio transcribe --post <slug>`. Add `--language es` only when the auto-detected language is wrong.
-4. `beat plan --post <slug>`, then read the beats.
-5. Write the story to `script.md` (hook in the first 3 s, the turn, the CTA) and one image prompt per beat to `prompts.json` (`[{"beat": 0, "prompt": "…"}]`): concrete subjects, one idea per image, the brand style is added for you.
-6. `script set --post <slug> --file script.md`, then `beat set --post <slug> --from prompts.json`.
+4. `beat plan --post <slug>`, then direct the beats with the [story-direction skill](../story-direction/SKILL.md): mark each beat's moment, re-cut with `--by-moment`, then write one image prompt per beat.
+5. Write the story to `script.md` (hook in the first 3 s, the turn, the CTA): concrete subjects, one idea per image, the brand style is added for you.
+6. `script set --post <slug> --file script.md --hook "3 to 7 words"`, then `beat set --post <slug> --from beats.json`.
 7. **Stop.** Ask the user to read the script and run `script approve --post <slug>` themselves. Never approve it.
 8. `image generate --post <slug> --dry-run`, show the estimate, then run it for real (the CLI needs `--yes`; over MCP the user's approval prompt is the gate).
 9. `draft render --post <slug>`, then give the user the path to `draft.mp4` for the evening check.

@@ -39,6 +39,8 @@ export const Config = Schema.Struct({
 			font: Schema.optionalKey(Schema.String),
 			fontsDir: Schema.optionalKey(Schema.String),
 			fontSize: Schema.optionalKey(Schema.Finite),
+			/** Colour each word as it's spoken; off by default (docs/research/captions.md). */
+			highlight: Schema.optionalKey(Schema.Boolean),
 		}),
 	),
 });

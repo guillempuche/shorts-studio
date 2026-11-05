@@ -52,7 +52,7 @@ Every command takes `--json`, and `post show --post <slug>` always tells you the
 
 ## Use it from an AI agent
 
-`shorts-studio mcp serve` is an MCP server over stdio with one tool per command (`post_show`, `image_generate`, …). Copy [.mcp.json.example](.mcp.json.example) to `.mcp.json` for Claude Code; Codex reads [.codex/config.toml](.codex/config.toml).
+`shorts-studio mcp serve` is an MCP server over stdio with one tool per command (`post_show`, `image_generate`, …). Claude Code reads [.mcp.json](.mcp.json) and Codex [.codex/config.toml](.codex/config.toml); both start the server from this checkout, and it reads API keys from your environment or Keychain.
 
 ## FAQ
 

@@ -22,10 +22,10 @@ export const IMAGE_MODELS: Readonly<Record<string, ImageModel>> = {
 export const DEFAULT_IMAGE_MODEL = "flux-schnell";
 
 /**
- * Larger than the 1080×1920 frame so the slow zoom never reaches an edge, in multiples of 16
- * as the model expects. About 15% over each side.
+ * Larger than the 1080×1920 frame so motion never reaches an edge or needs upscaling past the
+ * image (docs/research/motion.md), in multiples of 16 as the model expects: about 25% over.
  */
-export const IMAGE_SIZE = { width: 1248, height: 2224 } as const;
+export const IMAGE_SIZE = { width: 1344, height: 2400 } as const;
 
 export const estimateUsd = (model: ImageModel): number =>
 	((IMAGE_SIZE.width * IMAGE_SIZE.height) / 1_000_000) * model.usdPerMegapixel;

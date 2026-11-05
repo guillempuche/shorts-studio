@@ -8,7 +8,6 @@ coverage/
 .env
 .env.*
 !.env.example
-.mcp.json
 *.secret
 *.tokens
 **/credentials*

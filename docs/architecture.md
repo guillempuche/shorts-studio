@@ -41,7 +41,7 @@ Operations are plain functions of `(input, Context, RunMode)`. `Context` (`src/c
 
 ### Beats and prompts
 
-`beat plan` (`src/work/beats.ts`) groups words into phrases of 1.5–3 s, cutting at pauses of 0.25 s or sentence ends, and makes the beats contiguous from 0 to the end of the audio. Long silences are split; audio without words gets an even grid. The agent writes one image prompt per beat with `beat set`.
+`beat plan` (`src/work/beats.ts`) groups words into phrases of 1.5–3 s, cutting at pauses of 0.25 s or sentence ends, and makes the beats contiguous from 0 to the end of the audio. Long silences are split; audio without words gets an even grid. The agent then marks each beat's story moment with `beat set`, and `beat plan --by-moment` re-cuts each stretch of one moment to that moment's length range, before the agent writes one image prompt per beat. Moments, ranges and motions are defined in `src/domain/direction.ts`; the evidence is in [docs/research](research/README.md).
 
 ### Images
 
@@ -49,7 +49,7 @@ Operations are plain functions of `(input, Context, RunMode)`. `Context` (`src/c
 
 ### Draft
 
-`draft render` writes `captions.ass` and `captions.srt` from word groups of up to four words (`src/work/captions.ts`), then runs one ffmpeg command (`src/work/render.ts`): each image upscaled and slowly zoomed for exactly its beat's frames, concatenated, captions burned with libass, audio mapped, H.264 at 1080×1920 and 30 fps.
+`draft render` writes `captions.ass` and `captions.srt` from word groups within reading limits (`src/work/captions.ts`), plus the optional hook title, then runs one ffmpeg command (`src/work/render.ts`): each image upscaled and moved for exactly its beat's frames with the motion its moment calls for (or its override), concatenated, captions burned with libass, audio mapped, H.264 at 1080×1920 and 30 fps.
 
 ## Data model
 
@@ -90,7 +90,9 @@ Results go to stdout; progress and diagnostics to stderr. With `--json`, stdout 
 
 **Why save the provider's request before polling over retrying the call:** a retried submit can bill twice; polling the saved request after a crash can't.
 
-**Why images 15% larger than the frame:** the slow zoom would otherwise show the image's edges; ffmpeg's `zoompan` also jitters on frames it hasn't upscaled.
+**Why images 25% larger than the frame:** motion (zooms up to 15%, pans and drifts) would otherwise show the image's edges or upscale it; ffmpeg's `zoompan` also jitters on frames it hasn't upscaled.
+
+**Why motion by story moment over the same zoom on every beat:** constant movement wears out, and push-ins, pull-backs and holds each do a different job in a story ([docs/research/motion.md](research/motion.md)).
 
 **Why the script approval gate over approving drafts only:** rejecting a script costs nothing; rejecting a finished draft wastes every image in it.
 

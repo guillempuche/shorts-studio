@@ -17,7 +17,7 @@ yt-dlp is only needed to download reels (milestone 2). Install it yourself and k
 
 ### Claude Code
 
-- **MCP server:** copy `.mcp.json.example` to `.mcp.json`; Claude Code asks once to approve the project's server. Paid tools ask before every call (`.claude/settings.json`).
+- **MCP server:** `.mcp.json` registers it; Claude Code asks once to approve the project's server. It runs locally over stdio, so there is nothing to sign in to; keys come from your environment or Keychain. Paid tools ask before every call (`.claude/settings.json`).
 - **Skills:** `.claude/skills/` (a copy of `.agents/skills/`) loads with the project. `commit`, `pr` and `test-bdd` come from the `ai-standards` plugin marketplace that `.claude/settings.json` registers; trust the folder and they turn on.
 
 ### Codex

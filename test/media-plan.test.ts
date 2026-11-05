@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_MOTION } from "../src/domain/direction.ts";
 import type { Word } from "../src/domain/post.ts";
 import { planBeats } from "../src/work/beats.ts";
 import { groupCaptions, toAss, toSrt } from "../src/work/captions.ts";
@@ -91,7 +92,17 @@ describe("captions", () => {
 
 	it("should write ASS and SRT times that match the caption groups", () => {
 		// GIVEN one caption from 1.25 s to 2.5 s
-		const groups = [{ start: 1.25, end: 2.5, text: "hello {there}" }];
+		const groups = [
+			{
+				start: 1.25,
+				end: 2.5,
+				text: "hello {there}",
+				words: [
+					{ text: "hello", start: 1.25, end: 1.8 },
+					{ text: "{there}", start: 1.9, end: 2.4 },
+				],
+			},
+		];
 		// WHEN both files are written
 		const ass = toAss(groups);
 		const srt = toSrt(groups);
@@ -119,8 +130,8 @@ describe("render", () => {
 		// GIVEN two beats
 		const args = renderArgs(
 			[
-				{ start: 0, end: 2, image: "images/beat-00.jpg" },
-				{ start: 2, end: 4, image: "images/beat-01.jpg" },
+				{ start: 0, end: 2, image: "images/beat-00.jpg", motion: DEFAULT_MOTION },
+				{ start: 2, end: 4, image: "images/beat-01.jpg", motion: DEFAULT_MOTION },
 			],
 			"audio/audio.m4a",
 			"captions.ass",

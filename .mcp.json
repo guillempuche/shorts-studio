@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "shorts-studio": {
+      "command": "${CLAUDE_PROJECT_DIR:-.}/bin/shorts-studio",
+      "args": ["mcp", "serve"]
+    }
+  }
+}

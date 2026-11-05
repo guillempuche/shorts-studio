@@ -22,7 +22,7 @@ export const nextStep = (post: Post): string => {
 		return `audio transcribe --post ${s}`;
 	if (post.transcript !== undefined && post.beats === undefined) return `beat plan --post ${s}`;
 	if (post.beats?.items.some((b) => b.prompt === undefined)) {
-		return `beat set --post ${s} --from <beats.json>   (an image prompt for every beat)`;
+		return `beat set --post ${s} --from <beats.json>   (a story moment and an image prompt for every beat: see the story-direction skill)`;
 	}
 	if (post.script === undefined) return `script set --post ${s} --file script.md`;
 	if (post.script.approvedHash !== post.script.hash) {

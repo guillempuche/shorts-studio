@@ -8,6 +8,7 @@
  */
 
 import { Schema } from "effect";
+import { Moment, MotionType } from "./direction.ts";
 
 export const MANIFEST_VERSION = 1;
 export const SCHEMA_URL =
@@ -55,6 +56,10 @@ export const Beat = Schema.Struct({
 	start: Schema.Finite,
 	end: Schema.Finite,
 	text: Schema.String,
+	/** The story moment: sets the beat's length range and default motion (direction.ts). */
+	moment: Schema.optionalKey(Moment),
+	/** Replaces the moment's motion type. */
+	motion: Schema.optionalKey(MotionType),
 	prompt: Schema.optionalKey(Schema.String),
 	/** Bumped by `image generate --reroll` so the same prompt yields a new image. */
 	seed: Schema.optionalKey(Schema.Int),
@@ -83,6 +88,8 @@ export const Post = Schema.Struct({
 			/** The script hash that was approved; a later edit needs a new approval. */
 			approvedHash: Schema.optionalKey(Schema.String),
 			approvedAt: Schema.optionalKey(Schema.String),
+			/** On-screen title for the first seconds of the draft (3–7 words). */
+			hook: Schema.optionalKey(Schema.String),
 		}),
 	),
 	audio: Schema.optionalKey(

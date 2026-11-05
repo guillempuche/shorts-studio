@@ -14,8 +14,9 @@ import { fail, type ShortsError } from "../core/errors.ts";
 import { hashOf } from "../core/files.ts";
 import { defineOperation, p } from "../core/operation.ts";
 import { postDir, readPost, updatePost } from "../core/post-store.ts";
+import { Moment, MotionType } from "../domain/direction.ts";
 import type { Beat, Post, Word } from "../domain/post.ts";
-import { PLANNER_VERSION, planBeats } from "../work/beats.ts";
+import { PLANNER_VERSION, planBeats, planByMoment, sectionsOf } from "../work/beats.ts";
 import { TRANSCRIPT_FILE } from "./audio.ts";
 import { nextStep } from "./post.ts";
 
@@ -40,15 +41,18 @@ const BeatRow = Schema.Struct({
 	start: Schema.Finite,
 	end: Schema.Finite,
 	text: Schema.String,
+	moment: Schema.optionalKey(Moment),
+	motion: Schema.optionalKey(MotionType),
 	prompt: Schema.optionalKey(Schema.String),
 });
 
 export const beatPlan = defineOperation({
 	name: "beat_plan",
 	description:
-		"Split the audio into beats of about 1.5–3 s (at word and pause boundaries for speech; an even grid for music), each to get one image. Replanning drops existing prompts, so it needs --force when the plan has prompts.",
+		"Split the audio into beats of about 1.5–3 s (at word and pause boundaries for speech; an even grid for music), each to get one image. With byMoment, re-cut each stretch of one story moment to that moment's beat length (set moments first with beat set). Replanning drops existing prompts, so it needs --force when the plan has prompts.",
 	params: {
 		post: p.string("Post slug"),
+		byMoment: p.boolean("Re-cut each stretch of one story moment to that moment's beat length"),
 		force: p.boolean("Replace an existing plan even though its prompts will be lost"),
 	},
 	output: Schema.Struct({
@@ -75,6 +79,40 @@ export const beatPlan = defineOperation({
 				);
 			}
 			const existing = post.beats;
+			if (input.byMoment) {
+				if (existing === undefined || existing.items.every((b) => b.moment === undefined)) {
+					return yield* Effect.fail(
+						fail(
+							"not-found",
+							`${input.post} has no story moments to re-cut by.`,
+							`Plan beats, then mark moments: beat set --post ${input.post} --from moments.json`,
+						),
+					);
+				}
+				const sections = sectionsOf(existing.items);
+				const recutHash = hashOf("by-moment", inputHash, sections);
+				if (existing.inputHash === recutHash && !input.force) {
+					return { beats: existing.items.map(row), skipped: true, next: nextStep(post) };
+				}
+				if (existing.items.some((b) => b.prompt !== undefined) && !input.force) {
+					return yield* Effect.fail(
+						fail(
+							"stale",
+							`Re-cutting by moment drops the plan's ${existing.items.filter((b) => b.prompt).length} prompts.`,
+							`Run beat plan --post ${input.post} --by-moment --force, then set the prompts again.`,
+						),
+					);
+				}
+				const spans = planByMoment(
+					post.audio.kind === "music" ? [] : readWords(ctx, post),
+					sections,
+				);
+				const items: ReadonlyArray<Beat> = spans.map((span) => ({ ...span }));
+				const updated = yield* updatePost(ctx, input.post, "beat plan", (current) =>
+					Effect.succeed({ ...current, beats: { inputHash: recutHash, items } }),
+				);
+				return { beats: items.map(row), skipped: false, next: nextStep(updated) };
+			}
 			if (existing !== undefined && existing.inputHash === inputHash && !input.force) {
 				return { beats: existing.items.map(row), skipped: true, next: nextStep(post) };
 			}
@@ -102,7 +140,7 @@ export const beatPlan = defineOperation({
 			o.skipped ? "Beat plan is up to date." : `Planned ${o.beats.length} beats.`,
 			...o.beats.map(
 				(b) =>
-					`  ${String(b.index).padStart(2)}  ${b.start.toFixed(2).padStart(6)}–${b.end.toFixed(2).padEnd(6)} ${b.text}`,
+					`  ${String(b.index).padStart(2)}  ${b.start.toFixed(2).padStart(6)}–${b.end.toFixed(2).padEnd(6)} ${(b.moment ?? "").padEnd(10)} ${b.text}`,
 			),
 			`Next: ${o.next}`,
 		].join("\n"),
@@ -113,21 +151,24 @@ const row = (beat: Beat): typeof BeatRow.Type => ({
 	start: beat.start,
 	end: beat.end,
 	text: beat.text,
+	...(beat.moment !== undefined ? { moment: beat.moment } : {}),
+	...(beat.motion !== undefined ? { motion: beat.motion } : {}),
 	...(beat.prompt !== undefined ? { prompt: beat.prompt } : {}),
 });
 
 const BeatPatch = Schema.Struct({
 	beat: Schema.Int,
-	prompt: Schema.String,
+	prompt: Schema.optionalKey(Schema.String),
+	moment: Schema.optionalKey(Moment),
+	motion: Schema.optionalKey(MotionType),
 });
+type BeatPatch = typeof BeatPatch.Type;
 const BeatPatches = Schema.Union([
 	Schema.Array(BeatPatch),
 	Schema.Struct({ beats: Schema.Array(BeatPatch) }),
 ]);
 
-const readPatches = (
-	file: string,
-): Effect.Effect<ReadonlyArray<typeof BeatPatch.Type>, ShortsError> =>
+const readPatches = (file: string): Effect.Effect<ReadonlyArray<BeatPatch>, ShortsError> =>
 	existsSync(file)
 		? Schema.decodeUnknownEffect(Schema.fromJsonString(BeatPatches), { errors: "all" })(
 				readFileSync(file, "utf8"),
@@ -136,8 +177,8 @@ const readPatches = (
 				Effect.mapError((error) =>
 					fail(
 						"usage",
-						`${file} isn't a list of beat prompts:\n${error.message}`,
-						'Use [{"beat": 0, "prompt": "…"}, …] or {"beats": [...]}.',
+						`${file} isn't a list of beat settings:\n${error.message}`,
+						'Use [{"beat": 0, "moment": "hook", "prompt": "…"}, …] or {"beats": [...]}.',
 					),
 				),
 			)
@@ -148,12 +189,16 @@ const readPatches = (
 export const beatSet = defineOperation({
 	name: "beat_set",
 	description:
-		'Set image prompts: one beat with --beat and --prompt, or many from a JSON file (--from) holding [{"beat": 0, "prompt": "…"}, …]. A changed prompt makes that beat\'s image stale.',
+		'Set beats\' image prompts, story moments (hook, setup, tension, twist, vulnerable, payoff, cta) and motion overrides: one beat with --beat, or many from a JSON file (--from) holding [{"beat": 0, "moment": "hook", "prompt": "…"}, …]. A changed prompt makes that beat\'s image stale; a changed moment or motion, the draft.',
 	params: {
 		post: p.string("Post slug"),
-		beat: p.optional(p.int("Beat index (with --prompt)")),
+		beat: p.optional(p.int("Beat index (with --prompt, --moment or --motion)")),
 		prompt: p.optional(p.string("Image prompt for --beat")),
-		from: p.optional(p.string('JSON file: [{"beat": 0, "prompt": "…"}, …]')),
+		moment: p.optional(p.literals(Moment.literals, "Story moment for --beat")),
+		motion: p.optional(
+			p.literals(MotionType.literals, "Motion for --beat, replacing its moment's"),
+		),
+		from: p.optional(p.string('JSON file: [{"beat": 0, "moment": "hook", "prompt": "…"}, …]')),
 	},
 	output: Schema.Struct({
 		updated: Schema.Int,
@@ -168,13 +213,23 @@ export const beatSet = defineOperation({
 			const patches =
 				input.from !== undefined
 					? yield* readPatches(input.from)
-					: input.beat !== undefined && input.prompt !== undefined
-						? [{ beat: input.beat, prompt: input.prompt }]
+					: input.beat !== undefined &&
+							(input.prompt !== undefined ||
+								input.moment !== undefined ||
+								input.motion !== undefined)
+						? [
+								{
+									beat: input.beat,
+									...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
+									...(input.moment !== undefined ? { moment: input.moment } : {}),
+									...(input.motion !== undefined ? { motion: input.motion } : {}),
+								},
+							]
 						: yield* Effect.fail(
 								fail(
 									"usage",
 									"Nothing to set.",
-									'Pass --beat N --prompt "…", or --from prompts.json.',
+									'Pass --beat N with --prompt "…", --moment or --motion, or --from beats.json.',
 								),
 							);
 			const post = yield* updatePost(ctx, input.post, "beat set", (current) => {
@@ -198,16 +253,18 @@ export const beatSet = defineOperation({
 						),
 					);
 				}
-				const byBeat = new Map(patches.map((patch) => [patch.beat, patch.prompt.trim()]));
-				return Effect.succeed({
-					...current,
-					beats: {
-						...beats,
-						items: beats.items.map((b) =>
-							byBeat.has(b.index) ? { ...b, prompt: byBeat.get(b.index) as string } : b,
-						),
-					},
-				});
+				const byBeat = new Map(patches.map((patch) => [patch.beat, patch]));
+				const apply = (b: Beat): Beat => {
+					const patch = byBeat.get(b.index);
+					if (patch === undefined) return b;
+					return {
+						...b,
+						...(patch.prompt !== undefined ? { prompt: patch.prompt.trim() } : {}),
+						...(patch.moment !== undefined ? { moment: patch.moment } : {}),
+						...(patch.motion !== undefined ? { motion: patch.motion } : {}),
+					};
+				};
+				return Effect.succeed({ ...current, beats: { ...beats, items: beats.items.map(apply) } });
 			});
 			const missing = (post.beats?.items ?? [])
 				.filter((b) => b.prompt === undefined)
@@ -215,5 +272,5 @@ export const beatSet = defineOperation({
 			return { updated: patches.length, missing, next: nextStep(post) };
 		}),
 	render: (o) =>
-		`Set ${o.updated} prompt${o.updated === 1 ? "" : "s"}.${o.missing.length > 0 ? ` Still without a prompt: ${o.missing.join(", ")}.` : ""}\nNext: ${o.next}`,
+		`Updated ${o.updated} beat${o.updated === 1 ? "" : "s"}.${o.missing.length > 0 ? ` Still without a prompt: ${o.missing.join(", ")}.` : ""}\nNext: ${o.next}`,
 });

@@ -15,6 +15,7 @@ import { fail } from "../core/errors.ts";
 import { hashFile, hashOf, writeFileAtomic } from "../core/files.ts";
 import { defineOperation, p } from "../core/operation.ts";
 import { postDir, readPost, updatePost } from "../core/post-store.ts";
+import { motionOf } from "../domain/direction.ts";
 import type { Post, Word } from "../domain/post.ts";
 import { DEFAULT_CAPTION_STYLE, groupCaptions, toAss, toSrt } from "../work/captions.ts";
 import { probeDuration } from "../work/media.ts";
@@ -27,6 +28,7 @@ const DRAFT_FILE = "draft.mp4";
 const captionStyle = (ctx: Context) => ({
 	font: ctx.config.captions?.font ?? DEFAULT_CAPTION_STYLE.font,
 	fontSize: ctx.config.captions?.fontSize ?? DEFAULT_CAPTION_STYLE.fontSize,
+	highlight: ctx.config.captions?.highlight ?? DEFAULT_CAPTION_STYLE.highlight,
 });
 
 const draftInputHash = (ctx: Context, post: Post): string =>
@@ -34,7 +36,8 @@ const draftInputHash = (ctx: Context, post: Post): string =>
 		post.audio?.hash,
 		post.audio?.kind,
 		post.transcript?.hash,
-		(post.beats?.items ?? []).map((b) => [b.start, b.end, b.image?.hash]),
+		(post.beats?.items ?? []).map((b) => [b.start, b.end, b.image?.hash, b.moment, b.motion]),
+		post.script?.hook,
 		captionStyle(ctx),
 		RENDERER_VERSION,
 	);
@@ -42,7 +45,7 @@ const draftInputHash = (ctx: Context, post: Post): string =>
 export const draftRender = defineOperation({
 	name: "draft_render",
 	description:
-		"Render the post's draft video (1080×1920, 30 fps): each beat's image with a slow zoom, burned-in word captions, and the audio. Also writes captions.srt for CapCut. Skips when the draft is up to date.",
+		"Render the post's draft video (1080×1920, 30 fps): each beat's image moving as its story moment calls for, burned-in word captions and the optional hook title, and the audio. Also writes captions.srt for CapCut. Skips when the draft is up to date.",
 	params: {
 		post: p.string("Post slug"),
 		force: p.boolean("Render again even if the draft is up to date"),
@@ -97,12 +100,20 @@ export const draftRender = defineOperation({
 						).words
 					: [];
 			const groups = groupCaptions(words);
-			writeFileAtomic(join(dir, "captions.ass"), toAss(groups, captionStyle(ctx)));
+			writeFileAtomic(
+				join(dir, "captions.ass"),
+				toAss(groups, captionStyle(ctx), post.script?.hook),
+			);
 			writeFileAtomic(join(dir, "captions.srt"), toSrt(groups));
 
 			const tmp = "draft.rendering.mp4";
 			const args = renderArgs(
-				beats.map((b) => ({ start: b.start, end: b.end, image: b.image?.file ?? "" })),
+				beats.map((b) => ({
+					start: b.start,
+					end: b.end,
+					image: b.image?.file ?? "",
+					motion: motionOf(b.moment, b.motion),
+				})),
 				post.audio.file,
 				"captions.ass",
 				tmp,

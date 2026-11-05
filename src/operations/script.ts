@@ -24,6 +24,7 @@ export const scriptSet = defineOperation({
 	params: {
 		post: p.string("Post slug"),
 		file: p.string("Path to the Markdown script to save as the post's script.md"),
+		hook: p.optional(p.string("On-screen title for the draft's first seconds (3–7 words)")),
 	},
 	output: Schema.Struct({ file: Schema.String, approved: Schema.Boolean, next: Schema.String }),
 	surface: "cli-and-mcp",
@@ -50,6 +51,11 @@ export const scriptSet = defineOperation({
 					script: {
 						file: SCRIPT_FILE,
 						hash,
+						...(input.hook !== undefined
+							? { hook: input.hook }
+							: post.script?.hook !== undefined
+								? { hook: post.script.hook }
+								: {}),
 						...(post.script?.approvedHash !== undefined
 							? { approvedHash: post.script.approvedHash }
 							: {}),
