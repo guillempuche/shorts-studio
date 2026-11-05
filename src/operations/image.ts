@@ -126,7 +126,8 @@ const generateOne = (
 				fail(
 					"provider",
 					error instanceof Error ? error.message : String(error),
-					"Run the same command again: it resumes this request.",
+					// Not "the same command": with --reroll that would re-seed and pay again.
+					`Run image generate --post ${slug} --yes (without --reroll): it resumes this request.`,
 				),
 		).pipe(
 			// A request FAL reports as failed won't complete: forget it and free the reservation.
