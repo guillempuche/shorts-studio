@@ -48,7 +48,7 @@ bin/shorts-studio image generate --post 2026-11-04-morning-routine --yes
 bin/shorts-studio draft render --post 2026-11-04-morning-routine
 ```
 
-Every command takes `--json`, and `post show --post <slug>` always tells you the next command. The daily loop for an agent is in the [make-shorts skill](.agents/skills/make-shorts/SKILL.md).
+Then you review the draft (`post review`), hand it to CapCut (`capcut export`), and record the final video and where you published it. Every command takes `--json`, and `post show --post <slug>` always tells you the next command. The daily loop for an agent is in the [make-shorts skill](.agents/skills/make-shorts/SKILL.md).
 
 ## Use it from an AI agent
 

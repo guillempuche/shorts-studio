@@ -15,6 +15,8 @@ export const SCHEMA_URL =
 	"https://raw.githubusercontent.com/guillempuche/shorts-studio/main/schemas/post.schema.json";
 
 export const Origin = Schema.Literals(["mine", "others", "ai"]);
+export const Decision = Schema.Literals(["approve", "fix", "reject"]);
+export const Platform = Schema.Literals(["instagram", "tiktok", "youtube", "other"]);
 export const Kind = Schema.Literals(["speech", "music"]);
 
 const Generated = {
@@ -124,6 +126,28 @@ export const Post = Schema.Struct({
 		}),
 	),
 	aiGenerated: Schema.optionalKey(Schema.Boolean),
+	/** The user's evening check of the draft whose hash it names. */
+	review: Schema.optionalKey(
+		Schema.Struct({
+			decision: Decision,
+			at: Schema.String,
+			draftHash: Schema.String,
+			note: Schema.optionalKey(Schema.String),
+			beatNotes: Schema.optionalKey(
+				Schema.Array(Schema.Struct({ beat: Schema.Int, note: Schema.String })),
+			),
+			/** Beats the user chose to turn into AI video (milestone 3). */
+			animate: Schema.optionalKey(Schema.Array(Schema.Int)),
+		}),
+	),
+	/** The finished video, after polishing (usually in CapCut). */
+	final: Schema.optionalKey(
+		Schema.Struct({ file: Schema.String, hash: Schema.String, at: Schema.String }),
+	),
+	published: Schema.optionalKey(
+		Schema.Array(Schema.Struct({ platform: Platform, url: Schema.String, at: Schema.String })),
+	),
+	archivedAt: Schema.optionalKey(Schema.String),
 });
 export type Post = typeof Post.Type;
 
@@ -133,14 +157,33 @@ export const Stage = Schema.Literals([
 	"script-approved",
 	"assets",
 	"draft",
+	"needs-fix",
+	"rejected",
+	"approved",
+	"final",
+	"posted",
+	"archived",
 ]);
 export type Stage = typeof Stage.Type;
 
+/** The review counts only for the draft it was made on; a new render needs a new review. */
+export const currentReview = (post: Post) =>
+	post.review !== undefined && post.draft !== undefined && post.review.draftHash === post.draft.hash
+		? post.review
+		: undefined;
+
 /**
  * Where a post is, from what has been recorded. Freshness of each output is checked by the
- * operations that use it; here only presence and approval count, so `post list` stays cheap.
+ * operations that use it; here only presence and decisions count, so `post list` stays cheap.
  */
 export const stageOf = (post: Post): Stage => {
+	if (post.archivedAt !== undefined) return "archived";
+	if ((post.published?.length ?? 0) > 0) return "posted";
+	if (post.final !== undefined) return "final";
+	const review = currentReview(post);
+	if (review?.decision === "approve") return "approved";
+	if (review?.decision === "fix") return "needs-fix";
+	if (review?.decision === "reject") return "rejected";
 	if (post.draft !== undefined) return "draft";
 	const approved =
 		post.script?.approvedHash !== undefined && post.script.approvedHash === post.script.hash;

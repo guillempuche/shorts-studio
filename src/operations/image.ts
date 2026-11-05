@@ -233,7 +233,9 @@ export const imageGenerate = defineOperation({
 				);
 			}
 			const beats = post.beats?.items ?? [];
-			const missing = beats.filter((b) => b.prompt === undefined).map((b) => b.index);
+			const missing = beats
+				.filter((b) => b.prompt === undefined && b.image?.source !== "imported")
+				.map((b) => b.index);
 			if (beats.length === 0 || missing.length > 0) {
 				return yield* Effect.fail(
 					fail(
@@ -281,10 +283,12 @@ export const imageGenerate = defineOperation({
 					b,
 					input.reroll && mode.dryRun ? seed + 1 : seed,
 				);
+				// An imported image (Midjourney, a photo) stays unless the beat is rerolled.
+				const imported = b.image?.source === "imported" && !input.reroll;
 				const action =
 					b.pending?.inputHash === hash
 						? "resume"
-						: b.image?.inputHash === hash
+						: imported || b.image?.inputHash === hash
 							? "skip"
 							: "generate";
 				return {

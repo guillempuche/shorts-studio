@@ -34,7 +34,22 @@ export const nextStep = (post: Post): string => {
 		return `image generate --post ${s} --yes`;
 	}
 	if (post.draft === undefined) return `draft render --post ${s}`;
-	return `open ${join("<posts>", "mine", s, post.draft.file)} and review it (the user's evening check)`;
+	switch (stageOf(post)) {
+		case "draft":
+			return `watch ${join("<posts>", "mine", s, post.draft.file)}, then: post review --post ${s} --decision approve|fix|reject   (the user's evening check: CLI only)`;
+		case "needs-fix":
+			return `apply the review notes (beat set, image generate --beat N --reroll), then draft render --post ${s}`;
+		case "rejected":
+			return `post archive --post ${s}`;
+		case "approved":
+			return `capcut export --post ${s}, polish in CapCut desktop, then post finalize --post ${s} --file <final.mp4>`;
+		case "final":
+			return `post publish --post ${s} --platform instagram|tiktok|youtube --url <url>`;
+		case "posted":
+			return `post publish for another platform, or post archive --post ${s}`;
+		default:
+			return "nothing: the post is archived";
+	}
 };
 
 const PostSummary = Schema.Struct({
@@ -84,7 +99,8 @@ export const postCreate = defineOperation({
 
 export const postList = defineOperation({
 	name: "post_list",
-	description: "List posts, newest first, with their stage.",
+	description:
+		"List posts, newest first, with their stage. Archived posts show only with stage archived.",
 	params: {
 		stage: p.optional(p.literals(Stage.literals, "Only posts at this stage")),
 	},
@@ -95,9 +111,12 @@ export const postList = defineOperation({
 	run: (input, ctx) =>
 		Effect.forEach(listSlugs(ctx), (slug) => readPost(ctx, slug)).pipe(
 			Effect.map((posts) => ({
+				// Archived posts show only when asked for by stage.
 				posts: posts
 					.map(summary)
-					.filter((post) => input.stage === undefined || post.stage === input.stage),
+					.filter((post) =>
+						input.stage === undefined ? post.stage !== "archived" : post.stage === input.stage,
+					),
 			})),
 		),
 	render: (o) =>

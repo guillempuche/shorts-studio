@@ -41,3 +41,12 @@ With `--dry-run` (or without `--yes` on the CLI) a spending command SHALL report
 
 - **WHEN** `image generate` runs without `--yes`
 - **THEN** it prints the estimate and exits 3
+
+### Requirement: Spend SHALL be visible
+
+`budget show` SHALL report today's spend and each post's total against the daily and per-post caps, counting reservations still in flight at their estimate.
+
+#### Scenario: After generating images
+
+- **WHEN** a post's images were generated today
+- **THEN** today's total and the post's total include their cost

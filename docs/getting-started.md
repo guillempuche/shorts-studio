@@ -11,7 +11,15 @@ Setting up a machine to run shorts-studio, and connecting Claude Code or Codex t
 5. **Where your posts go:** by default under your OS's application-data folder; set `SHORTS_POSTS_DIR` (and `SHORTS_DATA_DIR`) in your shell profile to choose.
 6. **Check:** `shorts-studio config show` should end with `Ready.`
 
-yt-dlp is only needed to download reels (milestone 2). Install it yourself and keep it current: `pip install -U yt-dlp`.
+## Downloading saved reels
+
+`source download` uses your own yt-dlp; install it and keep it current (`pip install -U yt-dlp`: Instagram and TikTok break old versions). Instagram needs your login, which yt-dlp can read from your browser; that's opt-in, in `<data>/config.json`:
+
+```json
+{ "download": { "cookiesFromBrowser": "chrome" } }
+```
+
+Put the post URLs of a collection in `<posts>/saved/<name>/urls.txt`, one per line (in the browser, open the collection, scroll to the end, and copy the links from the developer console). Then `source download --collection <name>` and `source transcribe --collection <name>`. Folders from the old `ig-saved.sh` come in with `source adopt --from <folder> --collection <name>`. Downloading and reusing others' content is your responsibility under each platform's terms.
 
 ## Agents
 

@@ -55,3 +55,12 @@ Each beat MAY record a story moment (`hook`, `setup`, `tension`, `twist`, `vulne
 
 - **WHEN** `beat set` gives beat 0 the moment `hook`
 - **THEN** the manifest records it and the next `draft render` renders again
+
+### Requirement: A post SHALL record its life after the draft
+
+The manifest SHALL record the review, the final video, every platform it was published on (one record per platform) and when it was archived; the stage SHALL follow them: `needs-fix`, `rejected`, `approved`, `final`, `posted`, `archived`. Archived posts SHALL be listed only when asked for by stage.
+
+#### Scenario: Finalizing before approval
+
+- **WHEN** a final video is recorded for a draft that isn't approved
+- **THEN** it is refused with `needs-confirmation`

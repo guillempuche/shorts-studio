@@ -51,6 +51,14 @@ Operations are plain functions of `(input, Context, RunMode)`. `Context` (`src/c
 
 `draft render` writes `captions.ass` and `captions.srt` from word groups within reading limits (`src/work/captions.ts`), plus the optional hook title, then runs one ffmpeg command (`src/work/render.ts`): each image upscaled and moved for exactly its beat's frames with the motion its moment calls for (or its override), concatenated, captions burned with libass, audio mapped, H.264 at 1080×1920 and 30 fps.
 
+### After the draft
+
+The user's `post review` (CLI-only) records approve, fix (with per-beat notes) or reject against the draft's hash, so a re-render needs a new review. `capcut export` (`src/operations/capcut.ts`) renders one clip per beat with its motion and exactly its draft frames, plus the audio (left out when it's someone else's), `captions.srt` and a clean draft. `post finalize`, `post publish` and `post archive` record what happens after CapCut.
+
+### Saved collections
+
+`source download --collection` runs the user's own yt-dlp over `<posts>/saved/<name>/urls.txt` with a download archive and pauses; `source transcribe --collection` writes word-timed transcripts beside the audio. Both replace the old `ig-saved.sh`; `source adopt` brings its folders in.
+
 ## Data model
 
 ### post.json

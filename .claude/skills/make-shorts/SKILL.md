@@ -25,6 +25,8 @@ The order of the steps. The rules behind them are in [AGENTS.md](../../../AGENTS
 7. **Stop.** Ask the user to read the script and run `script approve --post <slug>` themselves. Never approve it.
 8. `image generate --post <slug> --dry-run`, show the estimate, then run it for real (the CLI needs `--yes`; over MCP the user's approval prompt is the gate).
 9. `draft render --post <slug>`, then give the user the path to `draft.mp4` for the evening check.
+10. **Stop.** The user reviews it with `post review --post <slug> --decision approve|fix|reject` (CLI only). For `fix`, read `post show` for their notes, change what they name (`beat set`, `image generate --beat N --reroll`, `image import`), and render again.
+11. Once approved: `capcut export --post <slug>`; the user polishes in CapCut desktop (steps in `capcut/README.txt`). Then `post finalize --post <slug> --file <final.mp4>`, `post publish` once per platform, and `post archive` when it's done.
 
 ## Flow B: AI voice from a brief
 
@@ -33,7 +35,8 @@ Voice generation arrives in milestone 3. Until then: write the script, have the 
 ## Five a day
 
 - Morning: take each post to step 7 and hand the user all five scripts at once.
-- After approval: steps 8–9 for each approved post.
+- After approval: steps 8–9 for each approved post; evening: steps 10–11.
+- `budget show` before generating, so the day's spend stays visible.
 - Re-running any step is safe: finished work is skipped, an interrupted image request resumes without paying again.
 
 ## When something fails

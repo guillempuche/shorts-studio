@@ -92,11 +92,13 @@ const NOUNS: Record<string, string> = {
 	config: "Settings, folders, keys and tool checks",
 	post: "Create, list and inspect posts",
 	script: "The story the user approves before anything is spent",
-	source: "Bring audio or video into a post",
+	source: "Bring audio into a post, and download or transcribe saved collections",
 	audio: "Transcribe audio with word timings",
 	beat: "Split the audio into beats and give each an image prompt",
 	image: "Generate or attach one image per beat",
 	draft: "Render the reviewable draft video",
+	capcut: "Hand an approved draft to CapCut desktop",
+	budget: "Spend against the daily and per-post caps",
 };
 
 /** Groups operations by noun: `post create`, `post list`, … */

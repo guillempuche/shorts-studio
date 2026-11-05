@@ -34,6 +34,12 @@ export const Config = Schema.Struct({
 			model: Schema.optionalKey(Schema.String),
 		}),
 	),
+	download: Schema.optionalKey(
+		Schema.Struct({
+			/** Browser whose session yt-dlp reuses (Instagram needs a login), e.g. chrome. Opt-in. */
+			cookiesFromBrowser: Schema.optionalKey(Schema.String),
+		}),
+	),
 	captions: Schema.optionalKey(
 		Schema.Struct({
 			font: Schema.optionalKey(Schema.String),

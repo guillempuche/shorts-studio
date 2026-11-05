@@ -75,10 +75,14 @@ export const motionExpressions = (
 export const framesOf = (beat: { readonly start: number; readonly end: number }): number =>
 	Math.max(1, Math.round(beat.end * FRAME.fps) - Math.round(beat.start * FRAME.fps));
 
+/**
+ * The ffmpeg arguments for a sequence of beats. Without `audio` the output is silent; without
+ * `captionsAss` nothing is burned in (the CapCut hand-off adds captions from SRT instead).
+ */
 export const renderArgs = (
 	beats: ReadonlyArray<RenderBeat>,
-	audio: string,
-	captionsAss: string,
+	audio: string | undefined,
+	captionsAss: string | undefined,
 	output: string,
 ): ReadonlyArray<string> => {
 	const inputs = beats.flatMap((beat) => [
@@ -101,21 +105,22 @@ export const renderArgs = (
 		);
 	});
 	const concat = `${beats.map((_, i) => `[v${i}]`).join("")}concat=n=${beats.length}:v=1:a=0[vcat]`;
-	const captions = `[vcat]subtitles=filename=${captionsAss}[vout]`;
+	const captions =
+		captionsAss === undefined
+			? "[vcat]null[vout]"
+			: `[vcat]subtitles=filename=${captionsAss}[vout]`;
 	return [
 		"-hide_banner",
 		"-loglevel",
 		"error",
 		"-y",
 		...inputs,
-		"-i",
-		audio,
+		...(audio === undefined ? [] : ["-i", audio]),
 		"-filter_complex",
 		[...zoomed, concat, captions].join(";"),
 		"-map",
 		"[vout]",
-		"-map",
-		`${beats.length}:a`,
+		...(audio === undefined ? ["-an"] : ["-map", `${beats.length}:a`]),
 		"-c:v",
 		"libx264",
 		"-preset",
@@ -126,11 +131,7 @@ export const renderArgs = (
 		"yuv420p",
 		"-r",
 		String(FRAME.fps),
-		"-c:a",
-		"aac",
-		"-b:a",
-		"192k",
-		"-shortest",
+		...(audio === undefined ? [] : ["-c:a", "aac", "-b:a", "192k", "-shortest"]),
 		"-movflags",
 		"+faststart",
 		output,

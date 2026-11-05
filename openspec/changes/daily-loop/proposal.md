@@ -8,6 +8,7 @@ Five posts a day only works if the agent can run the loop end to end from one sk
 
 - Polish the `make-shorts` skill from real days of use; publish it over MCP with the Skills extension.
 - An opt-in experiment writing CapCut project files (unofficial format, may break across versions).
+- `post copy set` (hook, description, hashtags, CTA per platform) and `cover render` (a cover frame with the hook).
 - An explicit `post sync-note` to mirror a post's stage into its Obsidian experiment note.
 
 Out of scope: hosting, multi-user accounts.
