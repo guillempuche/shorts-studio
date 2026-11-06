@@ -1,0 +1,28 @@
+name: Bug
+description: Something doesn't work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command you ran and what it printed (with --json if you can). Remove any keys or private paths.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: shorts-studio doctor
+      description: Its output (it shows which keys are set, never their values).
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version and install method
+      placeholder: v0.2.0, install.sh / nix / npm / from source

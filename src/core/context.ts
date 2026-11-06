@@ -12,7 +12,7 @@ import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { Schema } from "effect";
+import { Result, Schema } from "effect";
 import { type RunResult, runProcess } from "./process.ts";
 
 export interface Paths {
@@ -21,6 +21,10 @@ export interface Paths {
 	/** Post folders (`mine/`) and saved collections (`saved/`). */
 	readonly posts: string;
 }
+
+/** The FAL image models `image generate` knows; see `IMAGE_MODELS` in src/work/fal.ts. */
+export const ImageModelName = Schema.Literals(["flux-schnell", "flux-dev"]);
+export type ImageModelName = typeof ImageModelName.Type;
 
 export const Config = Schema.Struct({
 	caps: Schema.optionalKey(
@@ -31,7 +35,7 @@ export const Config = Schema.Struct({
 	),
 	image: Schema.optionalKey(
 		Schema.Struct({
-			model: Schema.optionalKey(Schema.String),
+			model: Schema.optionalKey(ImageModelName),
 		}),
 	),
 	download: Schema.optionalKey(
@@ -74,6 +78,8 @@ export interface Context {
 	readonly endpoints: Endpoints;
 	readonly config: Config;
 	readonly brand: Brand;
+	/** Why config.json or brand.json couldn't be read; their defaults apply and doctor reports it. */
+	readonly settingsIssues: ReadonlyArray<string>;
 	/** An API key from the environment, or on macOS from the Keychain. Never logged. */
 	readonly secret: (name: SecretName) => Promise<string | undefined>;
 	readonly fetch: typeof globalThis.fetch;
@@ -108,12 +114,19 @@ export const resolvePaths = (env: NodeJS.ProcessEnv): Paths => {
 	return { data, posts: env["SHORTS_POSTS_DIR"] || join(data, "posts") };
 };
 
-const readJson = <S extends Schema.Codec<unknown, unknown>>(
+/** A settings file's contents: undefined when absent, or when invalid (the reason goes to `issues`). */
+const readSettings = <S extends Schema.Codec<unknown, unknown>>(
 	file: string,
 	schema: S,
+	issues: Array<string>,
 ): S["Type"] | undefined => {
 	if (!existsSync(file)) return undefined;
-	return Schema.decodeUnknownSync(Schema.fromJsonString(schema))(readFileSync(file, "utf8"));
+	const result = Schema.decodeUnknownResult(Schema.fromJsonString(schema))(
+		readFileSync(file, "utf8"),
+	);
+	if (Result.isSuccess(result)) return result.success;
+	issues.push(`${file}: ${result.failure.message.replace(/\s*\n\s*/g, " ")}`);
+	return undefined;
 };
 
 /** Reads a key from the macOS Keychain with `security`; undefined anywhere else or if absent. */
@@ -130,14 +143,16 @@ const keychain = (service: string): Promise<string | undefined> =>
 
 export const makeContext = (env: NodeJS.ProcessEnv = process.env): Context => {
 	const paths = resolvePaths(env);
+	const settingsIssues: Array<string> = [];
 	return {
 		paths,
 		endpoints: {
 			fal: env["SHORTS_FAL_URL"] || "https://queue.fal.run",
 			together: env["SHORTS_TOGETHER_URL"] || "https://api.together.ai",
 		},
-		config: readJson(join(paths.data, "config.json"), Config) ?? {},
-		brand: readJson(join(paths.data, "brand.json"), Brand) ?? {},
+		config: readSettings(join(paths.data, "config.json"), Config, settingsIssues) ?? {},
+		brand: readSettings(join(paths.data, "brand.json"), Brand, settingsIssues) ?? {},
+		settingsIssues,
 		secret: async (name) => env[name] || (await keychain(SECRETS[name])),
 		fetch: globalThis.fetch,
 		run: runProcess,

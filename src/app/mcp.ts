@@ -58,7 +58,7 @@ export const mcpRegistrations = (operations: ReadonlyArray<Operation>, ctx: Cont
 	const handlers: Record<string, (params: Record<string, unknown>) => unknown> = {};
 	for (const op of ops) {
 		handlers[op.name] = (params) =>
-			op.run(normalize(op, params) as never, ctx, {
+			op.run(normalize(op, params), ctx, {
 				dryRun: params["dryRun"] === true,
 				confirmed: true,
 			});

@@ -115,7 +115,7 @@ describe("ledger", () => {
 		await Effect.runPromise(release(ctx, a));
 		await Effect.runPromise(settle(ctx, b, 0.3, "req-1"));
 		// THEN today's spend is $0.30
-		expect(spent(readLedger(ctx), { day: "2026-11-04" })).toBeCloseTo(0.3);
+		expect(spent(Effect.runSync(readLedger(ctx)), { day: "2026-11-04" })).toBeCloseTo(0.3);
 	});
 
 	it("should let only one of two simultaneous calls through when the cap fits one", async () => {

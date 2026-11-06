@@ -2,14 +2,19 @@
 
 Setting up a machine to run shorts-studio, and connecting Claude Code or Codex to it.
 
-## Machine
+## Install
 
-1. **Nix (recommended).** `nix develop` gives Node 24, an FFmpeg built with libass, and OpenSpec. Without Nix, install Node 24+ and an FFmpeg whose `ffmpeg -filters` lists `subtitles`; minimal builds (Homebrew's included) don't, and captions then fail.
-2. **direnv (optional)** enters the shell on `cd` and puts `bin/` on your PATH: `brew install direnv`, hook it into your shell, then `direnv allow` in the repository.
-3. **Dependencies:** `pnpm install` inside the shell. pnpm comes from corepack at the version `package.json` names; outside the Nix shell an older corepack may fail to start it.
-4. **Keys:** set `TOGETHER_API_KEY` and `FAL_KEY` (see [providers](providers.md#keys)).
-5. **Where your posts go:** by default under your OS's application-data folder; set `SHORTS_POSTS_DIR` (and `SHORTS_DATA_DIR`) in your shell profile to choose.
-6. **Check:** `shorts-studio config show` should end with `Ready.`
+Pick one from the [README's install table](../README.md#install). Nix is the easiest on macOS and Linux: it brings an FFmpeg built with libass, which captions need and many builds (Homebrew's included) lack. With the binary or npm, install FFmpeg yourself and check `ffmpeg -filters` lists `subtitles`.
+
+## From source
+
+`nix develop` gives Node 24, ffmpeg-full and OpenSpec (direnv with `.envrc` enters it on `cd` and puts `bin/` on your PATH); then `pnpm install` and use `bin/shorts-studio`. Outside the Nix shell an older corepack may fail to start pnpm 12.
+
+## Keys and folders
+
+1. Set `TOGETHER_API_KEY` and `FAL_KEY` (see [providers](providers.md#keys)).
+2. Posts go under your OS's application-data folder by default; set `SHORTS_POSTS_DIR` (and `SHORTS_DATA_DIR`) in your shell profile to choose.
+3. `shorts-studio doctor` should end with `Ready.`
 
 ## Downloading saved reels
 
@@ -25,7 +30,7 @@ Put the post URLs of a collection in `<posts>/saved/<name>/urls.txt`, one per li
 
 ### Claude Code
 
-- **MCP server:** `.mcp.json` registers it; Claude Code asks once to approve the project's server. It runs locally over stdio, so there is nothing to sign in to; keys come from your environment or Keychain. Paid tools ask before every call (`.claude/settings.json`).
+- **MCP server:** `.mcp.json` registers it (from a clone; with an installed binary, point your client at `shorts-studio mcp serve`); Claude Code asks once to approve the project's server. It runs locally over stdio, so there is nothing to sign in to; keys come from your environment or Keychain. Paid tools ask before every call (`.claude/settings.json`).
 - **Skills:** `.claude/skills/` (a copy of `.agents/skills/`) loads with the project. `commit`, `pr` and `test-bdd` come from the `ai-standards` plugin marketplace that `.claude/settings.json` registers; trust the folder and they turn on.
 
 ### Codex

@@ -1,48 +1,19 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import * as NodeChildProcessSpawner from "@effect/platform-node-shared/NodeChildProcessSpawner";
-import * as NodeFileSystem from "@effect/platform-node-shared/NodeFileSystem";
-import * as NodePath from "@effect/platform-node-shared/NodePath";
-import * as NodeStdio from "@effect/platform-node-shared/NodeStdio";
-import * as NodeTerminal from "@effect/platform-node-shared/NodeTerminal";
-import { Effect, Layer } from "effect";
+import { Effect } from "effect";
 import { McpProtocol, McpTest } from "effect/ai";
-import { Command } from "effect/cli";
-import { TestConsole } from "effect/testing";
 import { afterEach, describe, expect, it } from "vitest";
-import { nounCommands, root } from "../src/app/cli.ts";
+import { nounCommands } from "../src/app/cli.ts";
 import { mcpOperations, mcpRegistrations } from "../src/app/mcp.ts";
 import { commandPath } from "../src/core/operation.ts";
 import { operations } from "../src/operations/index.ts";
+import { runCli } from "./support/cli.ts";
 import { makeTestContext, type TestContext } from "./support/context.ts";
 
 let ctx: TestContext;
 afterEach(() => ctx?.cleanup());
 
-const platform = Layer.mergeAll(
-	NodeFileSystem.layer,
-	NodePath.layer,
-	NodeTerminal.layer,
-	NodeStdio.layer,
-	NodeChildProcessSpawner.layer.pipe(
-		Layer.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
-	),
-	TestConsole.layer,
-);
-
-/** Runs the CLI in-process and returns what it printed. */
-const cli = (argv: ReadonlyArray<string>) =>
-	Effect.runPromise(
-		Effect.gen(function* () {
-			const program = root.pipe(Command.withSubcommands(nounCommands(operations, ctx)));
-			const exit = yield* Effect.exit(Command.runWith(program, { version: "0.0.0" })([...argv]));
-			return {
-				exit,
-				out: (yield* TestConsole.logLines).join("\n"),
-				err: (yield* TestConsole.errorLines).join("\n"),
-			};
-		}).pipe(Effect.provide(platform)) as Effect.Effect<{ exit: unknown; out: string; err: string }>,
-	);
+const cli = (argv: ReadonlyArray<string>) => runCli(ctx, argv);
 
 describe("CLI", () => {
 	it("should print one JSON envelope with --json", async () => {

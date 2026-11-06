@@ -24,6 +24,7 @@ export const makeTestContext = (
 		endpoints: { fal: "http://127.0.0.1:1", together: "http://127.0.0.1:1" },
 		config: {},
 		brand: {},
+		settingsIssues: [],
 		secret: async (name) => secrets[name],
 		fetch: globalThis.fetch,
 		run: runProcess,

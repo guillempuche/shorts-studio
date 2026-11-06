@@ -22,8 +22,7 @@ export const budgetShow = defineOperation({
 	spends: false,
 	hints: { readonly: true, destructive: false, idempotent: true, openWorld: false },
 	run: (input, ctx) =>
-		Effect.sync(() => {
-			const entries = readLedger(ctx);
+		Effect.map(readLedger(ctx), (entries) => {
 			const day = ctx.now().toISOString().slice(0, 10);
 			const names = [...new Set(entries.map((e) => e.post))].filter(
 				(name) => input.post === undefined || name === input.post,

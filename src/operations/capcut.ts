@@ -12,12 +12,12 @@ import { copyFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Effect, Schema } from "effect";
 import { attempt } from "../core/attempt.ts";
-import type { Context } from "../core/context.ts";
 import { fail } from "../core/errors.ts";
 import { defineOperation, p } from "../core/operation.ts";
 import { postDir, readPost } from "../core/post-store.ts";
 import { motionOf } from "../domain/direction.ts";
 import { stageOf } from "../domain/post.ts";
+import { runFfmpeg } from "../work/media.ts";
 import { FRAME, framesOf, type RenderBeat, renderArgs } from "../work/render.ts";
 import { nextStep } from "./post.ts";
 
@@ -35,15 +35,6 @@ const instructions = (clips: number, muted: boolean): string =>
 		"4. draft-clean.mp4 is the whole draft without captions: put it on a track below to check timing, then remove it.",
 		"",
 	].join("\n");
-
-const run = async (ctx: Context, dir: string, args: ReadonlyArray<string>, signal: AbortSignal) => {
-	const result = await ctx.run("ffmpeg", args, { signal, cwd: dir });
-	if (result.code !== 0) {
-		throw new Error(
-			result.stderr.trim().split("\n").slice(-5).join("\n") || `ffmpeg exited with ${result.code}`,
-		);
-	}
-};
 
 export const capcutExport = defineOperation({
 	name: "capcut_export",
@@ -71,17 +62,17 @@ export const capcutExport = defineOperation({
 				post.draft === undefined ||
 				beats.some((b) => b.image === undefined)
 			) {
-				return yield* Effect.fail(
-					fail("not-found", `${input.post} has no complete draft to export.`, nextStep(post)),
+				return yield* fail(
+					"not-found",
+					`${input.post} has no complete draft to export.`,
+					nextStep(post),
 				);
 			}
 			if (stageOf(post) !== "approved") {
-				return yield* Effect.fail(
-					fail(
-						"needs-confirmation",
-						`${input.post} is at "${stageOf(post)}"; only an approved draft is exported.`,
-						`The user reviews it first: post review --post ${input.post} --decision approve`,
-					),
+				return yield* fail(
+					"needs-confirmation",
+					`${input.post} is at "${stageOf(post)}"; only an approved draft is exported.`,
+					`The user reviews it first: post review --post ${input.post} --decision approve`,
 				);
 			}
 			const muted = input.mute || post.audio.origin === "others";
@@ -108,9 +99,9 @@ export const capcutExport = defineOperation({
 							"clips",
 							`${String(i + 1).padStart(2, "0")}-beat-${String(i).padStart(2, "0")}.mp4`,
 						);
-						await run(ctx, dir, renderArgs([clip], undefined, undefined, name), signal);
+						await runFfmpeg(ctx, dir, renderArgs([clip], undefined, undefined, name), signal);
 					}
-					await run(
+					await runFfmpeg(
 						ctx,
 						dir,
 						renderArgs(
@@ -122,7 +113,7 @@ export const capcutExport = defineOperation({
 						signal,
 					);
 					if (!muted) {
-						await run(
+						await runFfmpeg(
 							ctx,
 							dir,
 							[
@@ -148,17 +139,15 @@ export const capcutExport = defineOperation({
 					),
 			);
 			// The captions from the last render, so the SRT matches what was approved.
-			yield* attempt(
-				async () => {
-					copyFileSync(join(dir, "captions.srt"), join(out, "captions.srt"));
-				},
-				() =>
+			yield* Effect.try({
+				try: () => copyFileSync(join(dir, "captions.srt"), join(out, "captions.srt")),
+				catch: () =>
 					fail(
 						"not-found",
 						"captions.srt is missing.",
 						`Render the draft again: draft render --post ${input.post} --force`,
 					),
-			);
+			});
 			writeFileSync(join(out, "README.txt"), instructions(beats.length, muted));
 			return { dir: out, clips: beats.length, muted, next: nextStep(post) };
 		}),

@@ -1,6 +1,6 @@
 /**
- * `draft render`: the reviewable draft video. Stills timed to the beats with a slow zoom,
- * word-timed captions burned in, and the post's audio, as a 1080×1920 MP4.
+ * `draft render`: the reviewable draft video. Stills timed to the beats, each moved the way its
+ * story moment calls for, word-timed captions burned in, and the post's audio, as a 1080×1920 MP4.
  *
  * Also writes `captions.srt` (what CapCut desktop imports) beside the ASS file ffmpeg burns in.
  * Skips when the draft is up to date with its audio, beats, images and captions.
@@ -12,13 +12,13 @@ import { Effect, Schema } from "effect";
 import { attempt } from "../core/attempt.ts";
 import type { Context } from "../core/context.ts";
 import { fail } from "../core/errors.ts";
-import { hashFile, hashOf, writeFileAtomic } from "../core/files.ts";
+import { fileHash, hashOf, writeFileAtomic } from "../core/files.ts";
 import { defineOperation, p } from "../core/operation.ts";
 import { postDir, readPost, updatePost } from "../core/post-store.ts";
 import { motionOf } from "../domain/direction.ts";
 import type { Post, Word } from "../domain/post.ts";
 import { DEFAULT_CAPTION_STYLE, groupCaptions, toAss, toSrt } from "../work/captions.ts";
-import { probeDuration } from "../work/media.ts";
+import { probeDuration, runFfmpeg } from "../work/media.ts";
 import { RENDERER_VERSION, renderArgs } from "../work/render.ts";
 import { TRANSCRIPT_FILE } from "./audio.ts";
 import { nextStep } from "./post.ts";
@@ -69,12 +69,10 @@ export const draftRender = defineOperation({
 				beats.length === 0 ||
 				beats.some((b) => b.image === undefined)
 			) {
-				return yield* Effect.fail(
-					fail(
-						"not-found",
-						`${input.post} isn't ready to render: it needs audio, beats and an image for every beat.`,
-						nextStep(post),
-					),
+				return yield* fail(
+					"not-found",
+					`${input.post} isn't ready to render: it needs audio, beats and an image for every beat.`,
+					nextStep(post),
 				);
 			}
 			const inputHash = draftInputHash(ctx, post);
@@ -121,12 +119,7 @@ export const draftRender = defineOperation({
 			ctx.log(`Rendering ${beats.length} beats, ${post.audio.durationSec.toFixed(1)} s…`);
 			const durationSec = yield* attempt(
 				async (signal) => {
-					const result = await ctx.run("ffmpeg", args, { signal, cwd: dir });
-					if (result.code !== 0)
-						throw new Error(
-							result.stderr.trim().split("\n").slice(-5).join("\n") ||
-								`ffmpeg exited with ${result.code}`,
-						);
+					await runFfmpeg(ctx, dir, args, signal);
 					renameSync(join(dir, tmp), join(dir, DRAFT_FILE));
 					return probeDuration(ctx, join(dir, DRAFT_FILE), signal);
 				},
@@ -138,7 +131,7 @@ export const draftRender = defineOperation({
 					),
 			).pipe(Effect.ensuring(Effect.sync(() => rmSync(join(dir, tmp), { force: true }))));
 
-			const hash = yield* Effect.promise(() => hashFile(join(dir, DRAFT_FILE)));
+			const hash = yield* fileHash(join(dir, DRAFT_FILE));
 			const updated = yield* updatePost(ctx, input.post, "draft render", (current) =>
 				Effect.succeed({
 					...current,

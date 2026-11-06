@@ -33,12 +33,10 @@ export const scriptSet = defineOperation({
 	run: (input, ctx) =>
 		Effect.gen(function* () {
 			if (!existsSync(input.file)) {
-				return yield* Effect.fail(
-					fail(
-						"not-found",
-						`No file at ${input.file}.`,
-						"Write the script to a file first, then pass its path.",
-					),
+				return yield* fail(
+					"not-found",
+					`No file at ${input.file}.`,
+					"Write the script to a file first, then pass its path.",
 				);
 			}
 			const text = readFileSync(input.file, "utf8");

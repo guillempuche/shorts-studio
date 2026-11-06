@@ -38,6 +38,21 @@ export const hasVideo = async (ctx: Context, file: string): Promise<boolean> => 
 	return result.stdout.includes("video");
 };
 
+/** Runs ffmpeg in `cwd`; a failure carries the last lines of its stderr, where the reason is. */
+export const runFfmpeg = async (
+	ctx: Context,
+	cwd: string,
+	args: ReadonlyArray<string>,
+	signal?: AbortSignal,
+): Promise<void> => {
+	const result = await ctx.run("ffmpeg", args, signal ? { signal, cwd } : { cwd });
+	if (result.code !== 0) {
+		throw new Error(
+			result.stderr.trim().split("\n").slice(-5).join("\n") || `ffmpeg exited with ${result.code}`,
+		);
+	}
+};
+
 /** Extracts or converts the audio track to AAC in an .m4a file: one format for every source. */
 export const toM4a = async (
 	ctx: Context,
@@ -119,7 +134,7 @@ export const checkFfprobe = async (ctx: Context): Promise<ToolCheck> => {
 			};
 };
 
-/** yt-dlp is optional (downloads come in milestone 2) and breaks when old, so its age matters. */
+/** yt-dlp is only needed for downloads, and breaks when old, so its age matters. */
 export const checkYtDlp = async (ctx: Context): Promise<ToolCheck> => {
 	const result = await tryRun(ctx, "yt-dlp", ["--version"]);
 	if (result?.code !== 0) {

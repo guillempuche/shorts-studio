@@ -52,7 +52,7 @@ export const BEAT_LENGTH: Readonly<Record<Moment, LengthRange>> = {
 	cta: { minSec: 2, maxSec: 6 },
 };
 
-/** Beats with no moment: the milestone-1 range. */
+/** Beats with no moment yet: the phrase length `beat plan` cuts to. */
 export const DEFAULT_BEAT_LENGTH: LengthRange = { minSec: 1.5, maxSec: 3 };
 
 // --- Motion (docs/research/motion.md) ------------------------------------------------------

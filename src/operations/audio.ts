@@ -4,12 +4,13 @@
  * when a video opens with music or a phrase in another language.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Effect, Schema } from "effect";
 import { attempt, failWith } from "../core/attempt.ts";
 import { fail } from "../core/errors.ts";
-import { hashFile, hashOf, writeFileAtomic } from "../core/files.ts";
+import { fileHash, hashOf, writeFileAtomic } from "../core/files.ts";
+import { requireSecret } from "../core/inputs.ts";
 import { defineOperation, p } from "../core/operation.ts";
 import { postDir, readPost, updatePost } from "../core/post-store.ts";
 import { TOGETHER_MODEL, transcribe } from "../work/together.ts";
@@ -42,55 +43,44 @@ export const audioTranscribe = defineOperation({
 	run: (input, ctx) =>
 		Effect.gen(function* () {
 			if (input.language !== undefined && !/^[a-z]{2}$/.test(input.language)) {
-				return yield* Effect.fail(
-					fail(
-						"usage",
-						`"${input.language}" isn't a two-letter language code.`,
-						"Use es, en, ca, fr… or leave it out to auto-detect.",
-					),
+				return yield* fail(
+					"usage",
+					`"${input.language}" isn't a two-letter language code.`,
+					"Use es, en, ca, fr… or leave it out to auto-detect.",
 				);
 			}
 			const post = yield* readPost(ctx, input.post);
 			if (post.audio === undefined) {
-				return yield* Effect.fail(
-					fail(
-						"not-found",
-						`${input.post} has no audio.`,
-						`Import it first: source import --post ${input.post} --file <audio> --origin mine --kind speech`,
-					),
+				return yield* fail(
+					"not-found",
+					`${input.post} has no audio.`,
+					`Import it first: source import --post ${input.post} --file <audio> --origin mine --kind speech`,
 				);
 			}
 			const dir = postDir(ctx, input.post);
+			const file = join(dir, TRANSCRIPT_FILE);
 			const inputHash = hashOf(post.audio.hash, PROVIDER, TOGETHER_MODEL, input.language ?? "auto");
-			if (!input.force && post.transcript?.inputHash === inputHash) {
+			if (!input.force && post.transcript?.inputHash === inputHash && existsSync(file)) {
+				const words = yield* Effect.try({
+					try: () => (JSON.parse(readFileSync(file, "utf8")) as { words: unknown[] }).words.length,
+					catch: failWith("failed", `${file} is damaged: run with --force to transcribe again.`),
+				});
 				return {
-					file: join(dir, TRANSCRIPT_FILE),
+					file,
 					language: post.transcript.language,
-					words: (
-						JSON.parse(readFileSync(join(dir, TRANSCRIPT_FILE), "utf8")) as { words: unknown[] }
-					).words.length,
+					words,
 					skipped: true,
 					next: nextStep(post),
 				};
 			}
-			const key = yield* Effect.promise(() => ctx.secret("TOGETHER_API_KEY"));
-			if (key === undefined) {
-				return yield* Effect.fail(
-					fail(
-						"missing-key",
-						"TOGETHER_API_KEY isn't set.",
-						"Set it in your environment or the Keychain: config show explains how.",
-					),
-				);
-			}
+			const key = yield* requireSecret(ctx, "TOGETHER_API_KEY");
 			ctx.log(`Transcribing ${post.audio.durationSec.toFixed(0)} s of audio…`);
 			const transcript = yield* attempt(
 				(signal) => transcribe(ctx, key, join(dir, post.audio?.file ?? ""), input.language, signal),
 				failWith("provider", "Check the key and your connection (VPN?), then run it again."),
 			);
-			const file = join(dir, TRANSCRIPT_FILE);
 			writeFileAtomic(file, `${JSON.stringify(transcript, null, 2)}\n`);
-			const hash = yield* Effect.promise(() => hashFile(file));
+			const hash = yield* fileHash(file);
 			const updated = yield* updatePost(ctx, input.post, "audio transcribe", (current) =>
 				Effect.succeed({
 					...current,

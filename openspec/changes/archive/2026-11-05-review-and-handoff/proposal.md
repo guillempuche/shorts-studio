@@ -14,4 +14,4 @@ Milestone 1 ends at a draft. The evening check, the move to CapCut and the posti
 - `image import` puts a Midjourney or other image on a beat; `image generate` keeps it unless rerolled.
 - `budget show`.
 
-Out of scope, moved to [packaging-and-tooling](../../packaging-and-tooling/proposal.md): `doctor`, `schema`, batching flags, the npm package, contributor docs, Codex rules, link-check CI. Covers and post copy (hook, CTA, hashtags) move to the daily-loop change.
+Out of scope, moved to [packaging-and-tooling](../2026-11-06-packaging-and-tooling/proposal.md): `doctor`, `schema`, batching flags, the npm package, contributor docs, Codex rules, link-check CI. Covers and post copy (hook, CTA, hashtags) move to the daily-loop change.

@@ -68,25 +68,21 @@ export const beatPlan = defineOperation({
 			const post = yield* readPost(ctx, input.post);
 			const inputHash = planInputHash(post);
 			if (post.audio === undefined || inputHash === undefined) {
-				return yield* Effect.fail(
-					fail(
-						"not-found",
-						`${input.post} needs ${post.audio === undefined ? "audio" : "a transcript"} before beats can be planned.`,
-						post.audio === undefined
-							? `source import --post ${input.post} …`
-							: `audio transcribe --post ${input.post}`,
-					),
+				return yield* fail(
+					"not-found",
+					`${input.post} needs ${post.audio === undefined ? "audio" : "a transcript"} before beats can be planned.`,
+					post.audio === undefined
+						? `source import --post ${input.post} …`
+						: `audio transcribe --post ${input.post}`,
 				);
 			}
 			const existing = post.beats;
 			if (input.byMoment) {
 				if (existing === undefined || existing.items.every((b) => b.moment === undefined)) {
-					return yield* Effect.fail(
-						fail(
-							"not-found",
-							`${input.post} has no story moments to re-cut by.`,
-							`Plan beats, then mark moments: beat set --post ${input.post} --from moments.json`,
-						),
+					return yield* fail(
+						"not-found",
+						`${input.post} has no story moments to re-cut by.`,
+						`Plan beats, then mark moments: beat set --post ${input.post} --from moments.json`,
 					);
 				}
 				const sections = sectionsOf(existing.items);
@@ -95,12 +91,10 @@ export const beatPlan = defineOperation({
 					return { beats: existing.items.map(row), skipped: true, next: nextStep(post) };
 				}
 				if (existing.items.some((b) => b.prompt !== undefined) && !input.force) {
-					return yield* Effect.fail(
-						fail(
-							"stale",
-							`Re-cutting by moment drops the plan's ${existing.items.filter((b) => b.prompt).length} prompts.`,
-							`Run beat plan --post ${input.post} --by-moment --force, then set the prompts again.`,
-						),
+					return yield* fail(
+						"stale",
+						`Re-cutting by moment drops the plan's ${existing.items.filter((b) => b.prompt).length} prompts.`,
+						`Run beat plan --post ${input.post} --by-moment --force, then set the prompts again.`,
 					);
 				}
 				const spans = planByMoment(
@@ -117,12 +111,10 @@ export const beatPlan = defineOperation({
 				return { beats: existing.items.map(row), skipped: true, next: nextStep(post) };
 			}
 			if (existing?.items.some((b) => b.prompt !== undefined) && !input.force) {
-				return yield* Effect.fail(
-					fail(
-						"stale",
-						`The beat plan is out of date (the audio or transcript changed), and replanning drops its ${existing.items.filter((b) => b.prompt).length} prompts.`,
-						`Run beat plan --post ${input.post} --force, then set the prompts again.`,
-					),
+				return yield* fail(
+					"stale",
+					`The beat plan is out of date (the audio or transcript changed), and replanning drops its ${existing.items.filter((b) => b.prompt).length} prompts.`,
+					`Run beat plan --post ${input.post} --force, then set the prompts again.`,
 				);
 			}
 			const spans = planBeats(
@@ -225,12 +217,10 @@ export const beatSet = defineOperation({
 									...(input.motion !== undefined ? { motion: input.motion } : {}),
 								},
 							]
-						: yield* Effect.fail(
-								fail(
-									"usage",
-									"Nothing to set.",
-									'Pass --beat N with --prompt "…", --moment or --motion, or --from beats.json.',
-								),
+						: yield* fail(
+								"usage",
+								"Nothing to set.",
+								'Pass --beat N with --prompt "…", --moment or --motion, or --from beats.json.',
 							);
 			const post = yield* updatePost(ctx, input.post, "beat set", (current) => {
 				const beats = current.beats;

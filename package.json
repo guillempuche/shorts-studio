@@ -4,6 +4,10 @@
   "description": "Turn audio into vertical short videos with AI images, word-timed captions and FFmpeg: a CLI and MCP server for Reels, TikTok and YouTube Shorts.",
   "license": "Apache-2.0",
   "author": "Guillem Puche",
+  "homepage": "https://github.com/guillempuche/shorts-studio#readme",
+  "bugs": {
+    "url": "https://github.com/guillempuche/shorts-studio/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/guillempuche/shorts-studio.git"
@@ -20,8 +24,16 @@
     "effect-ts",
     "cli"
   ],
-  "private": true,
   "type": "module",
+  "bin": {
+    "shorts-studio": "dist/main.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
   "packageManager": "pnpm@12.15.0",
   "engines": {
     "node": ">=24"
@@ -35,7 +47,12 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "lint-secrets": "secretlint \"**/*\"",
     "skills:sync": "node scripts/skills-sync.ts",
-    "prepare": "lefthook install"
+    "prepare": "lefthook install",
+    "build": "tsc -p tsconfig.build.json",
+    "build:binary": "bun build src/main.ts --compile --minify --sourcemap --outfile dist-bin/shorts-studio",
+    "prepack": "pnpm build",
+    "check-links": "node scripts/check-links.ts",
+    "schemas": "node scripts/schemas.ts && biome format --write schemas"
   },
   "dependencies": {
     "@effect/platform-node-shared": "4.1.2",

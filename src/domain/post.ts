@@ -136,7 +136,7 @@ export const Post = Schema.Struct({
 			beatNotes: Schema.optionalKey(
 				Schema.Array(Schema.Struct({ beat: Schema.Int, note: Schema.String })),
 			),
-			/** Beats the user chose to turn into AI video (milestone 3). */
+			/** Beats the user chose to turn into AI video; no command generates video yet. */
 			animate: Schema.optionalKey(Schema.Array(Schema.Int)),
 		}),
 	),

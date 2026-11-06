@@ -14,6 +14,9 @@
         pkgs = nixpkgs.legacyPackages.${system};
       in
       {
+        # `nix run github:guillempuche/shorts-studio -- config show`, or `nix profile install`.
+        packages.default = pkgs.callPackage ./nix/package.nix { };
+
         devShells.default = pkgs.mkShell {
           buildInputs = [
             pkgs.nodejs_24

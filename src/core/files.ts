@@ -13,6 +13,8 @@ import {
 	writeFileSync,
 	writeSync,
 } from "node:fs";
+import { Effect } from "effect";
+import { failWith } from "./attempt.ts";
 
 /** SHA-256 of a file's bytes, streamed so a long audio file isn't held in memory. */
 export const hashFile = (file: string): Promise<string> =>
@@ -22,6 +24,13 @@ export const hashFile = (file: string): Promise<string> =>
 			.on("data", (chunk) => hash.update(chunk))
 			.on("error", reject)
 			.on("end", () => resolve(hash.digest("hex")));
+	});
+
+/** `hashFile` as an Effect, failing with a fix instead of a defect. */
+export const fileHash = (file: string) =>
+	Effect.tryPromise({
+		try: () => hashFile(file),
+		catch: failWith("failed", `Check that ${file} exists and is readable, then run it again.`),
 	});
 
 /** SHA-256 of bytes already in memory. */

@@ -6,7 +6,7 @@
  * instead of paying for a new one.
  */
 
-import type { Context } from "../core/context.ts";
+import type { Context, ImageModelName } from "../core/context.ts";
 
 export interface ImageModel {
 	readonly endpoint: string;
@@ -15,11 +15,11 @@ export interface ImageModel {
 	readonly steps: number;
 }
 
-export const IMAGE_MODELS: Readonly<Record<string, ImageModel>> = {
+export const IMAGE_MODELS: Readonly<Record<ImageModelName, ImageModel>> = {
 	"flux-schnell": { endpoint: "fal-ai/flux/schnell", usdPerMegapixel: 0.003, steps: 4 },
 	"flux-dev": { endpoint: "fal-ai/flux/dev", usdPerMegapixel: 0.025, steps: 28 },
 };
-export const DEFAULT_IMAGE_MODEL = "flux-schnell";
+export const DEFAULT_IMAGE_MODEL: ImageModelName = "flux-schnell";
 
 /**
  * Larger than the 1080×1920 frame so motion never reaches an edge or needs upscaling past the
@@ -36,7 +36,14 @@ export interface Submitted {
 	readonly responseUrl: string;
 }
 
-export class FalError extends Error {}
+export class FalError extends Error {
+	/** FAL ended the request (failed, cancelled), so polling it again never succeeds. */
+	readonly terminal: boolean;
+	constructor(message: string, terminal = false) {
+		super(message);
+		this.terminal = terminal;
+	}
+}
 
 const headers = (key: string) => ({
 	Authorization: `Key ${key}`,
@@ -98,7 +105,10 @@ export const collectImage = async (
 		)) as { status?: string };
 		if (status.status === "COMPLETED") break;
 		if (status.status !== "IN_QUEUE" && status.status !== "IN_PROGRESS") {
-			throw new FalError(`FAL request ${request.requestId} ended as ${status.status ?? "unknown"}`);
+			throw new FalError(
+				`FAL request ${request.requestId} ended as ${status.status ?? "unknown"}`,
+				true,
+			);
 		}
 		await new Promise((resolve) => setTimeout(resolve, pollMs));
 	}

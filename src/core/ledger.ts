@@ -4,39 +4,53 @@
  * Every paid call reserves its estimated cost before it is submitted, under one lock shared by
  * every process, so five posts generating at once can't all pass the daily cap. The reservation
  * is settled once the result arrives, or released if the call failed before anything was billed.
- * Providers here don't report the actual charge, so a settled amount is the estimate unless a
- * provider says otherwise.
+ * Providers here don't report the actual charge, so a settled amount is the estimate.
  */
 
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { type Context, DEFAULT_CAPS } from "./context.ts";
 import { fail, type ShortsError } from "./errors.ts";
-import { acquireLock } from "./files.ts";
+import { withLock } from "./lock.ts";
 
-export interface LedgerEntry {
-	readonly id: string;
-	readonly at: string;
-	readonly type: "reserve" | "settle" | "release";
-	readonly provider: string;
-	readonly model: string;
-	readonly post: string;
-	readonly usd: number;
-	readonly requestId?: string;
-	readonly note?: string;
-}
+export const LedgerEntry = Schema.Struct({
+	id: Schema.String,
+	at: Schema.String,
+	type: Schema.Literals(["reserve", "settle", "release"]),
+	provider: Schema.String,
+	model: Schema.String,
+	post: Schema.String,
+	usd: Schema.Finite,
+	requestId: Schema.optionalKey(Schema.String),
+	note: Schema.optionalKey(Schema.String),
+});
+export type LedgerEntry = typeof LedgerEntry.Type;
 
 const ledgerFile = (ctx: Context): string => join(ctx.paths.data, "ledger.jsonl");
+const decodeEntry = Schema.decodeUnknownEffect(Schema.fromJsonString(LedgerEntry));
 
-export const readLedger = (ctx: Context): ReadonlyArray<LedgerEntry> => {
+/** Every entry; a corrupt line fails loudly, since caps can't be trusted past it. */
+export const readLedger = (
+	ctx: Context,
+): Effect.Effect<ReadonlyArray<LedgerEntry>, ShortsError> => {
 	const file = ledgerFile(ctx);
-	if (!existsSync(file)) return [];
-	return readFileSync(file, "utf8")
+	if (!existsSync(file)) return Effect.succeed([]);
+	const lines = readFileSync(file, "utf8")
 		.split("\n")
-		.filter((line) => line.trim() !== "")
-		.map((line) => JSON.parse(line) as LedgerEntry);
+		.filter((line) => line.trim() !== "");
+	return Effect.forEach(lines, (line, i) =>
+		decodeEntry(line).pipe(
+			Effect.mapError((error) =>
+				fail(
+					"failed",
+					`${file} line ${i + 1} is corrupt:\n${error.message}`,
+					"Fix or remove that line; commands only append to this file.",
+				),
+			),
+		),
+	);
 };
 
 /** Current amount per reservation: its settlement if settled, 0 if released. */
@@ -62,34 +76,24 @@ export const spent = (
 		.reduce((sum, { usd }) => sum + usd, 0);
 
 const append = (ctx: Context, entry: LedgerEntry): void => {
-	mkdirSync(ctx.paths.data, { recursive: true });
 	appendFileSync(ledgerFile(ctx), `${JSON.stringify(entry)}\n`);
 };
 
-const withLedgerLock = <A>(
-	ctx: Context,
-	f: () => Effect.Effect<A, ShortsError>,
-): Effect.Effect<A, ShortsError> =>
-	Effect.acquireUseRelease(
-		Effect.promise(() => {
-			mkdirSync(ctx.paths.data, { recursive: true });
-			return acquireLock(join(ctx.paths.data, "ledger.lock"), "ledger");
-		}).pipe(
-			Effect.flatMap((lock) =>
-				"heldBy" in lock
-					? Effect.fail(
-							fail(
-								"conflict",
-								"The spend ledger is busy.",
-								"Another command is reserving spend; run this one again.",
-							),
-						)
-					: Effect.succeed(lock),
-			),
-		),
-		f,
-		(lock) => Effect.sync(() => lock.release()),
-	);
+const withLedgerLock = <A>(ctx: Context, use: Effect.Effect<A, ShortsError>) =>
+	Effect.suspend(() => {
+		mkdirSync(ctx.paths.data, { recursive: true });
+		return withLock(
+			join(ctx.paths.data, "ledger.lock"),
+			"ledger",
+			() =>
+				fail(
+					"conflict",
+					"The spend ledger is busy.",
+					"Another command is reserving spend; run this one again.",
+				),
+			use,
+		);
+	});
 
 export const caps = (ctx: Context) => ({ ...DEFAULT_CAPS, ...ctx.config.caps });
 
@@ -104,34 +108,33 @@ export const reserve = (
 		readonly note?: string;
 	},
 ): Effect.Effect<string, ShortsError> =>
-	withLedgerLock(ctx, () => {
-		const entries = readLedger(ctx);
-		const day = ctx.now().toISOString().slice(0, 10);
-		const { dailyUsd, postUsd } = caps(ctx);
-		const today = spent(entries, { day });
-		const forPost = spent(entries, { post: call.post });
-		if (today + call.usd > dailyUsd) {
-			return Effect.fail(
-				fail(
+	withLedgerLock(
+		ctx,
+		Effect.gen(function* () {
+			const entries = yield* readLedger(ctx);
+			const { dailyUsd, postUsd } = caps(ctx);
+			const today = spent(entries, { day: ctx.now().toISOString().slice(0, 10) });
+			const forPost = spent(entries, { post: call.post });
+			const config = join(ctx.paths.data, "config.json");
+			if (today + call.usd > dailyUsd) {
+				return yield* fail(
 					"over-budget",
 					`This call (~$${call.usd.toFixed(3)}) would pass today's cap: $${today.toFixed(2)} of $${dailyUsd} spent.`,
-					`Wait until tomorrow, or raise caps.dailyUsd in ${join(ctx.paths.data, "config.json")}.`,
-				),
-			);
-		}
-		if (forPost + call.usd > postUsd) {
-			return Effect.fail(
-				fail(
+					`Wait until tomorrow, or raise caps.dailyUsd in ${config}.`,
+				);
+			}
+			if (forPost + call.usd > postUsd) {
+				return yield* fail(
 					"over-budget",
 					`This call (~$${call.usd.toFixed(3)}) would pass the per-post cap: $${forPost.toFixed(2)} of $${postUsd} spent on ${call.post}.`,
-					`Raise caps.postUsd in ${join(ctx.paths.data, "config.json")} if this post is worth more.`,
-				),
-			);
-		}
-		const id = randomUUID();
-		append(ctx, { id, at: ctx.now().toISOString(), type: "reserve", ...call });
-		return Effect.succeed(id);
-	});
+					`Raise caps.postUsd in ${config} if this post is worth more.`,
+				);
+			}
+			const id = randomUUID();
+			append(ctx, { id, at: ctx.now().toISOString(), type: "reserve", ...call });
+			return id;
+		}),
+	);
 
 const close = (
 	ctx: Context,
@@ -140,18 +143,22 @@ const close = (
 	usd: number,
 	requestId?: string,
 ) =>
-	withLedgerLock(ctx, () => {
-		const original = readLedger(ctx).find((entry) => entry.id === id && entry.type === "reserve");
-		if (original === undefined) return Effect.void;
-		append(ctx, {
-			...original,
-			at: ctx.now().toISOString(),
-			type,
-			usd,
-			...(requestId !== undefined ? { requestId } : {}),
-		});
-		return Effect.void;
-	});
+	withLedgerLock(
+		ctx,
+		Effect.gen(function* () {
+			const original = (yield* readLedger(ctx)).find(
+				(entry) => entry.id === id && entry.type === "reserve",
+			);
+			if (original === undefined) return;
+			append(ctx, {
+				...original,
+				at: ctx.now().toISOString(),
+				type,
+				usd,
+				...(requestId !== undefined ? { requestId } : {}),
+			});
+		}),
+	);
 
 export const settle = (ctx: Context, id: string, usd: number, requestId: string) =>
 	close(ctx, id, "settle", usd, requestId);

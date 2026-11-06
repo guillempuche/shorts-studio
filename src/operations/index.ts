@@ -1,4 +1,3 @@
-// Each operation is typed by its own parameters; the registry only needs their common shape.
 /**
  * Every operation, in the order `--help` lists them. Adding one here exposes it on both the
  * CLI and MCP; the parity test checks they agree.
@@ -9,18 +8,20 @@ import { audioTranscribe } from "./audio.ts";
 import { beatPlan, beatSet } from "./beat.ts";
 import { budgetShow } from "./budget.ts";
 import { capcutExport } from "./capcut.ts";
-import { configShow } from "./config.ts";
+import { configCheck, configShow } from "./config.ts";
 import { draftRender } from "./draft.ts";
 import { imageGenerate } from "./image.ts";
 import { imageImport } from "./image-import.ts";
 import { postArchive, postFinalize, postPublish, postReview } from "./lifecycle.ts";
 import { postCreate, postList, postShow } from "./post.ts";
+import { makeSchemaShow } from "./schema.ts";
 import { scriptApprove, scriptSet } from "./script.ts";
 import { sourceImport } from "./source.ts";
 import { sourceAdopt, sourceDownload, sourceTranscribe } from "./source-download.ts";
 
-export const operations: ReadonlyArray<Operation> = [
+const all: Array<Operation> = [
 	configShow,
+	configCheck,
 	postCreate,
 	postList,
 	postShow,
@@ -42,4 +43,8 @@ export const operations: ReadonlyArray<Operation> = [
 	postPublish,
 	postArchive,
 	budgetShow,
-] as unknown as ReadonlyArray<Operation>;
+];
+// `schema show` describes every operation, itself included.
+all.push(makeSchemaShow(() => all));
+
+export const operations: ReadonlyArray<Operation> = all;

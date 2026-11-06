@@ -11,10 +11,11 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { Effect, Schema } from "effect";
-import { attempt } from "../core/attempt.ts";
-import type { Context } from "../core/context.ts";
-import { fail, type ShortsError } from "../core/errors.ts";
+import { attempt, failWith } from "../core/attempt.ts";
+import { type Context, ImageModelName } from "../core/context.ts";
+import { fail } from "../core/errors.ts";
 import { hashBytes, hashOf, writeFileAtomic } from "../core/files.ts";
+import { parseBeatList, requireSecret } from "../core/inputs.ts";
 import { release, reserve, settle } from "../core/ledger.ts";
 import { defineOperation, p, type RunMode } from "../core/operation.ts";
 import { postDir, readPost, updatePost } from "../core/post-store.ts";
@@ -24,6 +25,7 @@ import {
 	DEFAULT_IMAGE_MODEL,
 	download,
 	estimateUsd,
+	FalError,
 	IMAGE_MODELS,
 	IMAGE_SIZE,
 	type ImageModel,
@@ -45,27 +47,12 @@ const fullPrompt = (ctx: Context, prompt: string): string => {
 	return suffix ? `${prompt}, ${suffix}` : prompt;
 };
 
+/** Only beats with a prompt get here (see `generatable`), so the empty fallback is never sent. */
 const imageInputHash = (ctx: Context, modelName: string, beat: Beat, seed: number): string =>
 	hashOf(fullPrompt(ctx, beat.prompt ?? ""), modelName, seed, IMAGE_SIZE);
 
 const isApproved = (post: Post): boolean =>
 	post.script !== undefined && post.script.approvedHash === post.script.hash;
-
-const parseBeats = (
-	value: string | undefined,
-): Effect.Effect<ReadonlyArray<number> | undefined, ShortsError> => {
-	if (value === undefined) return Effect.succeed(undefined);
-	const list = value.split(",").map((part) => Number.parseInt(part.trim(), 10));
-	return list.every(Number.isInteger)
-		? Effect.succeed(list)
-		: Effect.fail(
-				fail(
-					"usage",
-					`"${value}" isn't a beat list.`,
-					"Use beat indexes separated by commas, e.g. --beat 0,3,4.",
-				),
-			);
-};
 
 const Planned = Schema.Struct({
 	beat: Schema.Int,
@@ -74,101 +61,100 @@ const Planned = Schema.Struct({
 });
 
 /** Generates (or resumes) one beat's image and records it. */
-const generateOne = (
+const generateOne = Effect.fn("generateOne")(function* (
 	ctx: Context,
 	slug: string,
-	modelName: string,
+	modelName: ImageModelName,
 	model: ImageModel,
 	key: string,
 	beat: Beat,
-): Effect.Effect<void, ShortsError> =>
-	Effect.gen(function* () {
-		const seed = beat.seed ?? defaultSeed(slug, beat.index);
-		const inputHash = imageInputHash(ctx, modelName, beat, seed);
-		let request: Submitted & { readonly ledgerId: string };
+) {
+	const seed = beat.seed ?? defaultSeed(slug, beat.index);
+	const inputHash = imageInputHash(ctx, modelName, beat, seed);
+	let request: Submitted & { readonly ledgerId: string };
 
-		if (beat.pending !== undefined && beat.pending.inputHash === inputHash) {
-			ctx.log(`beat ${beat.index}: resuming request ${beat.pending.requestId}`);
-			request = beat.pending;
-		} else {
-			const usd = estimateUsd(model);
-			const ledgerId = yield* reserve(ctx, {
-				provider: PROVIDER,
-				model: modelName,
-				post: slug,
-				usd,
-				note: `beat ${beat.index}`,
-			});
-			const submitted = yield* attempt(
-				(signal) => submitImage(ctx, key, model, fullPrompt(ctx, beat.prompt ?? ""), seed, signal),
-				(error) =>
-					fail(
-						"provider",
-						error instanceof Error ? error.message : String(error),
-						"Check FAL_KEY and your connection, then run it again.",
-					),
-			).pipe(Effect.tapError(() => release(ctx, ledgerId)));
-			request = { ...submitted, ledgerId };
-			yield* updatePost(ctx, slug, "image generate", (post) =>
-				Effect.succeed(
-					withBeat(post, beat.index, (b) => ({
-						...b,
-						pending: { provider: PROVIDER, model: modelName, inputHash, seed, ...request },
-					})),
-				),
-			);
-			ctx.log(`beat ${beat.index}: submitted (${submitted.requestId})`);
-		}
-
-		const bytes = yield* attempt(
-			async (signal) => download(ctx, await collectImage(ctx, key, request, signal), signal),
-			(error) =>
-				fail(
-					"provider",
-					error instanceof Error ? error.message : String(error),
-					// Not "the same command": with --reroll that would re-seed and pay again.
-					`Run image generate --post ${slug} --yes (without --reroll): it resumes this request.`,
-				),
-		).pipe(
-			// A request FAL reports as failed won't complete: forget it and free the reservation.
-			Effect.tapError((error) =>
-				error.message.includes("ended as")
-					? release(ctx, request.ledgerId).pipe(
-							Effect.andThen(
-								updatePost(ctx, slug, "image generate", (post) =>
-									Effect.succeed(withBeat(post, beat.index, dropPending)),
-								),
-							),
-							Effect.ignore,
-						)
-					: Effect.void,
-			),
-		);
-
-		const dir = join(postDir(ctx, slug), "images");
-		mkdirSync(dir, { recursive: true });
-		const file = join("images", `beat-${String(beat.index).padStart(2, "0")}.jpg`);
-		writeFileAtomic(join(postDir(ctx, slug), file), bytes);
+	if (beat.pending !== undefined && beat.pending.inputHash === inputHash) {
+		ctx.log(`beat ${beat.index}: resuming request ${beat.pending.requestId}`);
+		request = beat.pending;
+	} else {
+		const usd = estimateUsd(model);
+		const ledgerId = yield* reserve(ctx, {
+			provider: PROVIDER,
+			model: modelName,
+			post: slug,
+			usd,
+			note: `beat ${beat.index}`,
+		});
+		const submitted = yield* attempt(
+			(signal) => submitImage(ctx, key, model, fullPrompt(ctx, beat.prompt ?? ""), seed, signal),
+			failWith("provider", "Check FAL_KEY and your connection, then run it again."),
+		).pipe(Effect.tapError(() => Effect.ignore(release(ctx, ledgerId))));
+		request = { ...submitted, ledgerId };
 		yield* updatePost(ctx, slug, "image generate", (post) =>
 			Effect.succeed(
 				withBeat(post, beat.index, (b) => ({
-					...dropPending(b),
-					seed,
-					image: {
-						file,
-						hash: hashBytes(bytes),
-						inputHash,
-						provider: PROVIDER,
-						model: modelName,
-						seed,
-						source: "generated" as const,
-					},
+					...b,
+					pending: { provider: PROVIDER, model: modelName, inputHash, seed, ...request },
 				})),
 			),
 		);
-		yield* settle(ctx, request.ledgerId, estimateUsd(model), request.requestId);
-		ctx.log(`beat ${beat.index}: saved ${file}`);
-	});
+		ctx.log(`beat ${beat.index}: submitted (${submitted.requestId})`);
+	}
+
+	let terminal = false;
+	const bytes = yield* attempt(
+		async (signal) => download(ctx, await collectImage(ctx, key, request, signal), signal),
+		(error) => {
+			terminal = error instanceof FalError && error.terminal;
+			return fail(
+				"provider",
+				error instanceof Error ? error.message : String(error),
+				terminal
+					? `Run image generate --post ${slug} --yes to submit a new request.`
+					: // Not "the same command": with --reroll that would re-seed and pay again.
+						`Run image generate --post ${slug} --yes (without --reroll): it resumes this request.`,
+			);
+		},
+	).pipe(
+		// A request FAL ended won't complete: forget it and free the reservation.
+		Effect.tapError(() =>
+			terminal
+				? release(ctx, request.ledgerId).pipe(
+						Effect.andThen(
+							updatePost(ctx, slug, "image generate", (post) =>
+								Effect.succeed(withBeat(post, beat.index, dropPending)),
+							),
+						),
+						Effect.ignore,
+					)
+				: Effect.void,
+		),
+	);
+
+	const dir = join(postDir(ctx, slug), "images");
+	mkdirSync(dir, { recursive: true });
+	const file = join("images", `beat-${String(beat.index).padStart(2, "0")}.jpg`);
+	writeFileAtomic(join(postDir(ctx, slug), file), bytes);
+	yield* updatePost(ctx, slug, "image generate", (post) =>
+		Effect.succeed(
+			withBeat(post, beat.index, (b) => ({
+				...dropPending(b),
+				seed,
+				image: {
+					file,
+					hash: hashBytes(bytes),
+					inputHash,
+					provider: PROVIDER,
+					model: modelName,
+					seed,
+					source: "generated" as const,
+				},
+			})),
+		),
+	);
+	yield* settle(ctx, request.ledgerId, estimateUsd(model), request.requestId);
+	ctx.log(`beat ${beat.index}: saved ${file}`);
+});
 
 const dropPending = (beat: Beat): Beat => {
 	const { pending: _, ...rest } = beat;
@@ -194,9 +180,7 @@ export const imageGenerate = defineOperation({
 		post: p.string("Post slug"),
 		beat: p.optional(p.string("Only these beats, comma-separated (e.g. 0,3)")),
 		reroll: p.boolean("Give the chosen beats a new seed and generate them again"),
-		model: p.optional(
-			p.literals(Object.keys(IMAGE_MODELS) as ["flux-schnell", "flux-dev"], "Image model"),
-		),
+		model: p.optional(p.literals(ImageModelName.literals, "Image model")),
 	},
 	output: Schema.Struct({
 		model: Schema.String,
@@ -210,26 +194,15 @@ export const imageGenerate = defineOperation({
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: true },
 	run: (input, ctx, mode: RunMode) =>
 		Effect.gen(function* () {
-			const only = yield* parseBeats(input.beat);
+			const only = input.beat === undefined ? undefined : yield* parseBeatList(input.beat);
 			const modelName = input.model ?? ctx.config.image?.model ?? DEFAULT_IMAGE_MODEL;
 			const model = IMAGE_MODELS[modelName];
-			if (model === undefined) {
-				return yield* Effect.fail(
-					fail(
-						"usage",
-						`Unknown image model "${modelName}".`,
-						`Use one of: ${Object.keys(IMAGE_MODELS).join(", ")}.`,
-					),
-				);
-			}
 			let post = yield* readPost(ctx, input.post);
 			if (!isApproved(post)) {
-				return yield* Effect.fail(
-					fail(
-						"needs-confirmation",
-						`${input.post}'s script isn't approved, so nothing will be spent on images yet.`,
-						`The user approves it after reading it: script approve --post ${input.post}`,
-					),
+				return yield* fail(
+					"needs-confirmation",
+					`${input.post}'s script isn't approved, so nothing will be spent on images yet.`,
+					`The user approves it after reading it: script approve --post ${input.post}`,
 				);
 			}
 			const beats = post.beats?.items ?? [];
@@ -237,14 +210,12 @@ export const imageGenerate = defineOperation({
 				.filter((b) => b.prompt === undefined && b.image?.source !== "imported")
 				.map((b) => b.index);
 			if (beats.length === 0 || missing.length > 0) {
-				return yield* Effect.fail(
-					fail(
-						"not-found",
-						beats.length === 0
-							? `${input.post} has no beats.`
-							: `Beats without a prompt: ${missing.join(", ")}.`,
-						nextStep(post),
-					),
+				return yield* fail(
+					"not-found",
+					beats.length === 0
+						? `${input.post} has no beats.`
+						: `Beats without a prompt: ${missing.join(", ")}.`,
+					nextStep(post),
 				);
 			}
 
@@ -283,14 +254,17 @@ export const imageGenerate = defineOperation({
 					b,
 					input.reroll && mode.dryRun ? seed + 1 : seed,
 				);
-				// An imported image (Midjourney, a photo) stays unless the beat is rerolled.
+				// An imported image (Midjourney, a photo) stays unless the beat is rerolled. A beat
+				// without a prompt (allowed only with an imported image) is never sent, rerolled or not.
 				const imported = b.image?.source === "imported" && !input.reroll;
 				const action =
-					b.pending?.inputHash === hash
-						? "resume"
-						: imported || b.image?.inputHash === hash
-							? "skip"
-							: "generate";
+					b.prompt === undefined
+						? "skip"
+						: b.pending?.inputHash === hash
+							? "resume"
+							: imported || b.image?.inputHash === hash
+								? "skip"
+								: "generate";
 				return {
 					beat: b.index,
 					action,
@@ -300,16 +274,7 @@ export const imageGenerate = defineOperation({
 			const total = planned.reduce((sum, item) => sum + item.estimateUsd, 0);
 
 			if (!mode.dryRun) {
-				const key = yield* Effect.promise(() => ctx.secret("FAL_KEY"));
-				if (key === undefined) {
-					return yield* Effect.fail(
-						fail(
-							"missing-key",
-							"FAL_KEY isn't set.",
-							"Set it in your environment or the Keychain: config show explains how.",
-						),
-					);
-				}
+				const key = yield* requireSecret(ctx, "FAL_KEY");
 				const work = chosen.filter(
 					(b) => planned.find((item) => item.beat === b.index)?.action !== "skip",
 				);

@@ -10,27 +10,12 @@ import { Effect, Schema } from "effect";
 import { attempt, failWith } from "../core/attempt.ts";
 import { fail, type ShortsError } from "../core/errors.ts";
 import { hashFile } from "../core/files.ts";
+import { parseBeatList } from "../core/inputs.ts";
 import { defineOperation, p } from "../core/operation.ts";
 import { postDir, readPost, updatePost } from "../core/post-store.ts";
 import { Decision, Platform, Stage, stageOf } from "../domain/post.ts";
 import { probeDuration } from "../work/media.ts";
 import { nextStep } from "./post.ts";
-
-const parseBeatList = (
-	value: string | undefined,
-): Effect.Effect<ReadonlyArray<number>, ShortsError> => {
-	if (value === undefined) return Effect.succeed([]);
-	const list = value.split(",").map((part) => Number.parseInt(part.trim(), 10));
-	return list.every(Number.isInteger)
-		? Effect.succeed(list)
-		: Effect.fail(
-				fail(
-					"usage",
-					`"${value}" isn't a beat list.`,
-					"Use beat indexes separated by commas, e.g. 1,3.",
-				),
-			);
-};
 
 /** `"3:too dark;5:wrong face"` → per-beat notes. */
 const parseBeatNotes = (
@@ -126,22 +111,18 @@ export const postFinalize = defineOperation({
 		Effect.gen(function* () {
 			const source = resolve(input.file);
 			if (!existsSync(source)) {
-				return yield* Effect.fail(
-					fail(
-						"not-found",
-						`No file at ${source}.`,
-						"Export the video from CapCut first, then pass its path.",
-					),
+				return yield* fail(
+					"not-found",
+					`No file at ${source}.`,
+					"Export the video from CapCut first, then pass its path.",
 				);
 			}
 			const before = yield* readPost(ctx, input.post);
 			if (stageOf(before) !== "approved" && stageOf(before) !== "final") {
-				return yield* Effect.fail(
-					fail(
-						"needs-confirmation",
-						`${input.post} is at "${stageOf(before)}", not approved.`,
-						`The user reviews the draft first: post review --post ${input.post} --decision approve`,
-					),
+				return yield* fail(
+					"needs-confirmation",
+					`${input.post} is at "${stageOf(before)}", not approved.`,
+					`The user reviews the draft first: post review --post ${input.post} --decision approve`,
 				);
 			}
 			const file = `final${extname(source) || ".mp4"}`;
@@ -177,8 +158,10 @@ export const postPublish = defineOperation({
 	run: (input, ctx) =>
 		Effect.gen(function* () {
 			if (!/^https?:\/\//.test(input.url)) {
-				return yield* Effect.fail(
-					fail("usage", `"${input.url}" isn't a URL.`, "Pass the post's full https:// address."),
+				return yield* fail(
+					"usage",
+					`"${input.url}" isn't a URL.`,
+					"Pass the post's full https:// address.",
 				);
 			}
 			const post = yield* updatePost(ctx, input.post, "post publish", (current) => {

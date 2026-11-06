@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * The entry point: parse the arguments, run the command, set the exit code.
  *
@@ -14,9 +15,10 @@ import * as NodeStdio from "@effect/platform-node-shared/NodeStdio";
 import * as NodeTerminal from "@effect/platform-node-shared/NodeTerminal";
 import { Cause, Effect, Exit, Layer, Runtime } from "effect";
 import { CliError, Command } from "effect/cli";
-import { nounCommands, root } from "./app/cli.ts";
+import { aliasCommand, nounCommands, root } from "./app/cli.ts";
 import { mcpServerLayer } from "./app/mcp.ts";
 import { makeContext } from "./core/context.ts";
+import { configCheck } from "./operations/config.ts";
 import { operations } from "./operations/index.ts";
 
 export const VERSION = "0.1.0";
@@ -51,7 +53,11 @@ const teardown: Runtime.Teardown = (exit, onExit) => {
 };
 
 root.pipe(
-	Command.withSubcommands([...nounCommands(operations, ctx), mcp]),
+	Command.withSubcommands([
+		...nounCommands(operations, ctx),
+		aliasCommand(configCheck, ctx, "doctor"),
+		mcp,
+	]),
 	Command.run({ version: VERSION }),
 	Effect.provide(platform),
 	(program) => NodeRuntime.runMain(program, { teardown }),

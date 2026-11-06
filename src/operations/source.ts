@@ -8,7 +8,7 @@
  * stale through their input hashes.
  */
 
-import { existsSync, mkdirSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Effect, Schema } from "effect";
 import { attempt, failWith } from "../core/attempt.ts";
@@ -43,9 +43,7 @@ export const sourceImport = defineOperation({
 		Effect.gen(function* () {
 			const source = resolve(input.file);
 			if (!existsSync(source)) {
-				return yield* Effect.fail(
-					fail("not-found", `No file at ${source}.`, "Check the path and try again."),
-				);
+				return yield* fail("not-found", `No file at ${source}.`, "Check the path and try again.");
 			}
 			yield* readPost(ctx, input.post);
 			const dir = postDir(ctx, input.post);
@@ -60,7 +58,7 @@ export const sourceImport = defineOperation({
 					return { hash: await hashFile(target), durationSec };
 				},
 				failWith("missing-tool", "Check that ffmpeg and ffprobe work: config show"),
-			);
+			).pipe(Effect.ensuring(Effect.sync(() => rmSync(tmp, { force: true }))));
 			const post = yield* updatePost(ctx, input.post, "source import", (post) =>
 				Effect.succeed({
 					...post,

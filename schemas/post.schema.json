@@ -1,0 +1,356 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "manifestVersion": {
+      "type": "number",
+      "enum": [1]
+    },
+    "slug": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "brief": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "script": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "hash": {
+          "type": "string"
+        },
+        "approvedHash": {
+          "type": "string"
+        },
+        "approvedAt": {
+          "type": "string"
+        },
+        "hook": {
+          "type": "string"
+        }
+      },
+      "required": ["file", "hash"],
+      "additionalProperties": true
+    },
+    "audio": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "hash": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string",
+          "enum": ["mine", "others", "ai"]
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["speech", "music"]
+        },
+        "durationSec": {
+          "type": "number"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": ["file", "hash", "origin", "kind", "durationSec", "source"],
+      "additionalProperties": true
+    },
+    "transcript": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "hash": {
+          "type": "string"
+        },
+        "inputHash": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        }
+      },
+      "required": ["file", "hash", "inputHash", "provider", "model", "language"],
+      "additionalProperties": true
+    },
+    "beats": {
+      "type": "object",
+      "properties": {
+        "inputHash": {
+          "type": "string"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "start": {
+                "type": "number"
+              },
+              "end": {
+                "type": "number"
+              },
+              "text": {
+                "type": "string"
+              },
+              "moment": {
+                "type": "string",
+                "enum": ["hook", "setup", "tension", "twist", "vulnerable", "payoff", "cta"]
+              },
+              "motion": {
+                "type": "string",
+                "enum": [
+                  "hold",
+                  "push-slow",
+                  "push-punch",
+                  "pull-back",
+                  "pan-right",
+                  "pan-left",
+                  "drift-up",
+                  "drift-down"
+                ]
+              },
+              "prompt": {
+                "type": "string"
+              },
+              "seed": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "image": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string"
+                  },
+                  "hash": {
+                    "type": "string"
+                  },
+                  "inputHash": {
+                    "type": "string"
+                  },
+                  "provider": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "seed": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": ["generated", "imported"]
+                  }
+                },
+                "required": ["file", "hash", "inputHash", "provider", "model", "seed", "source"],
+                "additionalProperties": true
+              },
+              "pending": {
+                "type": "object",
+                "properties": {
+                  "provider": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "requestId": {
+                    "type": "string"
+                  },
+                  "statusUrl": {
+                    "type": "string"
+                  },
+                  "responseUrl": {
+                    "type": "string"
+                  },
+                  "inputHash": {
+                    "type": "string"
+                  },
+                  "seed": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "ledgerId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "provider",
+                  "model",
+                  "requestId",
+                  "statusUrl",
+                  "responseUrl",
+                  "inputHash",
+                  "seed",
+                  "ledgerId"
+                ],
+                "additionalProperties": true
+              }
+            },
+            "required": ["index", "start", "end", "text"],
+            "additionalProperties": true
+          }
+        }
+      },
+      "required": ["inputHash", "items"],
+      "additionalProperties": true
+    },
+    "draft": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "hash": {
+          "type": "string"
+        },
+        "inputHash": {
+          "type": "string"
+        },
+        "rendererVersion": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "durationSec": {
+          "type": "number"
+        }
+      },
+      "required": ["file", "hash", "inputHash", "rendererVersion", "durationSec"],
+      "additionalProperties": true
+    },
+    "aiGenerated": {
+      "type": "boolean"
+    },
+    "review": {
+      "type": "object",
+      "properties": {
+        "decision": {
+          "type": "string",
+          "enum": ["approve", "fix", "reject"]
+        },
+        "at": {
+          "type": "string"
+        },
+        "draftHash": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "beatNotes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "beat": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "required": ["beat", "note"],
+            "additionalProperties": true
+          }
+        },
+        "animate": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        }
+      },
+      "required": ["decision", "at", "draftHash"],
+      "additionalProperties": true
+    },
+    "final": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "hash": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string"
+        }
+      },
+      "required": ["file", "hash", "at"],
+      "additionalProperties": true
+    },
+    "published": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "platform": {
+            "type": "string",
+            "enum": ["instagram", "tiktok", "youtube", "other"]
+          },
+          "url": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string"
+          }
+        },
+        "required": ["platform", "url", "at"],
+        "additionalProperties": true
+      }
+    },
+    "archivedAt": {
+      "type": "string"
+    }
+  },
+  "required": ["manifestVersion", "slug", "createdAt", "revision"],
+  "additionalProperties": true
+}

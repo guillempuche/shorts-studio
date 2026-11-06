@@ -46,8 +46,20 @@ jobs:
       - run: pnpm check
       - run: pnpm check-types
       - run: node scripts/skills-sync.ts --check
+      - run: node scripts/check-links.ts
       # Unit tests use fakes: no API keys, no ffmpeg, no network.
       - run: pnpm test
+  # Builds the flake package, so a pnpm-lock.yaml change without the matching hash in
+  # nix/package.nix fails here (nix build prints the hash to use).
+  nix:
+    name: Nix package
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+      - run: nix build .#default --print-build-logs
+      - run: ./result/bin/shorts-studio --version
   openspec:
     name: OpenSpec
     runs-on: ubuntu-latest

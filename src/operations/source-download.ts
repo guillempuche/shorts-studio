@@ -9,15 +9,16 @@
  * through `download.cookiesFromBrowser` in config.json. Platform terms and rights are yours.
  */
 
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { Effect, Result, Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { attempt, failWith } from "../core/attempt.ts";
 import type { Context } from "../core/context.ts";
 import { fail, type ShortsError } from "../core/errors.ts";
 import { writeFileAtomic } from "../core/files.ts";
+import { requireSecret } from "../core/inputs.ts";
 import { defineOperation, p } from "../core/operation.ts";
-import { readPost } from "../core/post-store.ts";
+import { postDir, readPost } from "../core/post-store.ts";
 import { Kind, Origin } from "../domain/post.ts";
 import { TOGETHER_MODEL, transcribe } from "../work/together.ts";
 import { sourceImport } from "./source.ts";
@@ -93,12 +94,10 @@ export const sourceDownload = defineOperation({
 				const name = yield* checkCollection(input.collection);
 				const dir = savedPath(ctx, name);
 				if (!existsSync(join(dir, "urls.txt"))) {
-					return yield* Effect.fail(
-						fail(
-							"not-found",
-							`No ${join(dir, "urls.txt")}.`,
-							"Collect the post URLs first (see docs/getting-started.md), one per line.",
-						),
+					return yield* fail(
+						"not-found",
+						`No ${join(dir, "urls.txt")}.`,
+						"Collect the post URLs first (see docs/getting-started.md), one per line.",
 					);
 				}
 				const before = countDownloaded(dir);
@@ -140,8 +139,9 @@ export const sourceDownload = defineOperation({
 			}
 			if (input.url !== undefined && input.post !== undefined) {
 				yield* readPost(ctx, input.post);
-				const dir = join(ctx.paths.posts, "mine", input.post, "audio", "download");
-				mkdirSync(dir, { recursive: true });
+				const audioDir = join(postDir(ctx, input.post), "audio");
+				mkdirSync(audioDir, { recursive: true });
+				const dir = mkdtempSync(join(audioDir, "download-"));
 				const result = yield* attempt(
 					(signal) =>
 						ctx.run("yt-dlp", [...ytDlpArgs(ctx), "--output", "%(id)s.%(ext)s", input.url ?? ""], {
@@ -152,9 +152,7 @@ export const sourceDownload = defineOperation({
 				);
 				const file = readdirSync(dir).find((name) => name.endsWith(".mp3"));
 				if (result.code !== 0 || file === undefined) {
-					return yield* Effect.fail(
-						fail("provider", `yt-dlp couldn't download ${input.url}.`, ytDlpFix),
-					);
+					return yield* fail("provider", `yt-dlp couldn't download ${input.url}.`, ytDlpFix);
 				}
 				const imported = yield* sourceImport.run(
 					{
@@ -168,12 +166,10 @@ export const sourceDownload = defineOperation({
 				);
 				return { downloaded: 1, failed: false, dir, next: imported.next };
 			}
-			return yield* Effect.fail(
-				fail(
-					"usage",
-					"Nothing to download.",
-					"Pass --collection <name>, or --url <url> with --post <slug>.",
-				),
+			return yield* fail(
+				"usage",
+				"Nothing to download.",
+				"Pass --collection <name>, or --url <url> with --post <slug>.",
 			);
 		}),
 	render: (o) =>
@@ -198,15 +194,13 @@ export const sourceAdopt = defineOperation({
 			const from = resolve(input.from);
 			const dir = savedPath(ctx, name);
 			if (!existsSync(from)) {
-				return yield* Effect.fail(fail("not-found", `No folder at ${from}.`, "Check the path."));
+				return yield* fail("not-found", `No folder at ${from}.`, "Check the path.");
 			}
 			if (existsSync(dir)) {
-				return yield* Effect.fail(
-					fail(
-						"conflict",
-						`The collection ${name} already exists at ${dir}.`,
-						"Pick another name, or move the existing folder away first.",
-					),
+				return yield* fail(
+					"conflict",
+					`The collection ${name} already exists at ${dir}.`,
+					"Pick another name, or move the existing folder away first.",
 				);
 			}
 			mkdirSync(dir, { recursive: true });
@@ -243,57 +237,41 @@ export const sourceTranscribe = defineOperation({
 			const dir = savedPath(ctx, name);
 			const audioDir = join(dir, "audio");
 			if (!existsSync(audioDir)) {
-				return yield* Effect.fail(
-					fail(
-						"not-found",
-						`No audio in ${dir}.`,
-						`Download it first: source download --collection ${name}`,
-					),
+				return yield* fail(
+					"not-found",
+					`No audio in ${dir}.`,
+					`Download it first: source download --collection ${name}`,
 				);
 			}
-			const key = yield* Effect.promise(() => ctx.secret("TOGETHER_API_KEY"));
-			if (key === undefined) {
-				return yield* Effect.fail(
-					fail(
-						"missing-key",
-						"TOGETHER_API_KEY isn't set.",
-						"Set it in your environment or the Keychain: config show explains how.",
-					),
-				);
-			}
+			const key = yield* requireSecret(ctx, "TOGETHER_API_KEY");
 			mkdirSync(join(dir, "transcripts"), { recursive: true });
 			const files = readdirSync(audioDir)
 				.filter((f) => /\.(mp3|m4a|wav)$/i.test(f))
 				.sort();
-			let transcribed = 0;
-			let skipped = 0;
-			const failed: Array<string> = [];
-			for (const file of files) {
-				const id = basename(file).replace(/\.[^.]+$/, "");
-				const target = join(dir, "transcripts", `${id}.json`);
-				if (existsSync(target)) {
-					skipped++;
-					continue;
-				}
-				ctx.log(`transcribing ${file}`);
-				const result = yield* Effect.result(
-					attempt(
-						(signal) => transcribe(ctx, key, join(audioDir, file), input.language, signal),
-						failWith("provider", "Check the key and your connection (VPN?), then re-run."),
+			const transcriptOf = (file: string, ext: string) =>
+				join(dir, "transcripts", `${basename(file).replace(/\.[^.]+$/, "")}.${ext}`);
+			const todo = files.filter((file) => !existsSync(transcriptOf(file, "json")));
+			// Every file is tried; a failed one is listed and retried on the next run.
+			const [done, failed] = yield* Effect.partition(todo, (file) =>
+				Effect.sync(() => ctx.log(`transcribing ${file}`)).pipe(
+					Effect.andThen(
+						attempt(
+							(signal) => transcribe(ctx, key, join(audioDir, file), input.language, signal),
+							failWith("provider", "Check the key and your connection (VPN?), then re-run."),
+						),
 					),
-				);
-				if (Result.isFailure(result)) {
-					failed.push(`${file}: ${result.failure.message}`);
-					continue;
-				}
-				writeFileAtomic(
-					target,
-					`${JSON.stringify({ ...result.success, model: TOGETHER_MODEL }, null, 2)}\n`,
-				);
-				writeFileAtomic(join(dir, "transcripts", `${id}.txt`), `${result.success.text}\n`);
-				transcribed++;
-			}
-			return { transcribed, skipped, failed };
+					Effect.map((transcript) => {
+						writeFileAtomic(
+							transcriptOf(file, "json"),
+							`${JSON.stringify({ ...transcript, model: TOGETHER_MODEL }, null, 2)}\n`,
+						);
+						writeFileAtomic(transcriptOf(file, "txt"), `${transcript.text}\n`);
+						return file;
+					}),
+					Effect.mapError((error) => `${file}: ${error.message}`),
+				),
+			);
+			return { transcribed: done.length, skipped: files.length - todo.length, failed };
 		}),
 	render: (o) =>
 		[

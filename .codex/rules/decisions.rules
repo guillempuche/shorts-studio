@@ -1,0 +1,25 @@
+# What Codex may run from shorts-studio's CLI. Codex reads this file once the folder is
+# trusted. A rule matches the first words of a command, word for word.
+
+# Approving a script or a draft is the user's decision (AGENTS.md, "The user decides").
+prefix_rule(
+    pattern = [["bin/shorts-studio", "shorts-studio"], ["script", "post"], ["approve", "review"]],
+    decision = "forbidden",
+    justification = "Approving a script or reviewing a draft is the user's decision; ask them to run it.",
+    match = ["bin/shorts-studio script approve --post x", "shorts-studio post review --post x --decision approve"],
+    not_match = ["bin/shorts-studio post show --post x"],
+)
+
+# Steps that spend money ask first; run them with --dry-run and show the estimate before asking.
+prefix_rule(
+    pattern = [["bin/shorts-studio", "shorts-studio"], "image", "generate"],
+    decision = "prompt",
+    justification = "Image generation spends money. Show the --dry-run estimate first.",
+)
+
+# Downloads use the user's browser session and platform accounts.
+prefix_rule(
+    pattern = [["bin/shorts-studio", "shorts-studio"], "source", "download"],
+    decision = "prompt",
+    justification = "Downloads read the user's browser cookies and hit platform rate limits.",
+)

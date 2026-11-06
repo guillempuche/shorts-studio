@@ -6,8 +6,9 @@
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
 import { Effect, Schema } from "effect";
+import { failWith } from "../core/attempt.ts";
 import { fail } from "../core/errors.ts";
-import { hashFile, hashOf } from "../core/files.ts";
+import { fileHash, hashOf } from "../core/files.ts";
 import { defineOperation, p } from "../core/operation.ts";
 import { postDir, readPost, updatePost } from "../core/post-store.ts";
 import type { Beat } from "../domain/post.ts";
@@ -32,27 +33,21 @@ export const imageImport = defineOperation({
 		Effect.gen(function* () {
 			const source = resolve(input.file);
 			if (!existsSync(source)) {
-				return yield* Effect.fail(
-					fail("not-found", `No file at ${source}.`, "Check the path and try again."),
-				);
+				return yield* fail("not-found", `No file at ${source}.`, "Check the path and try again.");
 			}
 			if (!IMAGE.test(extname(source))) {
-				return yield* Effect.fail(
-					fail(
-						"usage",
-						`${source} isn't a JPEG, PNG or WebP image.`,
-						"Export the image in one of those formats.",
-					),
+				return yield* fail(
+					"usage",
+					`${source} isn't a JPEG, PNG or WebP image.`,
+					"Export the image in one of those formats.",
 				);
 			}
 			const before = yield* readPost(ctx, input.post);
 			if (!(before.beats?.items ?? []).some((b) => b.index === input.beat)) {
-				return yield* Effect.fail(
-					fail(
-						"usage",
-						`No beat ${input.beat} in ${input.post}.`,
-						`See them with: post show --post ${input.post}`,
-					),
+				return yield* fail(
+					"usage",
+					`No beat ${input.beat} in ${input.post}.`,
+					`See them with: post show --post ${input.post}`,
 				);
 			}
 			const dir = postDir(ctx, input.post);
@@ -61,8 +56,11 @@ export const imageImport = defineOperation({
 				"images",
 				`beat-${String(input.beat).padStart(2, "0")}-imported${extname(source).toLowerCase()}`,
 			);
-			copyFileSync(source, join(dir, file));
-			const hash = yield* Effect.promise(() => hashFile(join(dir, file)));
+			yield* Effect.try({
+				try: () => copyFileSync(source, join(dir, file)),
+				catch: failWith("failed", `Check that ${source} is readable, then run it again.`),
+			});
+			const hash = yield* fileHash(join(dir, file));
 			const attach = (b: Beat): Beat => {
 				if (b.index !== input.beat) return b;
 				const { pending: _, ...rest } = b;

@@ -74,7 +74,7 @@ describe("image generate", () => {
 		expect(result.planned.filter((p) => p.action === "generate")).toHaveLength(2);
 		expect(result.estimateUsd).toBeGreaterThan(0);
 		expect(fake.submits).toHaveLength(0);
-		expect(readLedger(ctx)).toHaveLength(0);
+		expect(Effect.runSync(readLedger(ctx))).toHaveLength(0);
 	});
 
 	it("should resume a request cut short instead of paying for it again", async () => {
@@ -96,7 +96,7 @@ describe("image generate", () => {
 		const post = await Effect.runPromise(readPost(ctx, SLUG));
 		expect(post.beats?.items[0]?.image).toBeDefined();
 		expect(post.beats?.items[0]?.pending).toBeUndefined();
-		expect(readLedger(ctx).filter((e) => e.type === "reserve")).toHaveLength(1);
+		expect(Effect.runSync(readLedger(ctx)).filter((e) => e.type === "reserve")).toHaveLength(1);
 	});
 
 	it("should regenerate only the rerolled beat, with a new seed", async () => {
@@ -130,13 +130,50 @@ describe("image generate", () => {
 		expect(fake.submits).toHaveLength(0);
 	});
 
+	it("should never send a beat that has no prompt, even when rerolled", async () => {
+		// GIVEN beat 1 has an imported image and no prompt
+		await readyPost();
+		await Effect.runPromise(
+			updatePost(ctx, SLUG, "test", (post) =>
+				Effect.succeed({
+					...post,
+					beats: {
+						inputHash: "b",
+						items: [
+							{ index: 0, start: 0, end: 2, text: "one", prompt: "a red door" },
+							{
+								index: 1,
+								start: 2,
+								end: 4,
+								text: "two",
+								image: {
+									file: "images/beat-01-imported.png",
+									hash: "i",
+									inputHash: "i",
+									provider: "import",
+									model: "none",
+									seed: 0,
+									source: "imported" as const,
+								},
+							},
+						],
+					},
+				}),
+			),
+		);
+		// WHEN every beat is rerolled
+		await Effect.runPromise(generate({ reroll: true }));
+		// THEN only beat 0 went to FAL
+		expect(fake.submits.map((s) => s.prompt)).toEqual(["a red door"]);
+	});
+
 	it("should free the reservation when FAL reports the request failed", async () => {
 		// GIVEN a FAL whose requests fail
 		await readyPost({ finalStatus: "FAILED" });
 		// WHEN images are generated
 		await Effect.runPromiseExit(generate({ beat: "0" }));
 		// THEN nothing counts as spent and no request is left pending
-		expect(spent(readLedger(ctx), { day: "2026-11-04" })).toBe(0);
+		expect(spent(Effect.runSync(readLedger(ctx)), { day: "2026-11-04" })).toBe(0);
 		expect((await Effect.runPromise(readPost(ctx, SLUG))).beats?.items[0]?.pending).toBeUndefined();
 	});
 });

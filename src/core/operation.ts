@@ -20,6 +20,8 @@ export interface Param<A> {
 	readonly flag: (flagName: string) => Flag.Flag<A>;
 	/** Fills MCP input the way the CLI flag would (absent boolean → false). */
 	readonly normalize: (value: unknown) => A;
+	/** Set by `p.optional`. */
+	readonly optional?: true;
 }
 
 export type Params = Readonly<Record<string, Param<unknown>>>;
@@ -63,6 +65,7 @@ export const p = {
 		field: Schema.optionalKey(param.field as Schema.Constraint),
 		flag: (name) => param.flag(name).pipe(Flag.optional, Flag.map(Option.getOrUndefined)),
 		normalize: (value) => (value === undefined ? undefined : param.normalize(value)),
+		optional: true,
 	}),
 };
 
@@ -92,9 +95,11 @@ export interface Operation<P extends Params = Params, O = unknown> {
 		/** Reaches services outside this machine. */
 		readonly openWorld: boolean;
 	};
-	readonly run: (input: InputOf<P>, ctx: Context, mode: RunMode) => Effect.Effect<O, ShortsError>;
+	// Declared as methods: their parameters are checked bivariantly, so a specific operation
+	// fits the registry's `Operation` without a cast.
+	run(input: InputOf<P>, ctx: Context, mode: RunMode): Effect.Effect<O, ShortsError>;
 	/** Human-readable output; JSON is printed when absent or with `--json`. */
-	readonly render?: (output: O) => string;
+	render?(output: O): string;
 }
 
 export const defineOperation = <P extends Params, O>(op: Operation<P, O>): Operation<P, O> => op;

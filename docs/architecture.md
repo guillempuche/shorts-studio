@@ -63,7 +63,7 @@ The user's `post review` (CLI-only) records approve, fix (with per-beat notes) o
 
 ### post.json
 
-Schema in `src/domain/post.ts`, published as `schemas/post.schema.json` (planned). Written only through `updatePost` (`src/core/post-store.ts`): per-post lock file, re-read, change, atomic write, `revision` + 1. Long operations record each finished piece with a short update instead of holding the lock.
+Schema in `src/domain/post.ts`, published as `schemas/post.schema.json` (`pnpm schemas`; `schema show` prints it and each command's). Written only through `updatePost` (`src/core/post-store.ts`): per-post lock file, re-read, change, atomic write, `revision` + 1. Long operations record each finished piece with a short update instead of holding the lock.
 
 Every generated output stores an `inputHash`: the hash of its inputs, the upstream outputs' hashes and the producing code's version (`PLANNER_VERSION`, `RENDERER_VERSION`). An output is up to date only while that hash matches, so an edited prompt or a re-cut beat cascades downstream. The stage is computed from the manifest by `stageOf`, never stored.
 
