@@ -48,6 +48,11 @@
             hash = "sha256-Rpst164ddx21ScatOubp5hcfz+cgoYvkNLR+nNkg/So=";
           };
 
+          # The build sandbox has no network, and pnpm's supply-chain check (pnpm-workspace.yaml)
+          # needs the registry. CI's `pnpm install --frozen-lockfile` already enforces that check
+          # on every push, so this offline install trusts the lockfile it receives.
+          env.pnpm_config_trust_lockfile = "true";
+
           dontBuild = true;
 
           installPhase = ''
