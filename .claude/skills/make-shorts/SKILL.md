@@ -2,7 +2,7 @@
 
 name: make-shorts
 description: Run the daily short-video loop with shorts-studio - from audio or a brief to a reviewable draft per post, with the user approving each script before anything is spent. Use when asked to make, continue or batch short videos, reels or TikToks, or to prepare today's posts.
-compatibility: Claude Code, Codex and other agents in this repository; needs Node 24 and an FFmpeg with libass (nix develop).
+compatibility: Claude Code, Codex and other agents in this repository; needs Node 26 and an FFmpeg with libass (nix develop).
 ---
 
 # Make shorts
@@ -11,7 +11,7 @@ The order of the steps. The rules behind them are in [AGENTS.md](../../../AGENTS
 
 ## Before you start
 
-1. `config show`: everything must be ✓ except keys for later milestones. Stop and tell the user about any ✗.
+1. `doctor`: everything must be ✓. Stop and tell the user about any ✗.
 2. `post list`: continue posts already in progress before starting new ones. `post show --post <slug>` names the next step every time.
 
 ## Flow A: original audio (a reel, a recording, a track)
@@ -30,7 +30,7 @@ The order of the steps. The rules behind them are in [AGENTS.md](../../../AGENTS
 
 ## Flow B: AI voice from a brief
 
-Voice generation arrives in milestone 3. Until then: write the script, have the user approve it, record or generate the voiceover elsewhere, and continue from Flow A step 2 with `--origin ai`.
+Voice generation isn't built yet (openspec/changes/voice-music-animate). Until it is: write the script, have the user approve it, record or generate the voiceover elsewhere, and continue from Flow A step 2 with `--origin ai`.
 
 ## Five a day
 

@@ -7,7 +7,7 @@ compatibility: Claude Code, Codex and other agents in this repository; shorts-st
 
 # Story direction
 
-How to direct a post's beats. The numbers each choice sets (beat lengths, motion speeds, caption limits) live in [src/domain/direction.ts](../../../src/domain/direction.ts); why, and how strong the evidence is, is in [docs/research](../../../docs/research/README.md). Treat both as starting points: none of the evidence measured 60-second vertical videos.
+How to direct a post's beats. The numbers each choice sets (beat lengths, motion speeds, caption limits) live in [packages/domain/src/direction.ts](../../../packages/domain/src/direction.ts); why, and how strong the evidence is, is in [docs/research](../../../docs/research/README.md). Treat both as starting points: none of the evidence measured 60-second vertical videos.
 
 ## The steps
 

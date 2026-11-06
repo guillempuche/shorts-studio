@@ -9,7 +9,7 @@ Rules for people and AI agents who work in this repository. Claude Code and Code
 | Commands, flags and outputs                         | `bin/shorts-studio --help`, `bin/shorts-studio schema show`, or MCP `tools/list`                                      |
 | Architecture, data model, exit codes, key decisions | [docs/architecture.md](docs/architecture.md)                                                                          |
 | Behaviour today (specs) and planned changes         | [openspec/](openspec/)                                                                                                |
-| Every number for pacing, motion and captions        | [src/domain/direction.ts](src/domain/direction.ts)                                                                    |
+| Every number for pacing, motion and captions        | [packages/domain/src/direction.ts](packages/domain/src/direction.ts)                                                  |
 | The evidence behind those numbers                   | [docs/research/](docs/research/README.md)                                                                             |
 | Providers, keys and costs                           | [docs/providers.md](docs/providers.md)                                                                                |
 | Installing, keys, Claude Code and Codex setup       | [docs/getting-started.md](docs/getting-started.md)                                                                    |
@@ -24,9 +24,11 @@ Run `nix develop` (or direnv with `.envrc`), then `pnpm install` and `bin/shorts
 ## How to work
 
 - **Behaviour changes start in OpenSpec.** `openspec/specs/` is how the system behaves today. `openspec/changes/` is pending work. Propose a change (`openspec-propose` skill) before you write code. Keep `openspec validate --all --strict` passing. Archive the change once it ships.
-- **Tests** are plain vitest in `test/`, one file per subject, with `// GIVEN / WHEN / THEN` comments. Anything that needs ffmpeg, the network or a paid API goes in `*.integration.test.ts` and runs only on request (`pnpm test:integration`). Providers are faked (`test/support/fake-fal.ts`).
-- **A new operation** goes in `src/operations/` and `src/operations/index.ts`. It then appears on both the CLI and MCP, and the parity test checks both.
-- **Checks before pushing:** `pnpm check && pnpm check-types && pnpm test && pnpm check-links`. After you change the Post schema, run `pnpm schemas`. After you change `pnpm-lock.yaml`, update the hash in `nix/package.nix` (`nix build` prints it).
+- **Tests** sit next to the module they test (`beats.ts` and `beats.test.ts`) and follow the `test-bdd` skill: `should …` names and `// GIVEN / WHEN / THEN` comments. Use cases get in-memory fake ports; providers are tested against a local fake of their service. Anything that needs ffmpeg, the network or a paid API goes in `*.integration.test.ts` and runs only on request (`pnpm test:integration`).
+- **A new operation** goes in `packages/usecases/src/operations/` and its `index.ts`. It then appears on both the CLI and MCP, and the parity test checks both.
+- **A new provider** goes in `packages/providers/src/`, implementing a port from `packages/usecases/src/ports.ts`, plus one line in `providers/src/index.ts`. Layers point inward: apps → providers → usecases → domain ([architecture](docs/architecture.md#system-overview)).
+- **Checks before pushing:** `pnpm check && pnpm check-types && pnpm test && pnpm check-links`. After you change the Post schema, run `pnpm schemas`. After you change `pnpm-lock.yaml`, update the `pnpmDeps` hash in `flake.nix` (`nix build` prints it).
+- **Commits** follow the `commit` skill, with the settings in `.claude/git-workflow.md`. Show the preview and wait for the user's OK before committing.
 - **Before committing a larger change,** review it. Use Effect where it fits, and check its API in the installed `.d.ts`. Comments explain why, in a line or two. Run the `readability-improver` agent over the changed code.
 
 ## Rules
@@ -36,7 +38,7 @@ Run `nix develop` (or direnv with `.envrc`), then `pnpm install` and `bin/shorts
 3. **Brand-neutral.** No product, client or brand names in code, docs or samples.
 4. **One place per fact.** Link to it instead of repeating it. The table above says where each thing lives.
 5. **The user decides.** Approving a script (`script approve`) or a draft (`post review`) is CLI-only. Never run them for the user. Run spending commands with `--dry-run` first and show the estimate. The repo's agent settings ask before each paid call. Never raise spending caps unless the user asks.
-6. **Effect at the seams.** The repo uses `effect@4.1.2` (`effect/cli`, `effect/ai`). Operations are plain functions over a `Context`. Child processes use `spawn` with `stopWhenAborted`. Files use `node:fs`. Check every API against `node_modules/effect/dist/**/*.d.ts` or [docs/vendors/effect](docs/vendors/README.md), never from memory. Why: [key decisions](docs/architecture.md#key-decisions).
+6. **Effect where it fits.** The repo uses `effect@4.1.2` (`effect/cli`, `effect/ai`). Outside services are ports (Effect services) with one layer per provider. Failures are one `ShortsError` with a tagged `reason`. Child processes use `spawn` with `stopWhenAborted`. Check every API against `node_modules/effect/dist/**/*.d.ts` or [docs/vendors/effect](docs/vendors/README.md), never from memory. Why: [key decisions](docs/architecture.md#key-decisions).
 
 ## Skills
 
