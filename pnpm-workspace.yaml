@@ -1,6 +1,14 @@
-# Supply-chain policy, copied from content-studio. pnpm refuses any version published less
-# than seven days ago, transitive dependencies included: most npm compromises are found and
-# pulled within hours.
+packages:
+  - apps/*
+  - packages/*
+
+# Refuse dependencies that say they don't support our Node, and workspace packages that import
+# each other in a circle: layers point one way (docs/architecture.md#system-overview).
+engineStrict: true
+disallowWorkspaceCycles: true
+
+# Supply-chain rules. pnpm refuses any version published less than seven days ago,
+# transitive dependencies included: most npm compromises are found and pulled within hours.
 #
 # An exception takes an exact `name@version`, never a bare package name, and says why it is
 # here and when it can go: the moment its version passes the window on its own

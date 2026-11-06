@@ -3,7 +3,7 @@
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { postSchemaFile } from "../src/operations/schema.ts";
+import { postSchemaFile } from "../packages/usecases/src/operations/schema.ts";
 
 const file = join(import.meta.dirname, "..", "schemas", "post.schema.json");
 writeFileSync(file, `${JSON.stringify(postSchemaFile(), null, 2)}\n`);

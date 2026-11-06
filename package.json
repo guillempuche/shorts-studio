@@ -1,70 +1,41 @@
 {
-  "name": "shorts-studio",
-  "version": "0.1.0",
-  "description": "Turn audio into vertical short videos with AI images, word-timed captions and FFmpeg: a CLI and MCP server for Reels, TikTok and YouTube Shorts.",
-  "license": "Apache-2.0",
-  "author": "Guillem Puche",
-  "homepage": "https://github.com/guillempuche/shorts-studio#readme",
-  "bugs": {
-    "url": "https://github.com/guillempuche/shorts-studio/issues"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/guillempuche/shorts-studio.git"
-  },
-  "keywords": [
-    "shorts",
-    "reels",
-    "tiktok",
-    "youtube-shorts",
-    "ai-video",
-    "ffmpeg",
-    "whisper",
-    "mcp-server",
-    "effect-ts",
-    "cli"
-  ],
+  "name": "shorts-studio-workspace",
   "type": "module",
-  "bin": {
-    "shorts-studio": "dist/main.js"
-  },
-  "files": [
-    "dist",
-    "LICENSE",
-    "NOTICE",
-    "README.md"
-  ],
-  "packageManager": "pnpm@12.15.0",
   "engines": {
-    "node": ">=24"
+    "node": ">=26"
   },
   "scripts": {
-    "cli": "node src/main.ts",
-    "check": "biome check .",
-    "lint": "biome check --write --no-errors-on-unmatched --max-diagnostics=none .",
-    "check-types": "tsc --noEmit",
-    "test": "vitest run",
-    "test:integration": "vitest run --config vitest.integration.config.ts",
-    "lint-secrets": "secretlint \"**/*\"",
-    "skills:sync": "node scripts/skills-sync.ts",
-    "prepare": "lefthook install",
-    "build": "tsc -p tsconfig.build.json",
-    "build:binary": "bun build src/main.ts --compile --minify --sourcemap --outfile dist-bin/shorts-studio",
-    "prepack": "pnpm build",
+    "cli": "node apps/cli/src/main.ts",
+    "check": "biome check . && syncpack lint",
     "check-links": "node scripts/check-links.ts",
-    "schemas": "node scripts/schemas.ts && biome format --write schemas"
-  },
-  "dependencies": {
-    "@effect/platform-node-shared": "4.1.2",
-    "effect": "4.1.2"
+    "check-types": "turbo run check-types && tsc --noEmit",
+    "lint": "syncpack format && syncpack fix && biome check --write --no-errors-on-unmatched --max-diagnostics=none .",
+    "lint-secrets": "secretlint \"**/*\"",
+    "prepare": "lefthook install",
+    "schemas": "node scripts/schemas.ts && biome format --write schemas",
+    "skills:sync": "node scripts/skills-sync.ts",
+    "test": "turbo run test",
+    "test:integration": "turbo run test:integration"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.11",
     "@secretlint/secretlint-rule-preset-recommend": "^13.0.5",
+    "@shorts-studio/tsconfig": "workspace:*",
     "@types/node": "^26.5.0",
     "lefthook": "^2.0.12",
     "secretlint": "^13.0.5",
+    "syncpack": "^15.3.3",
+    "turbo": "^2.11.10",
     "typescript": "~6.0.3",
     "vitest": "^5.0.0"
-  }
+  },
+  "private": true,
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": ">=26",
+      "onFail": "download"
+    }
+  },
+  "packageManager": "pnpm@12.15.0"
 }

@@ -1,0 +1,203 @@
+/**
+ * Saved collections: reels and TikToks you saved from others, kept under `<posts>/saved/<name>/`
+ * (urls.txt, downloaded.txt, audio/, transcripts/), and single reels downloaded into a post.
+ *
+ * Downloads keep a list of what was downloaded, so running again fetches only new posts. They
+ * are CLI-only: an agent shouldn't fetch from platforms with your browser session. Platform
+ * terms and rights are your responsibility.
+ */
+
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { basename, join } from "node:path";
+import { fail, type ShortsError } from "@shorts-studio/domain/errors";
+import { Kind, Origin, Transcript } from "@shorts-studio/domain/post";
+import { Effect, Schema } from "effect";
+import type { Context } from "../context.ts";
+import { writeFileAtomic, writeJsonFile } from "../files.ts";
+import { defineOperation, p } from "../operation.ts";
+import { Downloader, Transcriber } from "../ports.ts";
+import { postDir, readPost } from "../post-store.ts";
+import { sourceImport } from "./source.ts";
+
+const COLLECTION = /^[a-z0-9][a-z0-9-]{0,99}$/;
+
+/** A saved collection's transcript also says which model made it, so old ones can be found. */
+const SavedTranscript = Schema.Struct({ ...Transcript.fields, model: Schema.String });
+
+export const savedPath = (ctx: Context, collection: string): string =>
+	join(ctx.paths.posts, "saved", collection);
+
+const checkCollection = (name: string): Effect.Effect<string, ShortsError> =>
+	COLLECTION.test(name)
+		? Effect.succeed(name)
+		: Effect.fail(
+				fail(
+					"usage",
+					`"${name}" isn't a valid collection name.`,
+					"Use lowercase letters, digits and dashes, e.g. sm-awareness.",
+				),
+			);
+
+const downloadFix =
+	"Common causes: not logged in to the platform in the browser named in download.cookiesFromBrowser, a private or deleted post, a photo post with no audio, a rate limit (wait, then run it again), or an old yt-dlp (pip install -U yt-dlp).";
+
+const countDownloaded = (dir: string): number =>
+	existsSync(join(dir, "downloaded.txt"))
+		? readFileSync(join(dir, "downloaded.txt"), "utf8")
+				.split("\n")
+				.filter((line) => line.trim() !== "").length
+		: 0;
+
+export const sourceDownload = defineOperation({
+	name: "source_download",
+	description:
+		"Download audio with yt-dlp: every URL in a saved collection's urls.txt (--collection), or one URL into a post (--url with --post). Running it again fetches only what's new. CLI only.",
+	params: {
+		collection: p.optional(
+			p.string("Saved collection under <posts>/saved/ whose urls.txt to download"),
+		),
+		url: p.optional(p.string("One reel or TikTok URL (with --post)")),
+		post: p.optional(p.string("Post to import the downloaded audio into (with --url)")),
+		origin: p.optional(
+			p.literals(Origin.literals, "Who made the audio, for --url (default: others)"),
+		),
+		kind: p.optional(p.literals(Kind.literals, "speech or music, for --url (default: speech)")),
+	},
+	output: Schema.Struct({
+		downloaded: Schema.Int,
+		failed: Schema.Boolean,
+		dir: Schema.String,
+		next: Schema.String,
+	}),
+	surface: "cli-only",
+	spends: false,
+	hints: { readonly: false, destructive: false, idempotent: true, openWorld: true },
+	run: (input, ctx, mode) =>
+		Effect.gen(function* () {
+			const downloader = yield* Downloader;
+			if (input.collection !== undefined) {
+				const name = yield* checkCollection(input.collection);
+				const dir = savedPath(ctx, name);
+				if (!existsSync(join(dir, "urls.txt"))) {
+					return yield* fail(
+						"not-found",
+						`No ${join(dir, "urls.txt")}.`,
+						"Collect the post URLs first (see docs/getting-started.md), one per line.",
+					);
+				}
+				const before = countDownloaded(dir);
+				ctx.log(`Downloading ${name} (pausing 5–15 s between posts)…`);
+				const result = yield* downloader.downloadList({
+					cwd: dir,
+					urlsFile: "urls.txt",
+					archiveFile: "downloaded.txt",
+					output: "audio/%(id)s.%(ext)s",
+				});
+				if (!result.ok) ctx.log(result.errors);
+				return {
+					downloaded: countDownloaded(dir) - before,
+					failed: !result.ok,
+					dir,
+					next: result.ok
+						? `source transcribe --collection ${name}`
+						: `${downloadFix} Then run it again to retry.`,
+				};
+			}
+			if (input.url !== undefined && input.post !== undefined) {
+				yield* readPost(ctx, input.post);
+				const audioDir = join(postDir(ctx, input.post), "audio");
+				mkdirSync(audioDir, { recursive: true });
+				const dir = mkdtempSync(join(audioDir, "download-"));
+				const result = yield* downloader.downloadOne({
+					cwd: dir,
+					url: input.url,
+					output: "%(id)s.%(ext)s",
+				});
+				const file = readdirSync(dir).find((name) => name.endsWith(".mp3"));
+				if (!result.ok || file === undefined) {
+					return yield* fail("provider", `Couldn't download ${input.url}.`, downloadFix);
+				}
+				const imported = yield* sourceImport.run(
+					{
+						post: input.post,
+						file: join(dir, file),
+						origin: input.origin ?? "others",
+						kind: input.kind ?? "speech",
+					},
+					ctx,
+					mode,
+				);
+				return { downloaded: 1, failed: false, dir, next: imported.next };
+			}
+			return yield* fail(
+				"usage",
+				"Nothing to download.",
+				"Pass --collection <name>, or --url <url> with --post <slug>.",
+			);
+		}),
+	render: (o) =>
+		`${o.failed ? "Some downloads failed. " : ""}Downloaded ${o.downloaded} new into ${o.dir}\nNext: ${o.next}`,
+});
+
+export const sourceTranscribe = defineOperation({
+	name: "source_transcribe",
+	description:
+		"Transcribe every downloaded audio file in a saved collection, with a time for each word (transcripts/<id>.json and .txt). Skips files already transcribed. Detects the language unless you pass one.",
+	params: {
+		collection: p.string("Saved collection under <posts>/saved/"),
+		language: p.optional(p.string("Two-letter language code to force (es, en, ca…)")),
+	},
+	output: Schema.Struct({
+		transcribed: Schema.Int,
+		skipped: Schema.Int,
+		failed: Schema.Array(Schema.String),
+	}),
+	surface: "cli-and-mcp",
+	spends: false,
+	hints: { readonly: false, destructive: false, idempotent: true, openWorld: true },
+	run: (input, ctx) =>
+		Effect.gen(function* () {
+			const name = yield* checkCollection(input.collection);
+			const dir = savedPath(ctx, name);
+			const audioDir = join(dir, "audio");
+			if (!existsSync(audioDir)) {
+				return yield* fail(
+					"not-found",
+					`No audio in ${dir}.`,
+					`Download it first: source download --collection ${name}`,
+				);
+			}
+			const transcriber = yield* Transcriber;
+			mkdirSync(join(dir, "transcripts"), { recursive: true });
+			const files = readdirSync(audioDir)
+				.filter((f) => /\.(mp3|m4a|wav)$/i.test(f))
+				.sort();
+			const transcriptOf = (file: string, ext: string) =>
+				join(dir, "transcripts", `${basename(file).replace(/\.[^.]+$/, "")}.${ext}`);
+			const todo = files.filter((file) => !existsSync(transcriptOf(file, "json")));
+			// Every file is tried. A failed one is listed, and the next run tries it again.
+			const [done, failed] = yield* Effect.partition(todo, (file) =>
+				Effect.sync(() => ctx.log(`Transcribing ${file}…`)).pipe(
+					Effect.andThen(transcriber.transcribe(join(audioDir, file), input.language)),
+					Effect.tap((transcript) =>
+						writeJsonFile(transcriptOf(file, "json"), SavedTranscript, {
+							...transcript,
+							model: transcriber.model,
+						}),
+					),
+					Effect.map((transcript) => {
+						writeFileAtomic(transcriptOf(file, "txt"), `${transcript.text}\n`);
+						return file;
+					}),
+					Effect.mapError((error) => `${file}: ${error.message}`),
+				),
+			);
+			return { transcribed: done.length, skipped: files.length - todo.length, failed };
+		}),
+	render: (o) =>
+		[
+			`Transcribed ${o.transcribed}, already done ${o.skipped}, failed ${o.failed.length}.`,
+			...o.failed.map((line) => `  ✗ ${line}`),
+			...(o.failed.length > 0 ? ["Run it again to retry only the failed files."] : []),
+		].join("\n"),
+});

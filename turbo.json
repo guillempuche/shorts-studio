@@ -1,0 +1,14 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "tasks": {
+    "check-types": {
+      "outputs": []
+    },
+    "test": {
+      "outputs": []
+    },
+    "test:integration": {
+      "cache": false
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "@shorts-studio/tsconfig",
+  "version": "0.0.0",
+  "description": "Strict TypeScript settings every shorts-studio package extends.",
+  "type": "module",
+  "exports": {
+    "./base.json": "./base.json"
+  },
+  "private": true
+}

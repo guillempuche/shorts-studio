@@ -2,4 +2,4 @@
 # Runs the CLI from this checkout. Node strips the TypeScript types itself, so there is no
 # build step. MCP clients can point here directly: `shorts-studio mcp serve`.
 here=$(dirname "$(realpath "$0")")
-exec node --disable-warning=ExperimentalWarning "$here/../src/main.ts" "$@"
+exec node --disable-warning=ExperimentalWarning "$here/../apps/cli/src/main.ts" "$@"

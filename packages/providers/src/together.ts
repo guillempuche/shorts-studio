@@ -1,0 +1,112 @@
+/**
+ * Transcription with word timestamps on Together.ai (Whisper large-v3).
+ *
+ * `verbose_json` with `timestamp_granularities=word` returns every word with its start and end
+ * (docs.together.ai, "Create audio transcription request"). Uploads are capped at 80 MB.
+ */
+
+import { openAsBlob, statSync } from "node:fs";
+import { basename } from "node:path";
+import { fail } from "@shorts-studio/domain/errors";
+import { failWith } from "@shorts-studio/usecases/attempt";
+import type { KeySpec } from "@shorts-studio/usecases/context";
+import { requireKey } from "@shorts-studio/usecases/inputs";
+import { Transcriber } from "@shorts-studio/usecases/ports";
+import { Effect, Layer, Schema } from "effect";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { ProviderEnv, providerFailure } from "./env.ts";
+
+export const TOGETHER_KEY: KeySpec = { env: "TOGETHER_API_KEY", keychain: "together-api-key" };
+const BASE_URL = "https://api.together.ai";
+const MODEL = "openai/whisper-large-v3";
+const MAX_UPLOAD_BYTES = 80 * 1024 * 1024;
+
+/** What Together sends back; Whisper names a word's text `word`, some versions `text`. */
+const Response = Schema.Struct({
+	language: Schema.optionalKey(Schema.String),
+	text: Schema.optionalKey(Schema.String),
+	words: Schema.optionalKey(
+		Schema.Array(
+			Schema.Struct({
+				word: Schema.optionalKey(Schema.String),
+				text: Schema.optionalKey(Schema.String),
+				start: Schema.Finite,
+				end: Schema.Finite,
+			}),
+		),
+	),
+});
+
+const fix = "Check the key and your connection (VPN?), then run it again.";
+
+export const togetherLayer = Layer.effect(
+	Transcriber,
+	Effect.gen(function* () {
+		const env = yield* ProviderEnv;
+		const http = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
+		const base = env.endpoints["together"] ?? BASE_URL;
+		const model = env.config.transcribe?.model ?? MODEL;
+
+		const transcribe = Effect.fn("together.transcribe")(function* (
+			file: string,
+			language: string | undefined,
+		) {
+			const key = yield* requireKey(env, TOGETHER_KEY);
+			const size = yield* Effect.try({
+				try: () => statSync(file).size,
+				catch: failWith("not-found", `Check that ${file} exists, then run it again.`),
+			});
+			if (size > MAX_UPLOAD_BYTES) {
+				return yield* fail(
+					"usage",
+					`${basename(file)} is ${(size / 1e6).toFixed(0)} MB; Together accepts up to 80 MB.`,
+					"Cut the audio shorter, then import it again.",
+				);
+			}
+			const form = new FormData();
+			const audio = yield* Effect.tryPromise({
+				try: () => openAsBlob(file),
+				catch: failWith(
+					"not-found",
+					`Check that ${file} exists and is readable, then run it again.`,
+				),
+			});
+			form.append("file", audio, basename(file));
+			form.append("model", model);
+			form.append("response_format", "verbose_json");
+			form.append("timestamp_granularities", "word");
+			form.append("language", language ?? "auto");
+
+			const body = yield* HttpClientRequest.post(`${base}/v1/audio/transcriptions`).pipe(
+				HttpClientRequest.bearerToken(key),
+				HttpClientRequest.bodyFormData(form),
+				http.execute,
+				Effect.flatMap(HttpClientResponse.schemaBodyJson(Response)),
+				Effect.catch(providerFailure(fix)),
+			);
+			const words = (body.words ?? [])
+				.map((w) => ({ text: (w.word ?? w.text ?? "").trim(), start: w.start, end: w.end }))
+				.filter((w) => w.text !== "");
+			if (words.length === 0) {
+				return yield* fail(
+					"provider",
+					"Together returned no word timings.",
+					"Check that there is speech in the audio.",
+				);
+			}
+			return {
+				language: body.language ?? language ?? "unknown",
+				text: body.text?.trim() ?? "",
+				words,
+			};
+		});
+
+		return Transcriber.of({
+			provider: "together",
+			keys: [TOGETHER_KEY],
+			checks: Effect.succeed([]),
+			model,
+			transcribe,
+		});
+	}),
+);

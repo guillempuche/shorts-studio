@@ -1,6 +1,6 @@
 # Dependencies and tooling
 node_modules/
-.corepack/
+.turbo/
 .direnv/
 coverage/
 
@@ -33,6 +33,5 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
-dist/
 dist-bin/
 result

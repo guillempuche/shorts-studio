@@ -1,0 +1,24 @@
+{
+  "name": "@shorts-studio/domain",
+  "version": "0.0.0",
+  "description": "The rules of a post: beats, story moments, motion, captions and errors. No files, no network.",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit",
+    "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
+  },
+  "dependencies": {
+    "effect": "4.1.2"
+  },
+  "devDependencies": {
+    "@shorts-studio/tsconfig": "workspace:*",
+    "@types/node": "^26.5.0",
+    "typescript": "~6.0.3",
+    "vitest": "^5.0.0"
+  },
+  "private": true
+}

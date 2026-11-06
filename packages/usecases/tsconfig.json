@@ -1,0 +1,4 @@
+{
+  "extends": "@shorts-studio/tsconfig/base.json",
+  "include": ["src", "*.config.ts"]
+}
