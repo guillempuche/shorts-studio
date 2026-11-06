@@ -7,20 +7,29 @@ Notable changes, newest first. The release workflow publishes each version's sec
 ### Added
 
 - Install with `nix run github:guillempuche/shorts-studio`, native binaries (`install.sh`, `install.ps1`), or the npm package.
-- `doctor`, `schema show`, and batching with `--post a,b`, `--day` and `--in-stage`.
+- `doctor` and `schema show`.
+- Run one command on several posts with `--post a,b`, `--day` or `--in-stage`.
 
 ### Fixed
 
-- Interrupting a command waits for ffmpeg to stop, so no render keeps running and no temporary file is left.
-- `--dry-run` on a command that spends nothing is refused instead of running it for real.
-- A config.json or brand.json that doesn't parse no longer stops every command; `doctor` reports it.
-- `image generate` never sends a beat without a prompt, even rerolled, and frees a reservation FAL ended without leaving a stale request behind.
-- A missing transcript.json is transcribed again; each `source download --url` gets its own folder; a failed import leaves no temporary file; a batch prints how many posts failed; commands on a post that doesn't exist fail before taking its lock.
+- When you interrupt a command, it waits for ffmpeg to stop. No render keeps running and no temporary file is left.
+- A command that spends nothing now refuses `--dry-run` instead of running for real.
+- A config.json or brand.json that doesn't parse no longer stops every command. `doctor` reports it.
+- `image generate` never sends a beat without a prompt, even on a reroll.
+- When FAL ends a request, `image generate` frees its spending reservation and leaves no stale request behind.
+- A missing transcript.json is transcribed again.
+- Each `source download --url` gets its own folder.
+- A failed import leaves no temporary file.
+- A batch prints how many posts failed.
+- Commands on a post that doesn't exist fail before taking its lock.
 
 ## [0.1.0] - 2026-11-06
 
 ### Added
 
-- From audio to a reviewable draft: import, word-timed transcription, beats, one AI image per beat, and an FFmpeg render with captions, on the CLI and as an MCP server.
-- Story direction: beats carry a story moment that sets their length, motion and captions; an optional hook title.
-- Review and hand-off: the evening review, a frame-exact CapCut export, finalize, publish and archive; saved-collection downloads and transcription; image import; spend caps and `budget show`.
+- From audio to a draft you can review: import, word-timed transcription, beats, one AI image per beat, and an FFmpeg render with captions. Works on the CLI and as an MCP server.
+- Story direction: each beat has a story moment that sets its length, motion and captions. An optional hook title.
+- Review and hand-off: the evening review, a frame-exact CapCut export, finalize, publish and archive.
+- Download and transcribe saved collections.
+- Image import.
+- Spending caps and `budget show`.

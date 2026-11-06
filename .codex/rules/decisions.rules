@@ -1,5 +1,5 @@
-# What Codex may run from shorts-studio's CLI. Codex reads this file once the folder is
-# trusted. A rule matches the first words of a command, word for word.
+# What Codex may run from shorts-studio's CLI. Codex reads this file once you trust the
+# folder. A rule matches the first words of a command, word for word.
 
 # Approving a script or a draft is the user's decision (AGENTS.md, "The user decides").
 prefix_rule(
@@ -10,7 +10,7 @@ prefix_rule(
     not_match = ["bin/shorts-studio post show --post x"],
 )
 
-# Steps that spend money ask first; run them with --dry-run and show the estimate before asking.
+# Steps that spend money ask first. Run them with --dry-run and show the estimate before asking.
 prefix_rule(
     pattern = [["bin/shorts-studio", "shorts-studio"], "image", "generate"],
     decision = "prompt",

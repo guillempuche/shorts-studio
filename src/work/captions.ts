@@ -62,7 +62,7 @@ export const groupCaptions = (words: ReadonlyArray<Word>): ReadonlyArray<Caption
 		}
 	});
 
-	// One word alone hurts comprehension: join it to a neighbour, unless it ends the audio.
+	// A word on its own is hard to follow: join it to the caption before, unless it ends the audio.
 	const merged: Array<Array<Word>> = [];
 	raw.forEach((group, i) => {
 		const previous = merged.at(-1);

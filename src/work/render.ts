@@ -4,7 +4,7 @@
  * 1080×1920 at 30 fps.
  *
  * Frame counts come from the beats' absolute times (round(end·fps) − round(start·fps)), so
- * rounding never accumulates and the pictures stay in sync with the audio over a long post.
+ * rounding errors never add up and the pictures stay in sync with the audio over a long post.
  */
 
 import { MAX_ZOOM, type Motion, PUNCH, TRAVEL_ZOOM } from "../domain/direction.ts";

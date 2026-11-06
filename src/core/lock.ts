@@ -1,6 +1,6 @@
 /**
- * Runs an Effect while holding a lock file, releasing it however the Effect ends. The one place
- * the post store and the spend ledger turn a lock into Effect.
+ * Runs an Effect while holding a lock file, and releases the lock however the Effect ends. The
+ * post store and the spend ledger both lock through here.
  */
 
 import { Effect } from "effect";

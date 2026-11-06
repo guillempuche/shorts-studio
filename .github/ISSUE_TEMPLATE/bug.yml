@@ -19,7 +19,7 @@ body:
     id: doctor
     attributes:
       label: shorts-studio doctor
-      description: Its output (it shows which keys are set, never their values).
+      description: Paste its output. It shows which keys are set, never their values.
       render: text
   - type: input
     id: version

@@ -1,9 +1,9 @@
 /**
  * Story direction: how long beats hold, how images move and how captions read, by story moment.
  *
- * Every number shorts-studio uses for these lives here. The evidence behind each, and how
- * strong it is, is in docs/research/; how an agent picks moments is the story-direction skill.
- * Most numbers are well-grounded starting points, not measured optima for 60-second shorts.
+ * Every number shorts-studio uses for these lives here. The evidence for each, and how strong
+ * it is, is in docs/research/. How an agent picks moments is in the story-direction skill. Most
+ * numbers are well-supported starting points, not values proven best for 60-second shorts.
  */
 
 import { Schema } from "effect";

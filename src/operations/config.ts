@@ -1,6 +1,6 @@
 /**
  * `config show` and `config check` (alias `doctor`): where everything lives, which keys are set,
- * and whether the tools work. Run one before concluding something is broken.
+ * and whether the tools work. Run one before deciding something is broken.
  */
 
 import { Effect, Schema } from "effect";
@@ -19,7 +19,7 @@ const Check = Schema.Struct({
 });
 type Check = typeof Check.Type;
 
-/** Keys the core loop needs; no command uses the voice and music keys yet. */
+/** Keys the main steps need. No command uses the voice and music keys yet. */
 const REQUIRED: ReadonlyArray<SecretName> = ["TOGETHER_API_KEY", "FAL_KEY"];
 
 const checkKey = async (ctx: Context, name: SecretName): Promise<Check> => {
@@ -39,7 +39,10 @@ const checkKey = async (ctx: Context, name: SecretName): Promise<Check> => {
 	};
 };
 
-/** A config.json or brand.json that doesn't parse: its defaults are in use, which may not be what the user set. */
+/**
+ * A config.json or brand.json that isn't valid. The defaults are used instead, which may not
+ * be what the user wanted.
+ */
 const settingsChecks = (ctx: Context): ReadonlyArray<Check> =>
 	ctx.settingsIssues.map((issue) => ({
 		name: "settings",
@@ -94,7 +97,9 @@ export const configShow = defineOperation({
 			"",
 			...renderChecks(o.checks),
 			"",
-			blocking === 0 ? "Ready." : `${blocking} blocking. Fix the ✗ rows above.`,
+			blocking === 0
+				? "Ready."
+				: `${blocking} blocking problem${blocking === 1 ? "" : "s"}. Fix the ✗ rows above.`,
 		].join("\n");
 	},
 });
@@ -102,7 +107,7 @@ export const configShow = defineOperation({
 export const configCheck = defineOperation({
 	name: "config_check",
 	description:
-		"Check that this machine can run shorts-studio (ffmpeg with libass, ffprobe, yt-dlp, API keys). Fails, with the fixes, when something blocking is missing.",
+		"Check that this machine can run shorts-studio (ffmpeg with libass, ffprobe, yt-dlp, API keys). Fails and lists the fixes when something it needs is missing.",
 	params: {},
 	output: Schema.Struct({ checks: Schema.Array(Check) }),
 	surface: "cli-and-mcp",
@@ -117,7 +122,7 @@ export const configCheck = defineOperation({
 					: Effect.fail(
 							fail(
 								"missing-tool",
-								`${blocking.length} blocking:\n${renderChecks(blocking).join("\n")}`,
+								`${blocking.length} blocking problem${blocking.length === 1 ? "" : "s"}:\n${renderChecks(blocking).join("\n")}`,
 								"Fix the rows above, then run it again.",
 							),
 						);

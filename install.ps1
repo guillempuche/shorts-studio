@@ -1,6 +1,7 @@
 <#
 .SYNOPSIS
-    Installs the shorts-studio binary for Windows from GitHub Releases, checking its SHA-256.
+    Downloads the shorts-studio binary for Windows from GitHub Releases, checks its SHA-256 and
+    installs it.
 .EXAMPLE
     irm https://raw.githubusercontent.com/guillempuche/shorts-studio/main/install.ps1 | iex
 .NOTES
@@ -43,7 +44,7 @@ try {
         [Environment]::SetEnvironmentVariable("Path", "$UserPath;$InstallDir", "User")
         Write-Host "Added $InstallDir to your PATH; open a new terminal to use it." -ForegroundColor Yellow
     }
-    Write-Host "Next: shorts-studio config show   (it checks ffmpeg, which needs libass for captions, and your API keys)"
+    Write-Host "Next: shorts-studio doctor   (it checks ffmpeg, which needs libass for captions, and your API keys)"
 } finally {
     Remove-Item -Recurse -Force $Tmp -ErrorAction SilentlyContinue
 }

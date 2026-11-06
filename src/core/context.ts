@@ -1,11 +1,11 @@
 /**
- * What every operation is handed: where things live, how to reach the outside world, and the
+ * What every operation receives: where files live, how to reach the outside world, and the
  * user's settings.
  *
- * A plain object rather than Effect services, on purpose: operations are plain functions over
- * this, so a test swaps `fetch`, `run` or the folders for fakes by building a different object.
- * Effect is used where it earns its place (interruption, the CLI and MCP surfaces), not as the
- * way to pass arguments.
+ * It's a plain object, not a set of Effect services, on purpose. Operations are plain functions
+ * that take it, so a test swaps `fetch`, `run` or the folders for fakes by building a different
+ * object. We use Effect where it helps (interruption, the CLI, the MCP server), not to pass
+ * arguments around.
  */
 
 import { execFile } from "node:child_process";
@@ -67,7 +67,7 @@ export type Brand = typeof Brand.Type;
 
 export const DEFAULT_CAPS = { dailyUsd: 5, postUsd: 2 } as const;
 
-/** Provider base URLs; overridable so tests and local fakes stand in for the real services. */
+/** Base URLs of the paid services. Tests and local fakes override them. */
 export interface Endpoints {
 	readonly fal: string;
 	readonly together: string;
@@ -78,7 +78,7 @@ export interface Context {
 	readonly endpoints: Endpoints;
 	readonly config: Config;
 	readonly brand: Brand;
-	/** Why config.json or brand.json couldn't be read; their defaults apply and doctor reports it. */
+	/** Why config.json or brand.json couldn't be read. Defaults apply, and doctor reports it. */
 	readonly settingsIssues: ReadonlyArray<string>;
 	/** An API key from the environment, or on macOS from the Keychain. Never logged. */
 	readonly secret: (name: SecretName) => Promise<string | undefined>;
@@ -90,7 +90,7 @@ export interface Context {
 		options?: { readonly signal?: AbortSignal; readonly cwd?: string },
 	) => Promise<RunResult>;
 	readonly now: () => Date;
-	/** Progress and diagnostics: always stderr, never stdout (stdout carries results and MCP). */
+	/** Progress and diagnostics: always stderr, since stdout carries results and MCP messages. */
 	readonly log: (line: string) => void;
 }
 
@@ -114,7 +114,10 @@ export const resolvePaths = (env: NodeJS.ProcessEnv): Paths => {
 	return { data, posts: env["SHORTS_POSTS_DIR"] || join(data, "posts") };
 };
 
-/** A settings file's contents: undefined when absent, or when invalid (the reason goes to `issues`). */
+/**
+ * A settings file's contents. Undefined when the file is missing or invalid; the reason it's
+ * invalid goes to `issues`.
+ */
 const readSettings = <S extends Schema.Codec<unknown, unknown>>(
 	file: string,
 	schema: S,

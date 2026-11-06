@@ -20,12 +20,12 @@ export const toJsonSchemaFile = (schema: Schema.Top): Record<string, unknown> =>
 
 export const postSchemaFile = (): Record<string, unknown> => toJsonSchemaFile(Post);
 
-/** Built with the operation list, which itself includes this operation. */
+/** Takes the operation list as a function because that list includes this operation. */
 export const makeSchemaShow = (operations: () => ReadonlyArray<Operation>) =>
 	defineOperation({
 		name: "schema_show",
 		description:
-			'JSON Schema of the post manifest (name "post") or of one command\'s input and output (e.g. "image_generate"). Without a name, lists the names.',
+			'Show the JSON Schema of post.json (name "post") or of one command\'s input and output (e.g. "image_generate"). Without a name, list the names.',
 		params: { name: p.optional(p.string('"post" or a command name such as image_generate')) },
 		output: Schema.Struct({
 			names: Schema.optionalKey(Schema.Array(Schema.String)),

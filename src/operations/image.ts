@@ -2,10 +2,10 @@
  * `image generate`: one image per beat, from the beat's prompt and the brand's style suffix.
  *
  * It spends money, so it needs the approved script (the morning check), `--yes` on the CLI,
- * and room under the spending caps. Each paid call is reserved in the ledger before it is
- * submitted, and the provider's request is saved in post.json before polling: a run cut short
- * resumes that request on the next run instead of paying again. Beats whose image is already
- * up to date are skipped; `--reroll` gives chosen beats a new seed.
+ * and room under the spending caps. Each paid call is reserved in the ledger before it is sent.
+ * The provider's request is saved in post.json before waiting for the image. So if a run is cut
+ * short, the next run picks that request up again instead of paying twice. Beats whose image is
+ * already up to date are skipped. `--reroll` gives the chosen beats a new seed.
  */
 
 import { mkdirSync } from "node:fs";
@@ -38,7 +38,7 @@ const PROVIDER = "fal";
 /** How many beats are generated at once. */
 const CONCURRENCY = 3;
 
-/** A deterministic default seed per beat, so re-running without a reroll is reproducible. */
+/** A fixed default seed for each beat, so running again without --reroll gives the same image. */
 const defaultSeed = (slug: string, index: number): number =>
 	Number.parseInt(hashOf(slug, index).slice(0, 8), 16) % 2_147_483_647;
 
@@ -47,7 +47,7 @@ const fullPrompt = (ctx: Context, prompt: string): string => {
 	return suffix ? `${prompt}, ${suffix}` : prompt;
 };
 
-/** Only beats with a prompt get here (see `generatable`), so the empty fallback is never sent. */
+/** Beats without a prompt are always skipped, so the empty fallback is never sent. */
 const imageInputHash = (ctx: Context, modelName: string, beat: Beat, seed: number): string =>
 	hashOf(fullPrompt(ctx, beat.prompt ?? ""), modelName, seed, IMAGE_SIZE);
 
@@ -110,13 +110,13 @@ const generateOne = Effect.fn("generateOne")(function* (
 				"provider",
 				error instanceof Error ? error.message : String(error),
 				terminal
-					? `Run image generate --post ${slug} --yes to submit a new request.`
-					: // Not "the same command": with --reroll that would re-seed and pay again.
+					? `Run image generate --post ${slug} --yes to send a new request.`
+					: // Not "run the same command": with --reroll, that would pick a new seed and pay again.
 						`Run image generate --post ${slug} --yes (without --reroll): it resumes this request.`,
 			);
 		},
 	).pipe(
-		// A request FAL ended won't complete: forget it and free the reservation.
+		// FAL ended this request without an image, so it will never finish: forget it and free the reservation.
 		Effect.tapError(() =>
 			terminal
 				? release(ctx, request.ledgerId).pipe(

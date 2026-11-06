@@ -1,7 +1,8 @@
 /**
  * After the draft: the user's evening review, the finished video, where it was published, and
- * archiving. The review is the user's decision, so it is CLI-only; recording the final file,
- * publications and archiving are bookkeeping an agent may do when told to.
+ * archiving. The review is the user's decision, so it is CLI-only. Saving the final file,
+ * recording where it was published and archiving are bookkeeping, which an agent may do when
+ * told to.
  */
 
 import { copyFileSync, existsSync } from "node:fs";
@@ -133,7 +134,7 @@ export const postFinalize = defineOperation({
 					copyFileSync(source, target);
 					return { hash: await hashFile(target), durationSec };
 				},
-				failWith("failed", "Check the file is a video ffprobe can read."),
+				failWith("failed", "Check that the file is a video ffprobe can read."),
 			);
 			const post = yield* updatePost(ctx, input.post, "post finalize", (current) =>
 				Effect.succeed({ ...current, final: { file, hash, at: ctx.now().toISOString() } }),
@@ -187,7 +188,7 @@ export const postPublish = defineOperation({
 export const postArchive = defineOperation({
 	name: "post_archive",
 	description:
-		"Archive a post: it leaves post list (unless listed by stage archived). Its files stay where they are.",
+		"Archive a post. It no longer shows in post list, unless you list by stage archived. Its files stay where they are.",
 	params: { post: p.string("Post slug") },
 	output: Schema.Struct({ archivedAt: Schema.String }),
 	surface: "cli-and-mcp",

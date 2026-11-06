@@ -19,7 +19,7 @@ const IMAGE = /^\.(jpe?g|png|webp)$/i;
 export const imageImport = defineOperation({
 	name: "image_import",
 	description:
-		"Use your own image (Midjourney, a photo) for one beat. It should be portrait and at least 1344×2400 for the motion to stay sharp; image generate won't replace it unless the beat is rerolled.",
+		"Use your own image (Midjourney, a photo) for one beat. It should be portrait and at least 1344×2400 for the motion to stay sharp. image generate won't replace it unless the beat is rerolled.",
 	params: {
 		post: p.string("Post slug"),
 		beat: p.int("Beat index"),

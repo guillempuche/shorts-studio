@@ -1,10 +1,10 @@
 /**
- * The spend ledger: an append-only `ledger.jsonl` in the data folder.
+ * The spend ledger: `ledger.jsonl` in the data folder. Commands only ever add lines to it.
  *
- * Every paid call reserves its estimated cost before it is submitted, under one lock shared by
- * every process, so five posts generating at once can't all pass the daily cap. The reservation
- * is settled once the result arrives, or released if the call failed before anything was billed.
- * Providers here don't report the actual charge, so a settled amount is the estimate.
+ * Every paid call reserves its estimated cost before it's sent. All processes share one lock
+ * for this, so five posts generating at once can't all pass the daily cap. The reservation is
+ * settled when the result arrives, or released if the call failed before anything was billed.
+ * These providers don't report the actual charge, so a settled amount is the estimate.
  */
 
 import { randomUUID } from "node:crypto";
@@ -31,7 +31,7 @@ export type LedgerEntry = typeof LedgerEntry.Type;
 const ledgerFile = (ctx: Context): string => join(ctx.paths.data, "ledger.jsonl");
 const decodeEntry = Schema.decodeUnknownEffect(Schema.fromJsonString(LedgerEntry));
 
-/** Every entry; a corrupt line fails loudly, since caps can't be trusted past it. */
+/** Every entry. A corrupt line fails the read, since the caps can't be trusted past it. */
 export const readLedger = (
 	ctx: Context,
 ): Effect.Effect<ReadonlyArray<LedgerEntry>, ShortsError> => {
@@ -89,7 +89,7 @@ const withLedgerLock = <A>(ctx: Context, use: Effect.Effect<A, ShortsError>) =>
 				fail(
 					"conflict",
 					"The spend ledger is busy.",
-					"Another command is reserving spend; run this one again.",
+					"Another command is updating it; run this one again.",
 				),
 			use,
 		);

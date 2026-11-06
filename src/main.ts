@@ -2,9 +2,9 @@
 /**
  * The entry point: parse the arguments, run the command, set the exit code.
  *
- * `NodeRuntime.runMain` interrupts the program on SIGINT/SIGTERM, so finalisers run (locks are
- * released, child processes stopped) and an interrupted run exits 130. A usage error exits 2
- * rather than Effect's default 1, so scripts can tell "you called it wrong" from "it failed".
+ * `NodeRuntime.runMain` interrupts the program on Ctrl-C or SIGTERM. The cleanup steps then run
+ * (locks are released, child processes stopped), and an interrupted run exits 130. A usage error
+ * exits 2, not Effect's default 1, so scripts can tell "you called it wrong" from "it failed".
  */
 
 import * as NodeChildProcessSpawner from "@effect/platform-node-shared/NodeChildProcessSpawner";

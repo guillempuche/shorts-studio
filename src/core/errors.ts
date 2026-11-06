@@ -1,9 +1,9 @@
 /**
  * The one error type operations fail with.
  *
- * Every failure names what went wrong (`message`) and what to do about it (`fix`), because the
- * reader is as often an agent as a person, and an agent with no next step retries blindly. The
- * `code` is stable and documented; it decides the exit code and is what scripts should match on.
+ * Every failure says what went wrong (`message`) and what to do about it (`fix`). The reader is
+ * often an agent, and an agent with no next step retries blindly. The `code` is stable and
+ * documented. It sets the exit code, and it's what scripts should match on.
  */
 
 import { Runtime, Schema } from "effect";

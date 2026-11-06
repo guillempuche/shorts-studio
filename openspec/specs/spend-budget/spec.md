@@ -2,49 +2,54 @@
 
 ## Purpose
 
-Spending only what was approved, never twice: the script approval gate, the spend ledger and its caps, dry runs, and resuming paid requests.
+Spend money only on what was approved, and never pay twice. This covers the script approval step, the spending ledger and its caps, dry runs, and resuming paid requests.
 
 ## Requirements
 
 ### Requirement: Nothing SHALL be spent before the script is approved
 
-`image generate` SHALL refuse with code `needs-confirmation` while the post's current script hash isn't the approved one.
+`image generate` SHALL refuse with code `needs-confirmation` while the hash of the post's current script is not the approved one.
 
 #### Scenario: Script edited after approval
 
 - **WHEN** images are generated
-- **THEN** nothing reaches the provider and the fix names `script approve`
+- **THEN** nothing is sent to the provider
+- **AND** the fix names `script approve`
 
-### Requirement: Paid calls SHALL be reserved against caps
+### Requirement: Paid calls SHALL reserve their cost within the caps
 
-Each paid call SHALL reserve its estimated cost in the append-only ledger under a lock shared by every process before it is submitted, and SHALL fail with `over-budget` when the daily or per-post cap would be passed.
+Each paid call SHALL reserve its estimated cost in the ledger before it is sent. Entries are only ever added to the ledger. Reserving SHALL happen under one lock that every process shares. The call SHALL fail with `over-budget` when it would pass the daily or per-post cap.
 
 #### Scenario: Two calls at once
 
-- **WHEN** two calls that each fit the cap but not together reserve at the same time
+- **WHEN** two calls reserve at the same time
+- **AND** each fits the cap on its own, but not both together
 - **THEN** exactly one succeeds
 
 ### Requirement: A submitted request SHALL be resumed, not paid again
 
-The provider's request id and result URLs SHALL be saved in `post.json` before polling, and a later run SHALL poll that request instead of submitting a new one. A request the provider reports as failed SHALL release its reservation.
+A command SHALL save the provider's request id and result URLs in `post.json` before it waits for the result. A later run SHALL check on that saved request instead of sending a new one. When the provider reports a request as failed, its reservation SHALL be released.
 
-#### Scenario: Interrupted after submitting
+#### Scenario: Interrupted after sending
 
-- **WHEN** a run is interrupted after submitting and runs again
-- **THEN** the provider saw one request and the ledger holds one reservation
+- **WHEN** a run is interrupted after it sends a request
+- **AND** it runs again
+- **THEN** the provider got one request
+- **AND** the ledger holds one reservation
 
 ### Requirement: A dry run SHALL spend nothing
 
-With `--dry-run` (or without `--yes` on the CLI) a spending command SHALL report what it would make and the estimated cost, and SHALL change nothing.
+With `--dry-run`, or without `--yes` on the CLI, a spending command SHALL report what it would make and the estimated cost. It SHALL change nothing.
 
 #### Scenario: Without --yes
 
 - **WHEN** `image generate` runs without `--yes`
-- **THEN** it prints the estimate and exits 3
+- **THEN** it prints the estimate
+- **AND** it exits 3
 
-### Requirement: Spend SHALL be visible
+### Requirement: Spending SHALL be easy to see
 
-`budget show` SHALL report today's spend and each post's total against the daily and per-post caps, counting reservations still in flight at their estimate.
+`budget show` SHALL report today's spending against the daily cap, and each post's total against the per-post cap. Reservations that are not settled yet SHALL count at their estimate.
 
 #### Scenario: After generating images
 

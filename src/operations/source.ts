@@ -1,11 +1,11 @@
 /**
- * Bringing audio into a post: your own export, a saved reel's audio (others' audio is a guide
- * track: publish with the platform's in-app sound), a track made in Suno, Fish Audio or
- * ElevenLabs' apps, or an AI voiceover.
+ * Bringing audio into a post: your own export, a saved reel's audio, a track made in the Suno,
+ * Fish Audio or ElevenLabs apps, or an AI voiceover. Someone else's audio is only a guide track:
+ * publish with the platform's in-app sound.
  *
- * Whatever comes in (audio or a video file) is converted to one `audio/audio.m4a`, so every
- * later step reads the same format. Replacing the audio makes the transcript, beats and draft
- * stale through their input hashes.
+ * Whatever comes in, audio or video, is converted to one `audio/audio.m4a`, so every later step
+ * reads the same format. New audio changes the input hashes of the transcript, beats and draft,
+ * which marks them out of date.
  */
 
 import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";

@@ -2,65 +2,69 @@
 
 ## Purpose
 
-`post.json`, the single source of truth for one post: what has been made, from what, and what the user decided. Commands write it; its stage is computed from it.
+`post.json` is the one record of a post: what has been made, from what, and what the user decided. Only commands write it. The post's stage is worked out from it.
 
 ## Requirements
 
-### Requirement: The manifest SHALL be written only through commands, safely
+### Requirement: post.json SHALL be written only by commands, safely
 
-Commands SHALL change `post.json` under a per-post lock, re-reading it first and bumping `revision`, and SHALL write it through a temporary file and a rename. A lock held by a process that no longer exists SHALL be taken over.
+A command SHALL change `post.json` only while it holds that post's lock. It SHALL read the file again first and add 1 to `revision`. It SHALL write a temporary file and then rename it over `post.json`. When the process that holds a lock no longer exists, the next command SHALL take the lock over.
 
 #### Scenario: Two commands on one post
 
-- **WHEN** a command holds a post's lock and another asks for it
-- **THEN** the second waits, and after the wait names the holder and its command
+- **WHEN** a command holds a post's lock and another command asks for it
+- **THEN** the second command waits
+- **AND** after the wait, it names the holder and the holder's command
 
 #### Scenario: A lock left by a crash
 
 - **WHEN** the lock file names a process that isn't running
 - **THEN** the next command takes the lock
 
-### Requirement: A hand-edited manifest SHALL be validated on read
+### Requirement: A hand-edited post.json SHALL be checked when read
 
-Reading `post.json` SHALL decode it against its Schema and report every invalid field with its path, with a fix that says commands write this file.
+Reading `post.json` SHALL check it against its Schema. It SHALL report every invalid field with its path. The fix SHALL say that commands write this file.
 
 #### Scenario: Two wrong fields
 
-- **WHEN** `slug` is a number and `revision` a string
-- **THEN** reading fails naming both paths
+- **WHEN** `slug` is a number and `revision` is a string
+- **THEN** reading fails
+- **AND** the error names both paths
 
 ### Requirement: Generated outputs SHALL record what they were made from
 
-Each transcript, beat plan, image and draft SHALL store an `inputHash` of its inputs, including upstream outputs' hashes and the producing code's version, and SHALL count as up to date only while that hash matches.
+Each transcript, beat plan, image and draft SHALL store an `inputHash` of its inputs. These inputs include the hashes of the earlier outputs it was built from and the version of the code that made it. An output SHALL count as up to date only while that hash still matches.
 
 #### Scenario: A changed prompt
 
 - **WHEN** a beat's prompt changes after its image was made
-- **THEN** the next `image generate` makes that beat's image again and skips the others
+- **THEN** the next `image generate` makes that beat's image again
+- **AND** it skips the other beats
 
-### Requirement: The stage SHALL be computed, not stored
+### Requirement: The stage SHALL be worked out, never stored
 
-A post's stage SHALL be derived from the manifest: `idea`, `script-ready`, `script-approved`, `assets` or `draft`.
+A post's stage SHALL be worked out from `post.json`. It is one of `idea`, `script-ready`, `script-approved`, `assets` or `draft`.
 
-#### Scenario: An edited approved script
+#### Scenario: An approved script that was edited
 
 - **WHEN** the script changes after approval
 - **THEN** the post is back at `script-ready`
 
 ### Requirement: Beats SHALL carry their story moment
 
-Each beat MAY record a story moment (`hook`, `setup`, `tension`, `twist`, `vulnerable`, `payoff`, `cta`) and a motion override. Both SHALL be part of the draft's input hash, so changing them makes the draft stale.
+Each beat MAY record a story moment (`hook`, `setup`, `tension`, `twist`, `vulnerable`, `payoff`, `cta`) and a motion override. Both SHALL be part of the draft's input hash, so changing either one makes the draft out of date.
 
 #### Scenario: Setting a moment
 
 - **WHEN** `beat set` gives beat 0 the moment `hook`
-- **THEN** the manifest records it and the next `draft render` renders again
+- **THEN** `post.json` records it
+- **AND** the next `draft render` renders the draft again
 
-### Requirement: A post SHALL record its life after the draft
+### Requirement: A post SHALL record what happens after the draft
 
-The manifest SHALL record the review, the final video, every platform it was published on (one record per platform) and when it was archived; the stage SHALL follow them: `needs-fix`, `rejected`, `approved`, `final`, `posted`, `archived`. Archived posts SHALL be listed only when asked for by stage.
+`post.json` SHALL record the review, the final video, each platform the post was published on (one record per platform) and when it was archived. The stage SHALL follow these: `needs-fix`, `rejected`, `approved`, `final`, `posted`, `archived`. Archived posts SHALL be listed only when someone asks for them by stage.
 
 #### Scenario: Finalizing before approval
 
 - **WHEN** a final video is recorded for a draft that isn't approved
-- **THEN** it is refused with `needs-confirmation`
+- **THEN** the command refuses with `needs-confirmation`

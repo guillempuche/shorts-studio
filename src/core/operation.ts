@@ -1,10 +1,10 @@
 /**
- * The operation registry: each operation is declared once and exposed twice, as a CLI command
+ * The operation registry. Each operation is declared once and offered twice: as a CLI command
  * (`post create --post x`) and as an MCP tool (`post_create { post: "x" }`).
  *
- * A parameter is declared with `p.*`, which yields both its Effect Schema (the MCP tool's input
- * schema and the `schema` command's output) and its CLI flag, so the two surfaces can't drift.
- * Every input is a flag, never a positional argument: one shape for people and agents alike.
+ * Declare a parameter with `p.*`. That gives both its Effect Schema (for the MCP tool's input
+ * and the `schema` command's output) and its CLI flag, so the CLI and MCP can't drift apart.
+ * Every input is a flag, never a positional argument, so people and agents use the same shape.
  */
 
 import { type Effect, Option, Schema } from "effect";
@@ -18,7 +18,7 @@ export interface Param<A> {
 	readonly field: Schema.Top;
 	/** The CLI flag; its name is set when the operation is built, from the parameter's key. */
 	readonly flag: (flagName: string) => Flag.Flag<A>;
-	/** Fills MCP input the way the CLI flag would (absent boolean → false). */
+	/** Fills in MCP input the way the CLI flag would (a missing boolean becomes false). */
 	readonly normalize: (value: unknown) => A;
 	/** Set by `p.optional`. */
 	readonly optional?: true;
@@ -82,7 +82,7 @@ export interface Operation<P extends Params = Params, O = unknown> {
 	readonly name: string;
 	readonly description: string;
 	readonly params: P;
-	/** A Struct, because MCP requires an object root for tool results. */
+	/** A Struct, because MCP requires a tool's result to be an object. */
 	readonly output: Schema.Codec<O, unknown>;
 	/** Decisions that belong to the user (approving a script or a draft) stay off MCP. */
 	readonly surface: "cli-and-mcp" | "cli-only";
@@ -95,8 +95,8 @@ export interface Operation<P extends Params = Params, O = unknown> {
 		/** Reaches services outside this machine. */
 		readonly openWorld: boolean;
 	};
-	// Declared as methods: their parameters are checked bivariantly, so a specific operation
-	// fits the registry's `Operation` without a cast.
+	// Declared as methods: TypeScript checks method parameters more loosely (bivariantly), so a
+	// specific operation fits the registry's `Operation` without a cast.
 	run(input: InputOf<P>, ctx: Context, mode: RunMode): Effect.Effect<O, ShortsError>;
 	/** Human-readable output; JSON is printed when absent or with `--json`. */
 	render?(output: O): string;

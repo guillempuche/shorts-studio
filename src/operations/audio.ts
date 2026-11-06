@@ -1,7 +1,7 @@
 /**
- * `audio transcribe`: word-timed transcript of the post's audio. The words drive the beats and
- * the captions. Language is detected per file unless `--language` forces one, which helps
- * when a video opens with music or a phrase in another language.
+ * `audio transcribe`: a transcript of the post's audio, with a time for every word. The words
+ * set the beats and the captions. The language is detected for each file unless `--language`
+ * forces one. Forcing helps when a video opens with music or a phrase in another language.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -22,11 +22,11 @@ const PROVIDER = "together";
 export const audioTranscribe = defineOperation({
 	name: "audio_transcribe",
 	description:
-		"Transcribe the post's audio with word timestamps (Together, Whisper large-v3). Skips when the transcript is already up to date; language is auto-detected unless given.",
+		"Transcribe the post's audio with a timestamp for each word (Together, Whisper large-v3). Skips the work when the transcript is already up to date. Detects the language unless you pass one.",
 	params: {
 		post: p.string("Post slug"),
 		language: p.optional(
-			p.string("Two-letter language code (es, en, ca…) to force instead of auto-detect"),
+			p.string("Two-letter language code (es, en, ca…) to use instead of detecting it"),
 		),
 		force: p.boolean("Transcribe again even if the transcript is up to date"),
 	},
@@ -46,7 +46,7 @@ export const audioTranscribe = defineOperation({
 				return yield* fail(
 					"usage",
 					`"${input.language}" isn't a two-letter language code.`,
-					"Use es, en, ca, fr… or leave it out to auto-detect.",
+					"Use es, en, ca, fr…, or leave it out to detect the language.",
 				);
 			}
 			const post = yield* readPost(ctx, input.post);

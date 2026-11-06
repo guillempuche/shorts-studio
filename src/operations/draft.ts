@@ -1,9 +1,10 @@
 /**
- * `draft render`: the reviewable draft video. Stills timed to the beats, each moved the way its
- * story moment calls for, word-timed captions burned in, and the post's audio, as a 1080×1920 MP4.
+ * `draft render`: the draft video the user reviews, as a 1080×1920 MP4. Each beat shows its
+ * image, which moves the way its story moment calls for. Captions timed to the words are burned
+ * in, over the post's audio.
  *
- * Also writes `captions.srt` (what CapCut desktop imports) beside the ASS file ffmpeg burns in.
- * Skips when the draft is up to date with its audio, beats, images and captions.
+ * It also writes `captions.srt` for CapCut desktop, beside the ASS file that ffmpeg burns in.
+ * It skips the work when the draft is up to date with its audio, beats, images and captions.
  */
 
 import { existsSync, readFileSync, renameSync, rmSync } from "node:fs";
@@ -45,7 +46,7 @@ const draftInputHash = (ctx: Context, post: Post): string =>
 export const draftRender = defineOperation({
 	name: "draft_render",
 	description:
-		"Render the post's draft video (1080×1920, 30 fps): each beat's image moving as its story moment calls for, burned-in word captions and the optional hook title, and the audio. Also writes captions.srt for CapCut. Skips when the draft is up to date.",
+		"Render the post's draft video (1080×1920, 30 fps). Each beat's image moves as its story moment calls for, with burned-in captions, the optional hook title and the audio. Also writes captions.srt for CapCut. Skips the work when the draft is up to date.",
 	params: {
 		post: p.string("Post slug"),
 		force: p.boolean("Render again even if the draft is up to date"),

@@ -1,6 +1,6 @@
 ## What and why
 
-<!-- One or two sentences; link the issue or OpenSpec change. -->
+<!-- One or two sentences. Link the issue or OpenSpec change. -->
 
 ## Checks
 

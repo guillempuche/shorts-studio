@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-    Removes the shorts-studio binary that install.ps1 put in place. Your posts, settings and spend
-    ledger are left where they are (`shorts-studio config show` prints the folders).
+    Removes the shorts-studio binary that install.ps1 installed. It leaves your posts, settings and
+    spend ledger in place (`shorts-studio config show` prints their folders).
 .EXAMPLE
     irm https://raw.githubusercontent.com/guillempuche/shorts-studio/main/uninstall.ps1 | iex
 #>

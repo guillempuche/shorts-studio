@@ -1,6 +1,6 @@
 name: Release
-# Push a tag like v0.2.0 to publish native binaries (for install.sh and install.ps1) and, when
-# the repository variable NPM_PUBLISH is "true", the npm package.
+# Push a tag like v0.2.0 to publish native binaries (for install.sh and install.ps1). When the
+# repository variable NPM_PUBLISH is "true", it also publishes the npm package.
 on:
   push:
     tags: ["v*"]

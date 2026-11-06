@@ -2,7 +2,7 @@
 
 ### Requirement: Animation SHALL be limited to beats chosen in review
 
-`clip animate` SHALL only animate beats the user marked in `post review`, and SHALL reserve, resume and settle like image generation.
+`clip animate` SHALL only animate beats the user marked in `post review`. It SHALL reserve, resume and settle its cost the same way image generation does.
 
 #### Scenario: An unmarked beat
 

@@ -1,9 +1,9 @@
 /**
  * Beats: the stretches of audio that each get one image.
  *
- * `beat plan` cuts them from the transcript's word timings (or an even grid for music);
- * `beat set` is how the agent writes each beat's image prompt, one at a time or all at once
- * from a JSON file, validated before anything is saved.
+ * `beat plan` cuts them at the transcript's word times, or on an even grid for music.
+ * `beat set` is how the agent writes each beat's image prompt, one beat at a time or all at
+ * once from a JSON file. The file is checked before anything is saved.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -49,10 +49,10 @@ const BeatRow = Schema.Struct({
 export const beatPlan = defineOperation({
 	name: "beat_plan",
 	description:
-		"Split the audio into beats of about 1.5–3 s (at word and pause boundaries for speech; an even grid for music), each to get one image. With byMoment, re-cut each stretch of one story moment to that moment's beat length (set moments first with beat set). Replanning drops existing prompts, so it needs --force when the plan has prompts.",
+		"Split the audio into beats of about 1.5–3 s, each to get one image. Speech is cut between words and at pauses; music is cut on an even grid. With byMoment, re-cut the beats of each story moment to that moment's beat length (set the moments first with beat set). Planning again drops the existing prompts, so it needs --force when the plan has prompts.",
 	params: {
 		post: p.string("Post slug"),
-		byMoment: p.boolean("Re-cut each stretch of one story moment to that moment's beat length"),
+		byMoment: p.boolean("Re-cut the beats of each story moment to that moment's beat length"),
 		force: p.boolean("Replace an existing plan even though its prompts will be lost"),
 	},
 	output: Schema.Struct({
@@ -113,7 +113,7 @@ export const beatPlan = defineOperation({
 			if (existing?.items.some((b) => b.prompt !== undefined) && !input.force) {
 				return yield* fail(
 					"stale",
-					`The beat plan is out of date (the audio or transcript changed), and replanning drops its ${existing.items.filter((b) => b.prompt).length} prompts.`,
+					`The beat plan is out of date because the audio or transcript changed. Planning again drops its ${existing.items.filter((b) => b.prompt).length} prompts.`,
 					`Run beat plan --post ${input.post} --force, then set the prompts again.`,
 				);
 			}
@@ -181,14 +181,14 @@ const readPatches = (file: string): Effect.Effect<ReadonlyArray<BeatPatch>, Shor
 export const beatSet = defineOperation({
 	name: "beat_set",
 	description:
-		'Set beats\' image prompts, story moments (hook, setup, tension, twist, vulnerable, payoff, cta) and motion overrides: one beat with --beat, or many from a JSON file (--from) holding [{"beat": 0, "moment": "hook", "prompt": "…"}, …]. A changed prompt makes that beat\'s image stale; a changed moment or motion, the draft.',
+		'Set beats\' image prompts, story moments (hook, setup, tension, twist, vulnerable, payoff, cta) and motion overrides. Set one beat with --beat, or many from a JSON file (--from) holding [{"beat": 0, "moment": "hook", "prompt": "…"}, …]. A new prompt makes that beat\'s image out of date. A new moment or motion makes the draft out of date.',
 	params: {
 		post: p.string("Post slug"),
 		beat: p.optional(p.int("Beat index (with --prompt, --moment or --motion)")),
 		prompt: p.optional(p.string("Image prompt for --beat")),
 		moment: p.optional(p.literals(Moment.literals, "Story moment for --beat")),
 		motion: p.optional(
-			p.literals(MotionType.literals, "Motion for --beat, replacing its moment's"),
+			p.literals(MotionType.literals, "Motion for --beat, used instead of its moment's motion"),
 		),
 		from: p.optional(p.string('JSON file: [{"beat": 0, "moment": "hook", "prompt": "…"}, …]')),
 	},

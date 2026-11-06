@@ -1,9 +1,9 @@
 /**
  * The script: the story the user checks in the morning, before anything is spent on images.
  *
- * The agent writes it with `script set`; the user approves it with `script approve`, which is
- * CLI-only because it's the user's decision. Approval is tied to the script's hash, so editing
- * an approved script needs a new approval.
+ * The agent writes it with `script set`. The user approves it with `script approve`, which is
+ * CLI-only because it's the user's decision. Approval is tied to the script's hash, so an edited
+ * script needs approving again.
  */
 
 import { existsSync, readFileSync } from "node:fs";

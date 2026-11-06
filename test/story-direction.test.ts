@@ -13,7 +13,10 @@ import { planByMoment, sectionsOf } from "../src/work/beats.ts";
 import { groupCaptions, toAss } from "../src/work/captions.ts";
 import { FRAME, motionExpressions } from "../src/work/render.ts";
 
-/** Steady speech: `count` words of 0.3 s with 0.05 s gaps from `from`, a sentence end every `every`. */
+/**
+ * Steady speech from `from`: `count` words of 0.3 s with 0.05 s gaps, and a sentence end every
+ * `every` words.
+ */
 const speech = (count: number, from = 0, every = 4): Array<Word> =>
 	Array.from({ length: count }, (_, i) => ({
 		text: (i + 1) % every === 0 ? `w${i}.` : `w${i}`,
@@ -40,7 +43,7 @@ describe("beat planning by moment", () => {
 		];
 		// WHEN it's re-cut by moment
 		const beats = planByMoment(words, sections);
-		// THEN every beat but each stretch's last stays within its moment's range (word slack 0.4 s)
+		// THEN every beat but each stretch's last stays within its moment's range, give or take 0.4 s for a word
 		for (const section of sections) {
 			const own = beats.filter((b) => b.moment === section.moment);
 			const range = BEAT_LENGTH[section.moment];
@@ -69,7 +72,7 @@ describe("beat planning by moment", () => {
 		for (let i = 1; i < beats.length; i++) expect(beats[i]?.start).toBe(beats[i - 1]?.end);
 	});
 
-	it("should read stretches from consecutive beats that share a moment", () => {
+	it("should join back-to-back beats with the same moment into one stretch", () => {
 		// GIVEN beats marked hook, hook, setup
 		// WHEN they're turned into sections
 		const sections = sectionsOf([

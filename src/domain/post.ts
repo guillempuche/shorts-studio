@@ -1,10 +1,10 @@
 /**
- * The post manifest, `post.json`: the single source of truth for one post.
+ * `post.json`: the one file that records everything about a post.
  *
- * Commands write it; a hand edit is validated on the next read. Every generated output is
- * recorded with an `inputHash`, the hash of everything it was made from, so an edit upstream
- * (a new prompt, a re-cut beat) makes it stale. The stage is computed from this record, never
- * stored: see `stageOf`.
+ * Commands write it; a hand edit is checked on the next read. Every generated output is saved
+ * with an `inputHash`, the hash of everything it was made from. A change to any of those
+ * inputs (a new prompt, a re-cut beat) then marks it stale. The stage is worked out from this
+ * file, never stored: see `stageOf`.
  */
 
 import { Schema } from "effect";
@@ -37,7 +37,7 @@ export const Pending = Schema.Struct({
 	provider: Schema.String,
 	model: Schema.String,
 	requestId: Schema.String,
-	/** Saved from the submit reply, so a re-run polls this request instead of paying again. */
+	/** Saved from the submit reply, so running again checks this request instead of paying again. */
 	statusUrl: Schema.String,
 	responseUrl: Schema.String,
 	inputHash: Schema.String,
@@ -63,7 +63,7 @@ export const Beat = Schema.Struct({
 	/** Replaces the moment's motion type. */
 	motion: Schema.optionalKey(MotionType),
 	prompt: Schema.optionalKey(Schema.String),
-	/** Bumped by `image generate --reroll` so the same prompt yields a new image. */
+	/** Changed by `image generate --reroll`, so the same prompt gives a new image. */
 	seed: Schema.optionalKey(Schema.Int),
 	image: Schema.optionalKey(BeatImage),
 	pending: Schema.optionalKey(Pending),
@@ -75,7 +75,7 @@ export const Post = Schema.Struct({
 	manifestVersion: Schema.Literal(MANIFEST_VERSION),
 	slug: Schema.String,
 	createdAt: Schema.String,
-	/** Incremented on every write; a write based on an older revision is refused. */
+	/** Goes up by one on every write. Each write re-reads the file under the post's lock first. */
 	revision: Schema.Int,
 	brief: Schema.optionalKey(
 		Schema.Struct({
@@ -173,8 +173,9 @@ export const currentReview = (post: Post) =>
 		: undefined;
 
 /**
- * Where a post is, from what has been recorded. Freshness of each output is checked by the
- * operations that use it; here only presence and decisions count, so `post list` stays cheap.
+ * Where a post is, from what has been recorded. Only what exists and what was decided counts
+ * here. The operations that use each output check whether it's still up to date, so
+ * `post list` stays fast.
  */
 export const stageOf = (post: Post): Stage => {
 	if (post.archivedAt !== undefined) return "archived";

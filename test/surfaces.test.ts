@@ -16,7 +16,7 @@ afterEach(() => ctx?.cleanup());
 const cli = (argv: ReadonlyArray<string>) => runCli(ctx, argv);
 
 describe("CLI", () => {
-	it("should print one JSON envelope with --json", async () => {
+	it("should print a single JSON object with --json", async () => {
 		// GIVEN a post
 		ctx = makeTestContext();
 		await cli(["post", "create", "--post", "demo"]);
@@ -33,7 +33,7 @@ describe("CLI", () => {
 		ctx = makeTestContext();
 		// WHEN a missing post is shown with --json
 		const { out } = await cli(["post", "show", "--post", "nope", "--json"]);
-		// THEN the envelope carries the error with its fix
+		// THEN the JSON carries the error with its fix
 		const parsed = JSON.parse(out) as { ok: boolean; error: { code: string; fix: string } };
 		expect(parsed.ok).toBe(false);
 		expect(parsed.error.code).toBe("not-found");

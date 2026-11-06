@@ -18,7 +18,7 @@ const failure = (exit: Exit.Exit<unknown, unknown>): ShortsError | undefined => 
 };
 
 describe("post store", () => {
-	it("should bump the revision on every update", async () => {
+	it("should add one to the revision on every update", async () => {
 		// GIVEN a new post
 		ctx = makeTestContext();
 		await Effect.runPromise(createPost(ctx, { slug: "2026-11-04-a", createdAt: "x" }));
@@ -33,7 +33,7 @@ describe("post store", () => {
 		expect(post.revision).toBe(3);
 	});
 
-	it("should name every invalid field of a hand-edited manifest", async () => {
+	it("should name every invalid field of a hand-edited post.json", async () => {
 		// GIVEN a post.json with two wrong fields
 		ctx = makeTestContext();
 		await Effect.runPromise(createPost(ctx, { slug: "2026-11-04-b", createdAt: "x" }));
@@ -73,7 +73,7 @@ describe("locks", () => {
 	});
 
 	it("should report who holds a live lock once the wait runs out", async () => {
-		// GIVEN a lock held by this (live) process
+		// GIVEN a lock held by this process, which is still running
 		ctx = makeTestContext();
 		await Effect.runPromise(createPost(ctx, { slug: "2026-11-04-d", createdAt: "x" }));
 		const lockFile = join(postDir(ctx, "2026-11-04-d"), "post.json.lock");
@@ -118,7 +118,7 @@ describe("ledger", () => {
 		expect(spent(Effect.runSync(readLedger(ctx)), { day: "2026-11-04" })).toBeCloseTo(0.3);
 	});
 
-	it("should let only one of two simultaneous calls through when the cap fits one", async () => {
+	it("should let only one of two calls at the same time through when the cap fits one", async () => {
 		// GIVEN a $1 cap and two $0.60 calls made at the same time
 		ctx = makeTestContext({ config: { caps: { dailyUsd: 1, postUsd: 10 } } });
 		const call = () =>

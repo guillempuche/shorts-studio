@@ -1,6 +1,6 @@
 /**
- * Every operation, in the order `--help` lists them. Adding one here exposes it on both the
- * CLI and MCP; the parity test checks they agree.
+ * Every operation, in the order `--help` lists them. Adding one here puts it on both the CLI
+ * and MCP. The parity test checks that they agree.
  */
 
 import type { Operation } from "../core/operation.ts";

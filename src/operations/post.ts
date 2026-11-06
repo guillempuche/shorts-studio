@@ -69,7 +69,7 @@ const today = (ctx: Context): string => ctx.now().toISOString().slice(0, 10);
 export const postCreate = defineOperation({
 	name: "post_create",
 	description:
-		"Create a post folder. The slug gets today's date in front unless it already starts with one; the result names the final slug.",
+		"Create a post folder. Today's date goes in front of the slug unless it already starts with a date. The result gives the final slug.",
 	params: {
 		post: p.string("Slug for the post, e.g. morning-routine"),
 		title: p.optional(p.string("Working title")),
@@ -131,7 +131,7 @@ export const postList = defineOperation({
 
 export const postShow = defineOperation({
 	name: "post_show",
-	description: "Show a post's manifest, its stage and the next command to run.",
+	description: "Show a post's post.json, its stage and the next command to run.",
 	params: { post: p.string("Post slug") },
 	output: Schema.Struct({
 		slug: Schema.String,

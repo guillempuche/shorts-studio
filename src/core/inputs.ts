@@ -1,6 +1,6 @@
 /**
- * Reading what a command needs from outside its input: API keys, and beat lists typed as text.
- * Shared so each failure reads the same in every command.
+ * Reading API keys, and beat lists typed as text. Shared, so each failure reads the same in
+ * every command.
  */
 
 import { Effect } from "effect";

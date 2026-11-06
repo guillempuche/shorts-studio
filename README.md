@@ -1,16 +1,16 @@
 # shorts-studio
 
-Turn audio into vertical short videos with AI images, word-timed captions and FFmpeg: a CLI and MCP server for Instagram Reels, TikTok and YouTube Shorts.
+Turn audio into short vertical videos with AI images, word-timed captions and FFmpeg. shorts-studio is a CLI and MCP server for Instagram Reels, TikTok and YouTube Shorts.
 
 [![CI](https://github.com/guillempuche/shorts-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/guillempuche/shorts-studio/actions/workflows/ci.yml) [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 ## Why
 
-Publishing several short videos a day leaves no time to edit them. shorts-studio lets you be the story checker and the vibe checker: you approve the script before anything is spent, and you review the draft at the end. Everything in between (transcription, beats, images, motion, captions, render) is generated, by the tool or by your AI agent driving it, and the polish happens in CapCut.
+If you post several short videos a day, you have no time to edit them. With shorts-studio, you only check the story and the vibe. You approve the script before any money is spent, and you review the draft at the end. The tool, or your AI agent driving it, makes everything in between: transcription, beats, images, motion, captions and the render. You do the final polish in CapCut.
 
 ## See it work
 
-A 60-second reel's audio, directed beat by beat: a hook title, then captions in sync, and each image moving the way its story moment calls for.
+This draft comes from the audio of a 60-second reel, directed beat by beat. A hook title comes first. Then the captions follow the speech, and each image moves to suit its story moment.
 
 ![Four frames of a draft: the hook title over a laughing woman, then captions over three AI images](docs/assets/draft-frames.png)
 
@@ -22,7 +22,7 @@ audio ─▶ transcript (word timings) ─▶ beats by story moment ─▶ one i
                         you approve the script here ▲                     you review the draft here ▲
 ```
 
-Every step is a command and an MCP tool; [docs/architecture.md](docs/architecture.md) explains how and why.
+Every step is both a command and an MCP tool. [docs/architecture.md](docs/architecture.md) explains how and why.
 
 ## Install
 
@@ -34,7 +34,7 @@ Every step is a command and an MCP tool; [docs/architecture.md](docs/architectur
 | npm (Node 24+)                   | `npx -y shorts-studio doctor`                                                                   |
 | From source                      | see [docs/getting-started.md](docs/getting-started.md)                                          |
 
-`shorts-studio doctor` checks FFmpeg, keys and folders and names the fix for anything missing. Keys, Claude Code and Codex setup: [docs/getting-started.md](docs/getting-started.md).
+`shorts-studio doctor` checks FFmpeg, your keys and your folders. If anything is missing, it tells you the fix. To set up keys, Claude Code and Codex, see [docs/getting-started.md](docs/getting-started.md).
 
 ## Quick start
 
@@ -50,20 +50,20 @@ shorts-studio image generate --post 2026-11-06-morning-routine --yes
 shorts-studio draft render --post 2026-11-06-morning-routine
 ```
 
-`post show --post <slug>` always names the next command, every command takes `--json`, and commands on posts also take `--day today` or `--in-stage <stage>` to run on several. The whole daily loop, review and CapCut included, is the [make-shorts skill](.agents/skills/make-shorts/SKILL.md).
+`post show --post <slug>` always tells you the next command. Every command takes `--json`. Commands on posts also take `--day today` or `--in-stage <stage>` to run on several posts at once. The [make-shorts skill](.agents/skills/make-shorts/SKILL.md) covers the whole daily loop, including the review and CapCut.
 
 ## Use it from an AI agent
 
-`shorts-studio mcp serve` is an MCP server over stdio with one tool per command. Claude Code reads [.mcp.json](.mcp.json) and Codex [.codex/config.toml](.codex/config.toml); any other client can point at the same command. Tools that spend money ask first, and approving a script or a draft stays with you.
+`shorts-studio mcp serve` runs an MCP server over stdio, with one tool per command. Claude Code reads [.mcp.json](.mcp.json), and Codex reads [.codex/config.toml](.codex/config.toml). Any other client can point at the same command. Tools that spend money ask first. Only you can approve a script or a draft.
 
 ## What's in it today
 
-- From audio to a draft, with word-timed captions, a hook title and motion chosen per story moment ([the research behind it](docs/research/README.md)).
-- The evening review, a frame-exact CapCut export, and records of the final video and where it was published.
-- Downloads and transcription of saved reels and TikToks.
-- Spending caps, resumable paid requests, and no spending before the script is approved.
+- Audio to draft, with word-timed captions, a hook title and motion picked for each story moment ([the research behind it](docs/research/README.md)).
+- An evening review, a frame-exact CapCut export, and a record of the final video and where you published it.
+- Download and transcribe saved reels and TikToks.
+- Spending caps, paid requests that can resume, and no spending until you approve the script.
 
-The exact behaviour is specified in [openspec/specs](openspec/specs); planned work (AI voice and music, AI video for chosen beats, carousels) is in [openspec/changes](openspec/changes).
+[openspec/specs](openspec/specs) describes exactly how it behaves. Planned work is in [openspec/changes](openspec/changes): AI voice and music, AI video for chosen beats, and carousels.
 
 ## How it compares
 
@@ -76,15 +76,15 @@ The exact behaviour is specified in [openspec/specs](openspec/specs); planned wo
 
 ## FAQ
 
-**Does it cost money?** A little: Together bills transcription per audio minute and an image costs about a cent; spending caps stop overspending ([providers](docs/providers.md)).
+**Does it cost money?** A little. Together charges for transcription by the minute of audio, and an image costs about a cent. Spending caps stop you from overspending ([providers](docs/providers.md)).
 
-**Can I use audio from someone else's reel?** As a guide track: the CapCut export leaves it out so you publish with the platform's sound. Rights are your responsibility.
+**Can I use audio from someone else's reel?** Yes, as a guide track. The CapCut export leaves it out, so you publish with the platform's sound. The rights are your responsibility.
 
-**Which languages?** Any language Whisper detects; force one with `--language`.
+**Which languages?** Any language Whisper detects. To force one, use `--language`.
 
 ## Contributing
 
-[CONTRIBUTING.md](CONTRIBUTING.md) for how a change gets in, [AGENTS.md](AGENTS.md) for the rules, [SECURITY.md](SECURITY.md) to report a vulnerability.
+To get a change in, read [CONTRIBUTING.md](CONTRIBUTING.md). The rules are in [AGENTS.md](AGENTS.md). To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## License
 

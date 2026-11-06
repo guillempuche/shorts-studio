@@ -92,7 +92,7 @@ const planSpan = (
 		}
 	}
 
-	// Contiguous spans: each beat runs until the next phrase starts.
+	// Back-to-back spans: each beat runs until the next phrase starts.
 	const spans = groups.map((group, index) => ({
 		start: index === 0 ? start : (group[0] as Word).start,
 		end: 0,
@@ -103,8 +103,8 @@ const planSpan = (
 		span.end = spans[index + 1]?.start ?? end;
 	});
 
-	// A phrase is already capped at a word boundary; only a long silence after it can make a
-	// span much longer than maxSec. Give that silence beats of its own instead of one long hold.
+	// Phrases are already cut at about maxSec, so only a long silence after one can make a span
+	// much longer than maxSec. Give that silence its own beats instead of one long hold.
 	const out: Array<BeatSpan> = [];
 	const push = (from: number, to: number, text: string) =>
 		out.push({ index: out.length, start: round(from), end: round(to), text });

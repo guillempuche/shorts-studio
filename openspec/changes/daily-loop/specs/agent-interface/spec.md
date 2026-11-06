@@ -2,7 +2,7 @@
 
 ### Requirement: The daily-loop skill SHALL be served over MCP
 
-The MCP server SHALL publish the `make-shorts` skill with the MCP Skills extension, so clients without the repository checked out can follow the loop.
+The MCP server SHALL publish the `make-shorts` skill through the MCP Skills extension. Then clients without a copy of the repository can still follow the loop.
 
 #### Scenario: A client lists skills
 

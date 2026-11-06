@@ -1,5 +1,6 @@
 #!/bin/sh
-# Installs the shorts-studio binary for macOS or Linux from GitHub Releases, checking its SHA-256.
+# Downloads the shorts-studio binary for macOS or Linux from GitHub Releases, checks its SHA-256
+# and installs it.
 #
 #   curl -fsSL https://raw.githubusercontent.com/guillempuche/shorts-studio/main/install.sh | sh
 #
@@ -71,5 +72,5 @@ case ":$PATH:" in
 	*) warn "$INSTALL_DIR isn't on your PATH. Add it to your shell profile: export PATH=\"$INSTALL_DIR:\$PATH\"" ;;
 esac
 echo
-info "Next: $BINARY config show   (it checks ffmpeg, which needs libass for captions, and your API keys)"
+info "Next: $BINARY doctor   (it checks ffmpeg, which needs libass for captions, and your API keys)"
 info "Docs: https://github.com/$REPO#readme"

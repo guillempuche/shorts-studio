@@ -14,7 +14,7 @@ const steadyWords = (count: number, per = 0.3, gap = 0.05, punctuateEvery = 0): 
 	}));
 
 describe("planBeats", () => {
-	it("should cover the whole audio with contiguous beats", () => {
+	it("should cover the whole audio with beats back to back", () => {
 		// GIVEN 40 steadily spoken words in 15 seconds of audio
 		const words = steadyWords(40);
 		// WHEN the beats are planned
@@ -30,7 +30,7 @@ describe("planBeats", () => {
 		const words = steadyWords(60, 0.3, 0.05, 6);
 		// WHEN the beats are planned
 		const beats = planBeats(words, words.at(-1)?.end ?? 0);
-		// THEN every beat but the last is within the target range (one word of slack)
+		// THEN every beat but the last is within the target range, give or take one word
 		for (const beat of beats.slice(0, -1)) {
 			expect(beat.end - beat.start).toBeGreaterThanOrEqual(1.5);
 			expect(beat.end - beat.start).toBeLessThanOrEqual(3.4);
@@ -46,7 +46,7 @@ describe("planBeats", () => {
 		expect(beats[0]?.text.endsWith(".")).toBe(true);
 	});
 
-	it("should split a long silence so no image holds far beyond the maximum", () => {
+	it("should split a long silence so no image stays up much longer than the maximum", () => {
 		// GIVEN two short phrases separated by 9 seconds of silence
 		const words: Array<Word> = [
 			...steadyWords(6),
@@ -114,7 +114,7 @@ describe("captions", () => {
 
 describe("render", () => {
 	it("should give the beats exactly the frames the audio needs, with no drift", () => {
-		// GIVEN beats whose boundaries don't fall on frame boundaries
+		// GIVEN beats that don't start and end on whole frames
 		const beats = [
 			{ start: 0, end: 1.234 },
 			{ start: 1.234, end: 2.951 },

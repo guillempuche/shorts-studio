@@ -1,8 +1,8 @@
 /**
  * Image generation on FAL through its queue API (docs.fal.ai, "Queue API").
  *
- * Submitting and collecting are separate calls on purpose: the caller saves the request's
- * status and result URLs before polling, so a run cut short resumes polling the same request
+ * Submitting and collecting are separate calls on purpose. The caller saves the request's
+ * status and result URLs before waiting on it. A run cut short then picks up the same request
  * instead of paying for a new one.
  */
 
@@ -22,8 +22,8 @@ export const IMAGE_MODELS: Readonly<Record<ImageModelName, ImageModel>> = {
 export const DEFAULT_IMAGE_MODEL: ImageModelName = "flux-schnell";
 
 /**
- * Larger than the 1080×1920 frame so motion never reaches an edge or needs upscaling past the
- * image (docs/research/motion.md), in multiples of 16 as the model expects: about 25% over.
+ * About 25% larger than the 1080×1920 frame, so motion never reaches an edge or has to upscale
+ * past the image (docs/research/motion.md). Both sides are multiples of 16, as the model expects.
  */
 export const IMAGE_SIZE = { width: 1344, height: 2400 } as const;
 
@@ -37,7 +37,7 @@ export interface Submitted {
 }
 
 export class FalError extends Error {
-	/** FAL ended the request (failed, cancelled), so polling it again never succeeds. */
+	/** FAL ended the request (failed or cancelled), so checking it again will never succeed. */
 	readonly terminal: boolean;
 	constructor(message: string, terminal = false) {
 		super(message);
@@ -90,7 +90,7 @@ export const submitImage = async (
 	return { requestId: body.request_id, statusUrl: body.status_url, responseUrl: body.response_url };
 };
 
-/** Polls until the request completes, then returns the image's URL. */
+/** Waits for the request to complete, then returns the image's URL. */
 export const collectImage = async (
 	ctx: Context,
 	key: string,

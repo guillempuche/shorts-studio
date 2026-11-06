@@ -1,5 +1,5 @@
 /**
- * Small filesystem rules every writer follows: hashes, atomic writes and lock files.
+ * Small file helpers every writer uses: hashes, all-or-nothing writes and lock files.
  */
 
 import { createHash } from "node:crypto";
@@ -26,7 +26,7 @@ export const hashFile = (file: string): Promise<string> =>
 			.on("end", () => resolve(hash.digest("hex")));
 	});
 
-/** `hashFile` as an Effect, failing with a fix instead of a defect. */
+/** `hashFile` as an Effect: a read error fails with a fix instead of crashing. */
 export const fileHash = (file: string) =>
 	Effect.tryPromise({
 		try: () => hashFile(file),
@@ -42,8 +42,8 @@ export const hashOf = (...parts: ReadonlyArray<unknown>): string =>
 	createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 
 /**
- * Writes through a temporary file and a rename, so a reader (or a run cut short by Ctrl-C)
- * never sees half a file. The rename is atomic within one folder.
+ * Writes to a temporary file, then renames it into place. A rename within one folder happens
+ * all at once, so a reader (or a run cut short by Ctrl-C) never sees half a file.
  */
 export const writeFileAtomic = (file: string, data: string | Uint8Array): void => {
 	const tmp = `${file}.${process.pid}.tmp`;
@@ -60,7 +60,7 @@ const isAlive = (pid: number): boolean => {
 		process.kill(pid, 0);
 		return true;
 	} catch (error) {
-		// EPERM: it exists but belongs to someone else.
+		// EPERM: the process exists but belongs to another user.
 		return (error as NodeJS.ErrnoException).code === "EPERM";
 	}
 };
@@ -72,9 +72,9 @@ export interface LockHolder {
 }
 
 /**
- * Takes an exclusive lock file. A lock whose process is gone is broken and taken over; one
- * held by a live process is waited on, up to `waitMs`. Returns a release function, or the
- * holder when the wait ran out.
+ * Takes a lock file that only one process can hold. If the process holding it is gone, the
+ * lock is removed and taken over. If it's still running, we wait for up to `waitMs`. Returns a
+ * release function, or the holder if the wait runs out.
  */
 export const acquireLock = async (
 	lockFile: string,
@@ -96,7 +96,7 @@ export const acquireLock = async (
 		try {
 			holder = JSON.parse(readFileSync(lockFile, "utf8")) as LockHolder;
 		} catch {
-			// Being written or removed right now: look again.
+			// The lock file is being written or removed right now: look again.
 		}
 		if (holder !== undefined && !isAlive(holder.pid)) {
 			rmSync(lockFile, { force: true });

@@ -42,6 +42,6 @@ export const runCli = (ctx: Context, argv: ReadonlyArray<string>): Promise<CliRu
 				out: (yield* TestConsole.logLines).join("\n"),
 				err: (yield* TestConsole.errorLines).join("\n"),
 			};
-			// The CLI's environment is fully provided above; the cast drops its requirement type.
+			// The layers above provide everything the CLI needs. The cast just drops that from the type.
 		}).pipe(Effect.provide(platform)) as Effect.Effect<CliRun>,
 	);

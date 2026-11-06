@@ -127,7 +127,7 @@ describe("the evening review", () => {
 		ctx = makeTestContext();
 		await withDraft("d1");
 		await Effect.runPromise(review("approve"));
-		// WHEN the draft is re-rendered (its hash changes)
+		// WHEN the draft is rendered again (its hash changes)
 		await Effect.runPromise(
 			updatePost(ctx, SLUG, "test", (post) =>
 				Effect.succeed({

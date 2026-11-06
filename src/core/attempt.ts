@@ -1,10 +1,10 @@
 /**
- * Bridges promise-based work into Effect. The AbortSignal fires when the Effect is interrupted
- * (Ctrl-C, or an MCP client cancelling), which stops fetches and child processes.
+ * Runs promise-based work as an Effect. When the Effect is interrupted (Ctrl-C, or an MCP
+ * client cancelling), the AbortSignal fires and stops fetches and child processes.
  *
- * Interruption waits for the work to finish stopping (bounded), so a child process is gone
- * before finalisers run: otherwise ffmpeg, still writing its trailer after SIGTERM, could
- * recreate a temporary file that cleanup had just removed.
+ * On interruption we wait, up to a limit, for the work to stop. That way a child process is
+ * gone before the cleanup steps run. Otherwise ffmpeg, still finishing its file after SIGTERM,
+ * could recreate a temporary file that cleanup had just removed.
  */
 
 import { Effect } from "effect";
@@ -25,7 +25,7 @@ export const attempt = <A>(
 		return Effect.promise(() => settled).pipe(Effect.timeout(STOP_WAIT_MS), Effect.ignore);
 	});
 
-/** The common case: keep the underlying message, add the code and the fix. */
+/** The common case: keep the original error's message, and add the code and the fix. */
 export const failWith =
 	(code: ErrorCode, fix: string) =>
 	(error: unknown): ShortsError =>

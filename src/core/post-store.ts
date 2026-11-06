@@ -1,10 +1,10 @@
 /**
  * Reading and writing `post.json`.
  *
- * Writes go through `updatePost`, which takes the post's lock, re-reads the manifest, applies
- * the change and writes it back atomically with the revision bumped. Long operations (image
- * generation, rendering) don't hold the lock while they work: they record each finished piece
- * with a short `updatePost`, so the agent and the user can run commands on the same post.
+ * Writes go through `updatePost`. It takes the post's lock, reads post.json again, applies the
+ * change, adds one to the revision and writes the whole file back in one step. Long operations
+ * (image generation, rendering) don't hold the lock while they work. They save each finished
+ * piece with a short `updatePost`, so the agent and the user can work on the same post at once.
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
@@ -53,7 +53,7 @@ export const readPost = Effect.fn("readPost")(function* (ctx: Context, slug: str
 		Effect.mapError((error) =>
 			fail(
 				"failed",
-				`${file} is not a valid post manifest:\n${error.message}`,
+				`${file} is not a valid post file:\n${error.message}`,
 				"Fix the fields named above, or undo the hand edit. Commands write this file.",
 			),
 		),
@@ -65,7 +65,7 @@ const writePost = (ctx: Context, post: Post): Effect.Effect<void, ShortsError> =
 		Effect.mapError((error) =>
 			fail(
 				"failed",
-				`Can't encode post.json: ${error.message}`,
+				`Can't turn the post into JSON: ${error.message}`,
 				"This is a bug; please report it.",
 			),
 		),
@@ -97,8 +97,8 @@ export const createPost = Effect.fn("createPost")(function* (
 });
 
 /**
- * Applies `change` to the latest manifest under the post's lock. `change` must be quick: it
- * runs while other commands on this post wait.
+ * Applies `change` to the latest post.json while holding the post's lock. Keep `change` quick:
+ * other commands on this post wait while it runs.
  */
 export const updatePost = <E>(
 	ctx: Context,
@@ -123,7 +123,7 @@ export const updatePost = <E>(
 		),
 	);
 
-/** Every post folder that holds a manifest, newest first by name (names start with a date). */
+/** Every post folder that holds a post.json, newest first (folder names start with a date). */
 export const listSlugs = (ctx: Context): ReadonlyArray<string> => {
 	const dir = minePath(ctx);
 	if (!existsSync(dir)) return [];

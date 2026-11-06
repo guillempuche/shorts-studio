@@ -1,22 +1,23 @@
 /**
- * Running an external program (ffmpeg, ffprobe) and stopping it when its work is abandoned.
+ * Running an external program (ffmpeg, ffprobe), and stopping it when its work is abandoned.
  *
- * Plain `spawn`, not Effect's process spawner: that one detaches children on POSIX, so a Ctrl-C
- * could leave ffmpeg encoding (content-studio docs/effect.md records the measurement). The
- * stopping logic is content-studio's `stopWhenAborted`.
+ * We use plain `spawn`, not Effect's process spawner. On macOS and Linux that one detaches
+ * child processes, so a Ctrl-C could leave ffmpeg encoding (content-studio docs/effect.md has
+ * the measurement). The stopping logic comes from content-studio's `stopWhenAborted`.
  */
 
 import { spawn } from "node:child_process";
 
-/** How long a process gets to honour SIGTERM before it is sent SIGKILL. */
+/** How long a process gets to exit after SIGTERM before it is sent SIGKILL. */
 export const LET_GO_TIMEOUT_MS = 5_000;
 
 /**
- * Stop a process when its work is abandoned: ask, then make it. Returns a function to call
- * once the process has ended, so neither the request nor the pending kill outlives it.
+ * Stops a process when its work is abandoned: first ask (SIGTERM), then force (SIGKILL).
+ * Returns a function to call once the process has ended, so neither the abort listener nor the
+ * pending kill outlives it.
  *
- * Never hand the same signal to `spawn` as well: its early `error` event would settle the
- * call and cancel the kill.
+ * Don't also pass the same signal to `spawn`: its early `error` event would end the run and
+ * cancel the kill.
  */
 export function stopWhenAborted(
 	proc: { kill: (signal: NodeJS.Signals) => boolean },

@@ -1,6 +1,6 @@
 /**
- * `budget show`: what has been spent today and per post, against the caps. Read from the
- * ledger, so reservations still in flight count at their estimate.
+ * `budget show`: what has been spent today and on each post, against the caps. It reads the
+ * ledger, so a paid call that hasn't finished yet counts at its estimate.
  */
 
 import { Effect, Schema } from "effect";

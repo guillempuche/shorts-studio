@@ -52,7 +52,7 @@ describe("doctor", () => {
 });
 
 describe("settings files", () => {
-	it("should keep the defaults when config.json doesn't parse, and have doctor report it", async () => {
+	it("should keep the defaults when config.json is invalid, and have doctor report it", async () => {
 		// GIVEN a config.json with a cap that isn't a number
 		ctx = makeTestContext();
 		mkdirSync(ctx.paths.data, { recursive: true });

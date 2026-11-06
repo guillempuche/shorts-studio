@@ -4,8 +4,8 @@
  *
  * CapCut has no import format for a whole timeline, and its project files are an unofficial
  * format that breaks between versions. So the hand-off is plain media: one clip per beat, in
- * order, with its motion already applied; the audio; the captions as SRT (CapCut desktop
- * imports SRT, the mobile app can't); and a clean draft to line the clips up against.
+ * order, with its motion already applied; the audio; the captions as SRT; and a clean draft to
+ * line the clips up against. CapCut desktop imports SRT; the mobile app can't.
  */
 
 import { copyFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -39,7 +39,7 @@ const instructions = (clips: number, muted: boolean): string =>
 export const capcutExport = defineOperation({
 	name: "capcut_export",
 	description:
-		"Export an approved draft for CapCut desktop: capcut/clips/ (one clip per beat with its motion, in order), audio.m4a, captions.srt and draft-clean.mp4. Audio from someone else's reel (origin others) is left out; --mute leaves it out always.",
+		"Export an approved draft for CapCut desktop: capcut/clips/ (one clip per beat with its motion, in order), audio.m4a, captions.srt and draft-clean.mp4. Leaves out audio from someone else's reel (origin others). --mute always leaves the audio out.",
 	params: {
 		post: p.string("Post slug"),
 		mute: p.boolean("Leave the audio out even if it's yours"),
@@ -71,7 +71,7 @@ export const capcutExport = defineOperation({
 			if (stageOf(post) !== "approved") {
 				return yield* fail(
 					"needs-confirmation",
-					`${input.post} is at "${stageOf(post)}"; only an approved draft is exported.`,
+					`${input.post} is at "${stageOf(post)}". Only an approved draft can be exported.`,
 					`The user reviews it first: post review --post ${input.post} --decision approve`,
 				);
 			}
@@ -138,7 +138,7 @@ export const capcutExport = defineOperation({
 						"Check ffmpeg with config show, then run it again.",
 					),
 			);
-			// The captions from the last render, so the SRT matches what was approved.
+			// Copy the captions from the last render, so the SRT matches what was approved.
 			yield* Effect.try({
 				try: () => copyFileSync(join(dir, "captions.srt"), join(out, "captions.srt")),
 				catch: () =>

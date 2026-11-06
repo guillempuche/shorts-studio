@@ -1,13 +1,13 @@
 /**
- * The CLI surface: one `noun verb` command per operation, plus `doctor` and `mcp serve`.
+ * The CLI: one `noun verb` command per operation, plus `doctor` and `mcp serve`.
  *
- * Output rules (docs/architecture.md#agent-interface): results go to stdout, as text or, with
- * `--json`, one JSON object; progress and diagnostics go to stderr. Failures print their fix
- * and set the exit code from the error's code.
+ * Output rules (docs/architecture.md#agent-interface): results go to stdout, as text, or as one
+ * JSON object with `--json`. Progress and diagnostics go to stderr. A failure prints its fix
+ * and sets the exit code from the error's code.
  *
- * Commands that act on one existing post also run on several from the CLI (`--post a,b`,
- * `--day`, `--in-stage`). MCP tools stay single-post: an agent loops, and each tool keeps one
- * input and one output shape.
+ * On the CLI, commands that act on one existing post can also run on several (`--post a,b`,
+ * `--day`, `--in-stage`). MCP tools stay single-post: an agent loops instead, and each tool
+ * keeps one input shape and one output shape.
  */
 
 import { Console, Effect, Option, Result, Schema } from "effect";
@@ -209,7 +209,7 @@ const leaf = (op: Operation, ctx: Context, name?: string) => {
 					const error = fail(
 						"failed",
 						`${failed} of ${posts.length} posts failed.`,
-						"Each post's error is above; re-run to retry them.",
+						"Each post's error is above; run the command again to retry them.",
 					);
 					// With --json the batch object above already says so.
 					if (!shared.json) yield* printError(error, false, label);
@@ -236,7 +236,7 @@ const NOUNS: Record<string, string> = {
 	draft: "Render the reviewable draft video",
 	capcut: "Hand an approved draft to CapCut desktop",
 	budget: "Spend against the daily and per-post caps",
-	schema: "JSON Schemas of the post manifest and every command",
+	schema: "JSON Schemas of post.json and every command",
 };
 
 /** Groups operations by noun: `post create`, `post list`, … */

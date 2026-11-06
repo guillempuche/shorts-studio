@@ -1,11 +1,11 @@
 /**
- * The MCP surface: every operation whose surface is `cli-and-mcp` becomes a tool named after
- * it (`post_create`), with the same parameters as the CLI flags in camelCase.
+ * The MCP server: every operation whose surface is `cli-and-mcp` becomes a tool with the same
+ * name (`post_create`). Its parameters match the CLI flags, in camelCase.
  *
- * Failures come back as the tool's JSON result with `isError: true` and the same
+ * A failure comes back as the tool's JSON result with `isError: true` and the same
  * `{ code, message, fix }` the CLI prints, so an agent always gets the next step. Spending tools
- * take `dryRun`; there is no `yes`, because the MCP client's approval prompt is the gate
- * (the repository's .claude/settings.json asks before each one).
+ * take `dryRun` but not `yes`: the MCP client's approval prompt does that job (the repository's
+ * .claude/settings.json asks before each one).
  */
 
 import { Layer, Logger, type Schema } from "effect";
@@ -24,7 +24,7 @@ export const SERVER_INSTRUCTIONS = [
 export const mcpOperations = (operations: ReadonlyArray<Operation>): ReadonlyArray<Operation> =>
 	operations.filter((op) => op.surface === "cli-and-mcp");
 
-// MCP requires an object root for parameters; an empty Struct doesn't encode to one.
+// MCP requires a tool's parameters to be an object, and an empty Struct doesn't encode to one.
 const parametersOf = (op: Operation) =>
 	Object.keys(op.params).length === 0 && !op.spends
 		? Tool.EmptyParams
@@ -52,8 +52,8 @@ const normalize = (op: Operation, params: Record<string, unknown>): Record<strin
 /** The toolkit and its handlers, as one registration layer for any MCP transport. */
 export const mcpRegistrations = (operations: ReadonlyArray<Operation>, ctx: Context) => {
 	const ops = mcpOperations(operations);
-	// The toolkit is assembled at runtime from the registry, so its precise tuple type isn't
-	// known to TypeScript; each handler is checked against its tool's Schema when called.
+	// The toolkit is built at runtime from the registry, so TypeScript can't know its exact
+	// tuple type. Each handler is checked against its tool's Schema when it's called.
 	const toolkit = Toolkit.make(...(ops.map(toTool) as [ReturnType<typeof toTool>]));
 	const handlers: Record<string, (params: Record<string, unknown>) => unknown> = {};
 	for (const op of ops) {

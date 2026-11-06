@@ -2,11 +2,12 @@
  * Saved collections: reels and TikToks you saved from others, kept under `<posts>/saved/<name>/`
  * (urls.txt, downloaded.txt, audio/, transcripts/), and single reels downloaded into a post.
  *
- * Downloads use your own yt-dlp (never bundled: Instagram and TikTok break old versions often),
- * pause between requests so the account isn't rate-limited or flagged, and keep a download
- * archive so re-running fetches only new posts. They are CLI-only: an agent shouldn't fetch
- * from platforms with your browser session. Browser cookies (needed for Instagram) are opt-in
- * through `download.cookiesFromBrowser` in config.json. Platform terms and rights are yours.
+ * Downloads use your own yt-dlp. It is never bundled, because Instagram and TikTok often break
+ * old versions. Downloads pause between requests so the account isn't rate-limited or flagged.
+ * They keep a list of what was downloaded, so running again fetches only new posts. They are
+ * CLI-only: an agent shouldn't fetch from platforms with your browser session. Browser cookies,
+ * which Instagram needs, are off unless you set `download.cookiesFromBrowser` in config.json.
+ * Platform terms and rights are your responsibility.
  */
 
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
@@ -55,7 +56,7 @@ const ytDlpArgs = (ctx: Context): ReadonlyArray<string> => [
 ];
 
 const ytDlpFix =
-	"Common causes: not logged in to the platform in the browser named in download.cookiesFromBrowser, a private or deleted post, a photo post with no audio, a rate limit (wait, then re-run), or an old yt-dlp (pip install -U yt-dlp).";
+	"Common causes: not logged in to the platform in the browser named in download.cookiesFromBrowser, a private or deleted post, a photo post with no audio, a rate limit (wait, then run it again), or an old yt-dlp (pip install -U yt-dlp).";
 
 const countDownloaded = (dir: string): number =>
 	existsSync(join(dir, "downloaded.txt"))
@@ -67,7 +68,7 @@ const countDownloaded = (dir: string): number =>
 export const sourceDownload = defineOperation({
 	name: "source_download",
 	description:
-		"Download audio with yt-dlp: every URL in a saved collection's urls.txt (--collection), or one URL into a post (--url with --post). Re-running fetches only what's new. CLI only.",
+		"Download audio with yt-dlp: every URL in a saved collection's urls.txt (--collection), or one URL into a post (--url with --post). Running it again fetches only what's new. CLI only.",
 	params: {
 		collection: p.optional(
 			p.string("Saved collection under <posts>/saved/ whose urls.txt to download"),
@@ -133,7 +134,7 @@ export const sourceDownload = defineOperation({
 					dir,
 					next:
 						result.code !== 0
-							? `${ytDlpFix} Then re-run to retry.`
+							? `${ytDlpFix} Then run it again to retry.`
 							: `source transcribe --collection ${name}`,
 				};
 			}
@@ -179,7 +180,7 @@ export const sourceDownload = defineOperation({
 export const sourceAdopt = defineOperation({
 	name: "source_adopt",
 	description:
-		"Bring an existing download folder (urls.txt, downloaded.txt, audio/, transcripts/, e.g. from the old ig-saved.sh) into <posts>/saved/<collection>. Copies; never overwrites.",
+		"Copy an existing download folder (urls.txt, downloaded.txt, audio/, transcripts/, e.g. from the old ig-saved.sh) into <posts>/saved/<collection>. Never overwrites anything.",
 	params: {
 		from: p.string("The existing folder"),
 		collection: p.string("Name for the saved collection"),
@@ -218,7 +219,7 @@ export const sourceAdopt = defineOperation({
 export const sourceTranscribe = defineOperation({
 	name: "source_transcribe",
 	description:
-		"Transcribe every downloaded audio file of a saved collection with word timings (transcripts/<id>.json and .txt). Skips files already transcribed; language auto-detected unless given.",
+		"Transcribe every downloaded audio file in a saved collection, with a time for each word (transcripts/<id>.json and .txt). Skips files already transcribed. Detects the language unless you pass one.",
 	params: {
 		collection: p.string("Saved collection under <posts>/saved/"),
 		language: p.optional(p.string("Two-letter language code to force (es, en, ca…)")),
@@ -251,13 +252,13 @@ export const sourceTranscribe = defineOperation({
 			const transcriptOf = (file: string, ext: string) =>
 				join(dir, "transcripts", `${basename(file).replace(/\.[^.]+$/, "")}.${ext}`);
 			const todo = files.filter((file) => !existsSync(transcriptOf(file, "json")));
-			// Every file is tried; a failed one is listed and retried on the next run.
+			// Every file is tried. A failed one is listed, and the next run tries it again.
 			const [done, failed] = yield* Effect.partition(todo, (file) =>
-				Effect.sync(() => ctx.log(`transcribing ${file}`)).pipe(
+				Effect.sync(() => ctx.log(`Transcribing ${file}…`)).pipe(
 					Effect.andThen(
 						attempt(
 							(signal) => transcribe(ctx, key, join(audioDir, file), input.language, signal),
-							failWith("provider", "Check the key and your connection (VPN?), then re-run."),
+							failWith("provider", "Check the key and your connection (VPN?), then run it again."),
 						),
 					),
 					Effect.map((transcript) => {
@@ -277,6 +278,6 @@ export const sourceTranscribe = defineOperation({
 		[
 			`Transcribed ${o.transcribed}, already done ${o.skipped}, failed ${o.failed.length}.`,
 			...o.failed.map((line) => `  ✗ ${line}`),
-			...(o.failed.length > 0 ? ["Re-run to retry only the failed files."] : []),
+			...(o.failed.length > 0 ? ["Run it again to retry only the failed files."] : []),
 		].join("\n"),
 });
