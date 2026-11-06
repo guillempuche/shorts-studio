@@ -19,7 +19,7 @@ How each still image should move. See [README.md](README.md) for the summary and
 
 ## What shorts-studio does with it
 
-Each beat gets a motion type from its story moment, and the agent can override it: `hold`, `push-slow`, `push-punch`, `pull-back`, `pan-right`, `pan-left`, `drift-up`, `drift-down`. Speeds fall in bands: calm about 1–2.5 % per second, neutral 3–4, punch 8 or more. Total zoom stays at 15% or less. Images are generated about 25% larger than the frame, so motion never needs upscaling past the image. Cuts are hard cuts. The numbers are in [`src/domain/direction.ts`](../../src/domain/direction.ts).
+Each beat gets a motion type from its story moment, and the agent can override it: `hold`, `push-slow`, `push-punch`, `pull-back`, `pan-right`, `pan-left`, `drift-up`, `drift-down`. Speeds fall in bands: calm about 1–2.5 % per second, neutral 3–4, punch 8 or more. Total zoom stays at 15% or less. Images are generated about 25% larger than the frame, so motion never needs upscaling past the image. Cuts are hard cuts. The numbers are in [`packages/domain/src/direction.ts`](../../packages/domain/src/direction.ts).
 
 ## Open questions
 

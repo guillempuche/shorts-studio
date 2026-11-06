@@ -17,8 +17,8 @@ Thanks for helping. People and AI agents follow the same rules, and they live in
 
 ## Releasing (maintainers)
 
-If `pnpm-lock.yaml` changed, first update the hash in `nix/package.nix` (`nix build` prints it). Move the `[Unreleased]` entries to a new version section in CHANGELOG.md. Set the same version in package.json and commit. Then push a tag `v<version>`.
+If `pnpm-lock.yaml` changed, first update the `pnpmDeps` hash in `flake.nix` (`nix build` prints it). Move the `[Unreleased]` entries to a new version section in CHANGELOG.md. Set the same version in `apps/cli/package.json` and commit. Then push a tag `v<version>`.
 
-The release workflow builds the binaries. It publishes the GitHub Release, with that CHANGELOG.md section as its notes. It also publishes to npm when the `NPM_PUBLISH` repository variable is `true`.
+The release workflow compiles the binaries with Bun, straight from the TypeScript. It publishes the GitHub Release, with that CHANGELOG.md section as its notes.
 
 By contributing, you agree that your work is licensed under the [Apache-2.0](LICENSE) licence.

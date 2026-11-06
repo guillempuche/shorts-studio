@@ -26,7 +26,7 @@ TikTok's ad advice is "5–10 words per second" of on-screen text. That contradi
 - Highlighting each word is an option (`captions.highlight` in config.json). It's off by default.
 - An optional hook title of 3–7 words shows in the upper safe band for the first few seconds (`script set --hook`).
 
-The numbers are in [`src/domain/direction.ts`](../../src/domain/direction.ts).
+The numbers are in [`packages/domain/src/direction.ts`](../../packages/domain/src/direction.ts).
 
 ## Open questions
 

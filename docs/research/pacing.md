@@ -19,7 +19,7 @@ We found no credible published measurement of cut rates in top-performing Shorts
 
 ## What shorts-studio does with it
 
-Beat length depends on the beat's story moment (`hook`, `setup`, `tension`, `twist`, `vulnerable`, `payoff`, `cta`). Beats are short in the hook and long in setup and vulnerable moments. They get shorter through tension. A twist is followed by a hold. The longest beat comes at the end. Cuts always land on a word or pause boundary. The ranges are in [`src/domain/direction.ts`](../../src/domain/direction.ts).
+Beat length depends on the beat's story moment (`hook`, `setup`, `tension`, `twist`, `vulnerable`, `payoff`, `cta`). Beats are short in the hook and long in setup and vulnerable moments. They get shorter through tension. A twist is followed by a hold. The longest beat comes at the end. Cuts always land on a word or pause boundary. The ranges are in [`packages/domain/src/direction.ts`](../../packages/domain/src/direction.ts).
 
 ## Open questions
 

@@ -1,14 +1,14 @@
 # Providers
 
-Which outside services shorts-studio calls, what for, and what they cost. [.env.example](../.env.example) lists the key names and where to put them. `shorts-studio config show` says which keys are set.
+Which outside services shorts-studio calls, what for, and what they cost. `config.json` chooses the provider for each job (`transcribe.provider`, `image.provider`); a fork adds its own in `packages/providers/src/`. [.env.example](../.env.example) lists the key names. `shorts-studio doctor` checks the keys of the providers in use.
 
-| Need           | Provider                                                                                       | Milestone | Notes                                                                                                                                   |
-| -------------- | ---------------------------------------------------------------------------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Transcription  | [Together](https://docs.together.ai/reference/audio-transcriptions), `openai/whisper-large-v3` | 1         | `verbose_json` with word timestamps. Uploads up to 80 MB. Billed per minute of audio                                                    |
-| Images         | [FAL](https://fal.ai/models/fal-ai/flux/schnell), `flux-schnell` (default) or `flux-dev`       | 1         | Each image is 1248×2224. flux-schnell ≈ $0.003/MP (≈ $0.008 per image), flux-dev ≈ $0.025/MP. See [FAL pricing](https://fal.ai/pricing) |
-| Voice          | Fish Audio, ElevenLabs                                                                         | 3         | Planned: [voice-music-animate](../openspec/changes/voice-music-animate/proposal.md)                                                     |
-| Music          | ElevenLabs Music API                                                                           | 3         | Suno has no official API, and Fish Audio's music is only in its web app. Import their tracks with `source import --kind music`          |
-| Image to video | FAL                                                                                            | 3         | Only for beats chosen in review                                                                                                         |
+| Need           | Provider                                                                                       | Status  | Notes                                                                                                                                   |
+| -------------- | ---------------------------------------------------------------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Transcription  | [Together](https://docs.together.ai/reference/audio-transcriptions), `openai/whisper-large-v3` | Default | `verbose_json` with word timestamps. Uploads up to 80 MB. Billed per minute of audio                                                    |
+| Images         | [FAL](https://fal.ai/models/fal-ai/flux/schnell), `flux-schnell` (default) or `flux-dev`       | Default | Each image is 1344×2400. flux-schnell ≈ $0.003/MP (≈ $0.010 per image), flux-dev ≈ $0.025/MP. See [FAL pricing](https://fal.ai/pricing) |
+| Voice          | Fish Audio, ElevenLabs                                                                         | Planned | Planned: [voice-music-animate](../openspec/changes/voice-music-animate/proposal.md)                                                     |
+| Music          | ElevenLabs Music API                                                                           | Planned | Suno has no official API, and Fish Audio's music is only in its web app. Import their tracks with `source import --kind music`          |
+| Image to video | FAL                                                                                            | Planned | Only for beats chosen in review                                                                                                         |
 
 ## Keys
 
@@ -37,4 +37,4 @@ Costs are estimates based on the prices above, because providers don't report wh
 
 ## Testing without spending
 
-`SHORTS_FAL_URL` and `SHORTS_TOGETHER_URL` point the CLI at fake services. `node test/support/fake-fal.ts` starts a local fake of FAL's queue that returns colour cards.
+`SHORTS_FAL_URL` and `SHORTS_TOGETHER_URL` point the CLI at fake services. `node packages/providers/src/fal.fake.ts` starts a local fake of FAL's queue that returns colour cards.

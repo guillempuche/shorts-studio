@@ -25,4 +25,4 @@ body:
     id: version
     attributes:
       label: Version and install method
-      placeholder: v0.2.0, install.sh / nix / npm / from source
+      placeholder: v0.2.0, install.sh / nix / from source

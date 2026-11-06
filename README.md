@@ -31,7 +31,6 @@ Every step is both a command and an MCP tool. [docs/architecture.md](docs/archit
 | Nix (brings the FFmpeg it needs) | `nix run github:guillempuche/shorts-studio -- doctor`                                           |
 | macOS, Linux                     | `curl -fsSL https://raw.githubusercontent.com/guillempuche/shorts-studio/main/install.sh \| sh` |
 | Windows                          | `irm https://raw.githubusercontent.com/guillempuche/shorts-studio/main/install.ps1 \| iex`      |
-| npm (Node 24+)                   | `npx -y shorts-studio doctor`                                                                   |
 | From source                      | see [docs/getting-started.md](docs/getting-started.md)                                          |
 
 `shorts-studio doctor` checks FFmpeg, your keys and your folders. If anything is missing, it tells you the fix. To set up keys, Claude Code and Codex, see [docs/getting-started.md](docs/getting-started.md).

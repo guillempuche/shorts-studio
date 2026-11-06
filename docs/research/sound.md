@@ -22,7 +22,7 @@ Cutting to music, voice speed, pauses, and mixing. See [README.md](README.md) fo
 
 ## What shorts-studio will do with it
 
-With music, beats cut every 2, 4 or 8 musical beats, so each image lasts about 2–2.5 s. Cuts snap to downbeats and are never late. Section changes and drops always get a cut. With speech over music, cuts keep to word boundaries and snap to a beat only within ±120 ms. Voices default to about 160 words per minute: faster on hooks, slower on reflective lines. Music sits 12 LU under the voice, and the mix targets −14 LUFS. The numbers will live in [`src/domain/direction.ts`](../../src/domain/direction.ts).
+With music, beats cut every 2, 4 or 8 musical beats, so each image lasts about 2–2.5 s. Cuts snap to downbeats and are never late. Section changes and drops always get a cut. With speech over music, cuts keep to word boundaries and snap to a beat only within ±120 ms. Voices default to about 160 words per minute: faster on hooks, slower on reflective lines. Music sits 12 LU under the voice, and the mix targets −14 LUFS. The numbers will live in [`packages/domain/src/direction.ts`](../../packages/domain/src/direction.ts).
 
 ## Open questions
 

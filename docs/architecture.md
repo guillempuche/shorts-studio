@@ -5,29 +5,41 @@ How shorts-studio is built, and why. [README.md](../README.md) says what it does
 ## System overview
 
 ```
-                 ┌───────────── src/operations/ ─────────────┐
- shorts-studio ─▶│ one Operation per command:                 │◀─ mcp serve (stdio)
- (effect/cli)    │   params (p.*) → CLI flags + MCP Schema    │   (effect/ai McpServer)
-                 │   run(input, Context, RunMode) → Effect    │
-                 └──────┬──────────────┬──────────────┬───────┘
-                        │              │              │
-                 src/core/        src/work/       src/domain/
-                 post store,      Together, FAL,   Post Schema,
-                 ledger, locks,   ffmpeg, beats,   stage
-                 context          captions
-                        │              │
-               SHORTS_DATA_DIR    SHORTS_POSTS_DIR/mine/<date-slug>/
-               ledger.jsonl       post.json, audio/, images/, draft.mp4
-               config.json, brand.json
+ apps/cli ──────────▶ packages/usecases ◀────────── apps/mcp
+ shorts-studio         one Operation per command:     mcp serve (stdio)
+ (effect/cli)          params (p.*) → CLI flags       (effect/ai McpServer)
+                         + MCP Schema
+                       run(input, Context, RunMode)
+                       ports: Transcriber, ImageMaker,
+                         MediaTools, Downloader
+                          │                  ▲
+                          ▼                  │ implements
+                 packages/domain     packages/providers
+                 post, beats,        FAL, Together, ffmpeg,
+                 moments, motion,    yt-dlp, Node (settings,
+                 captions, errors    keychain, processes)
+
+ SHORTS_DATA_DIR: config.json, brand.json, ledger.jsonl
+ SHORTS_POSTS_DIR/mine/<date-slug>/: post.json, audio/, images/, draft.mp4
 ```
+
+The arrows are package dependencies, and they point inward. `domain` depends on nothing but Effect. `usecases` depends on `domain`. `providers` depends on both, because it implements the ports `usecases` declares. Only the apps see everything. Each package lists the packages it may import, so pnpm refuses an import that points the wrong way.
 
 ### One operation for both the CLI and MCP
 
-Every command is an `Operation` in `src/operations/`, listed in `src/operations/index.ts`. Its parameters are declared with `p.*` (`src/core/operation.ts`). That one declaration gives both the CLI flag (kebab-case) and the MCP tool field (camelCase). `src/app/cli.ts` turns the list into `noun verb` commands, and `src/app/mcp.ts` turns it into `noun_verb` tools. Operations whose `surface` is `cli-only`, such as approving a script, are not offered over MCP. A test lists the MCP tools through Effect's in-memory client and checks that they match the list.
+Every command is an `Operation` in `packages/usecases/src/operations/`, listed in `operations/index.ts`. Its parameters are declared with `p.*` (`packages/usecases/src/operation.ts`). That one declaration gives both the CLI flag (kebab-case) and the MCP tool field (camelCase). `apps/cli` turns the list into `noun verb` commands, and `apps/mcp` turns it into `noun_verb` tools. Operations whose `surface` is `cli-only`, such as approving a script, are not offered over MCP. A test lists the MCP tools through Effect's in-memory client and checks that they match the list.
 
-### A Context object instead of services
+### Ports and providers
 
-Operations are plain functions of `(input, Context, RunMode)`. `Context` (`src/core/context.ts`) holds the folders, settings, `secret()`, `fetch`, `run` (to start other programs), `now` and `log`. Tests pass their own `Context`, with a temporary folder, a fake server for `fetch` and a fixed time.
+An operation takes plain values in a `Context` (folders, settings, `secret()`, `now`, `log`) and asks for outside work through ports (`packages/usecases/src/ports.ts`): `Transcriber`, `ImageMaker`, `MediaTools` and `Downloader`. Each port is an Effect service. Each provider in `packages/providers` is a layer that implements one or more ports, and says which API keys it needs and how `doctor` checks it.
+
+`providersLayer` (`packages/providers/src/index.ts`) picks the provider for each job from `config.json` (`transcribe.provider`, `image.provider`). A fork adds a provider by writing its module and adding one line to the list for each job it does. No use case changes.
+
+Tests sit next to the module they test (`beats.ts` and `beats.test.ts`). Use-case tests provide in-memory fake ports; provider tests run against a local fake of the service.
+
+### Errors
+
+Every command fails with one `ShortsError` (`packages/domain/src/errors.ts`). It always says what went wrong (`message`) and what to do next (`fix`). Its `reason` is a tagged error (`NotFound`, `Usage`, `OverBudget`, `MissingKey`, `ProviderFailed`, `RequestEnded`…), so code handles one kind with `Effect.catchReason`. The reason sets the stable `code` that scripts and agents match on, and the exit code.
 
 ## Data flow
 
@@ -37,19 +49,19 @@ Operations are plain functions of `(input, Context, RunMode)`. `Context` (`src/c
 
 ### Transcribe
 
-`audio transcribe` uploads the audio to Together and asks for `verbose_json` with word timestamps. It writes `transcript.json` with every word's start and end.
+`audio transcribe` sends the audio to the transcription provider (Together's Whisper large-v3 by default). It writes `transcript.json` with every word's start and end.
 
 ### Beats and prompts
 
-`beat plan` (`src/work/beats.ts`) groups words into phrases of 1.5–3 s. It cuts at pauses of at least 0.25 s or at sentence ends, and lays the beats back to back from 0 to the end of the audio. Long silences are split. Audio without words gets beats of equal length.
+`beat plan` (`packages/domain/src/beats.ts`) groups words into phrases of 1.5–3 s. It cuts at pauses of at least 0.25 s or at sentence ends, and lays the beats back to back from 0 to the end of the audio. Long silences are split. Audio without words gets beats of equal length.
 
 Next, the agent marks each beat's story moment with `beat set`. Then `beat plan --by-moment` cuts each stretch of one moment again, to fit that moment's length range. Last, the agent writes one image prompt per beat.
 
-Moments, length ranges and motions are defined in `src/domain/direction.ts`. The research behind them is in [docs/research](research/README.md).
+Moments, length ranges and motions are defined in `packages/domain/src/direction.ts`. The research behind them is in [docs/research](research/README.md).
 
 ### Images
 
-`image generate` (`src/operations/image.ts`) needs the approved script. It works on each beat whose image is missing or out of date. For each one, it:
+`image generate` (`packages/usecases/src/operations/image.ts`) needs the approved script. It works on each beat whose image is missing or out of date. For each one, it:
 
 1. reserves the estimated cost in the ledger;
 2. sends the request to FAL's queue;
@@ -62,7 +74,7 @@ It works on three beats at a time.
 
 ### Draft
 
-`draft render` first writes `captions.ass` and `captions.srt` (`src/work/captions.ts`). Each caption is a group of words within reading limits. It also adds the optional hook title. Then it runs one ffmpeg command (`src/work/render.ts`) that:
+`draft render` first writes `captions.ass` and `captions.srt` (`packages/domain/src/captions.ts`). Each caption is a group of words within reading limits. It also adds the optional hook title. Then it runs one ffmpeg command (`packages/providers/src/ffmpeg-render.ts`) that:
 
 - upscales each image and moves it for exactly its beat's frames, with the motion its moment calls for (or its override);
 - joins the beats in order;
@@ -74,21 +86,21 @@ It works on three beats at a time.
 
 The user runs `post review` (CLI-only) to approve, ask for a fix (with notes per beat) or reject. The review stores the draft's hash, so a new render needs a new review.
 
-`capcut export` (`src/operations/capcut.ts`) renders one clip per beat, with its motion and exactly its frames from the draft. It also writes the audio (left out when it's someone else's), `captions.srt` and a clean draft.
+`capcut export` (`packages/usecases/src/operations/capcut.ts`) renders one clip per beat, with its motion and exactly its frames from the draft. It also writes the audio (left out when it's someone else's), `captions.srt` and a clean draft.
 
 `post finalize`, `post publish` and `post archive` record what happens after CapCut.
 
 ### Saved collections
 
-`source download --collection` runs the user's own yt-dlp on the URLs in `<posts>/saved/<name>/urls.txt`. It keeps a download archive and pauses between downloads. `source transcribe --collection` writes transcripts with word times next to the audio. Both replace the old `ig-saved.sh`, and `source adopt` brings in that script's folders.
+`source download --collection` runs the user's own yt-dlp on the URLs in `<posts>/saved/<name>/urls.txt`. It keeps a download archive and pauses between downloads. `source transcribe --collection` writes transcripts with word times next to the audio.
 
 ## Data model
 
 ### post.json
 
-The Schema lives in `src/domain/post.ts`. `pnpm schemas` writes it to `schemas/post.schema.json`, and `schema show` prints it along with each command's schemas.
+The Schema lives in `packages/domain/src/post.ts`. `pnpm schemas` writes it to `schemas/post.schema.json`, and `schema show` prints it along with each command's schemas.
 
-Only `updatePost` (`src/core/post-store.ts`) writes the file. It takes the post's lock file, reads the file again, makes the change, replaces the file in one step, and adds 1 to `revision`. Long operations don't hold the lock the whole time. Instead, they save each finished piece with a short update.
+Only `updatePost` (`packages/usecases/src/post-store.ts`) writes the file. It takes the post's lock file, reads the file again, makes the change, replaces the file in one step, and adds 1 to `revision`. Long operations don't hold the lock the whole time. Instead, they save each finished piece with a short update.
 
 Every generated output stores an `inputHash`. It covers the output's inputs, the hashes of the earlier outputs it was built from, and the version of the code that made it (`PLANNER_VERSION`, `RENDERER_VERSION`). An output is up to date only while that hash matches. So an edited prompt or a re-cut beat also makes everything built from it out of date.
 
@@ -96,11 +108,13 @@ Every generated output stores an `inputHash`. It covers the output's inputs, the
 
 ### Ledger
 
-`<data>/ledger.jsonl` (`src/core/ledger.ts`) is only ever added to. Each paid call adds a `reserve` entry before it starts, then a `settle` or `release` entry. Reservations are checked against `caps.dailyUsd` and `caps.postUsd` under one lock that every process shares.
+`<data>/ledger.jsonl` (`packages/usecases/src/ledger.ts`) is only ever added to. Each paid call adds a `reserve` entry before it starts, then a `settle` or `release` entry. Reservations are checked against `caps.dailyUsd` and `caps.postUsd` under one lock that every process shares.
 
 ## Agent interface
 
 Results go to stdout. Progress and log messages go to stderr. With `--json`, stdout holds exactly one object: `{ ok: true, outputVersion, command, result }` or `{ ok: false, outputVersion, command, error: { code, message, fix } }`. A failed MCP call returns the same error object with `isError: true`.
+
+When a spending command runs without `--yes`, that one object holds both the estimate (`result`) and the request for confirmation (`error`).
 
 Spending commands need `--yes` on the CLI. Over MCP they take `dryRun` instead, and the client's approval prompt does the job of `--yes`.
 
@@ -119,9 +133,11 @@ Spending commands need `--yes` on the CLI. Over MCP they take `dryRun` instead, 
 
 **Why one list of operations for the CLI and MCP, not two codebases:** an agent and a person must see the same commands with the same parameters. Building both from one declaration keeps them from drifting apart, and the parity test proves it.
 
-**Why Effect only at the edges, not Effect services everywhere:** following content-studio's `docs/effect.md`, Effect is used only where it prevents a problem. Here that means interruption (`NodeRuntime.runMain` turns Ctrl-C into cleanup steps and exit 130) and the CLI and MCP layers. Passing a `Context` object keeps operations plain and tests simple.
+**Why ports as Effect services, and plain values in `Context`:** the outside services are what a fork swaps, so each is a port with its own layer, chosen from the settings. Folders, settings and the clock never change shape, so they stay plain values that a test builds directly.
 
-**Why `spawn` with `stopWhenAborted`, not Effect's process spawner:** on POSIX, Effect's spawner detaches the programs it starts. So an interrupted render could leave ffmpeg running (measured in content-studio).
+**Why a workspace of packages, not folders in one package:** package dependencies make the layers a rule, not a habit. The domain can't import a provider, because pnpm doesn't link one into it.
+
+**Why `spawn` with `stopWhenAborted`, not Effect's process spawner:** on macOS and Linux, Effect's spawner detaches the programs it starts, so an interrupted render could leave ffmpeg running.
 
 **Why reserve before sending, not record after:** if five posts generate at once, each would pass a check made after the fact. Reserving under one lock makes the cap hold.
 

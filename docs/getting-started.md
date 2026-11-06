@@ -4,11 +4,11 @@ How to set up a machine to run shorts-studio, and how to connect Claude Code or 
 
 ## Install
 
-Pick one option from the [README's install table](../README.md#install). Nix is the easiest on macOS and Linux. It brings an FFmpeg built with libass, which captions need. Many FFmpeg builds lack libass, Homebrew's included. With the binary or npm, install FFmpeg yourself and check that `ffmpeg -filters` lists `subtitles`.
+Pick one option from the [README's install table](../README.md#install). Nix is the easiest on macOS and Linux. It brings an FFmpeg built with libass, which captions need. Many FFmpeg builds lack libass, Homebrew's included. With the binary, install FFmpeg yourself and check that `ffmpeg -filters` lists `subtitles`.
 
 ## From source
 
-`nix develop` gives you Node 24, ffmpeg-full and OpenSpec. With direnv, `.envrc` enters that shell when you `cd` into the folder and puts `bin/` on your PATH. Then run `pnpm install` and use `bin/shorts-studio`. Outside the Nix shell, an older corepack may fail to start pnpm 12.
+`nix develop` gives you Node 26, ffmpeg-full and OpenSpec. With direnv, `.envrc` enters that shell when you `cd` into the folder and puts `bin/` on your PATH. Then run `pnpm install` and use `bin/shorts-studio`. Outside the Nix shell, an older corepack may fail to start pnpm 12.
 
 ## Keys and folders
 
@@ -24,7 +24,7 @@ Pick one option from the [README's install table](../README.md#install). Nix is 
 { "download": { "cookiesFromBrowser": "chrome" } }
 ```
 
-Put a collection's post URLs in `<posts>/saved/<name>/urls.txt`, one per line. To get them, open the collection in the browser, scroll to the end, and copy the links from the developer console. Then run `source download --collection <name>` and `source transcribe --collection <name>`. To bring in folders from the old `ig-saved.sh`, run `source adopt --from <folder> --collection <name>`.
+Put a collection's post URLs in `<posts>/saved/<name>/urls.txt`, one per line. To get them, open the collection in the browser, scroll to the end, and copy the links from the developer console. Then run `source download --collection <name>` and `source transcribe --collection <name>`.
 
 You are responsible for following each platform's terms when you download and reuse other people's content.
 

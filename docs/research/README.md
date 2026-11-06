@@ -1,6 +1,6 @@
 # Research: how pacing, motion, sound and text shape a short video's story
 
-This is the evidence behind shorts-studio's story-direction defaults. Each note lists rules, how strong the evidence for each one is, and where it comes from. The numbers the code uses live in [`src/domain/direction.ts`](../../src/domain/direction.ts). The [story-direction skill](../../.agents/skills/story-direction/SKILL.md) shows how an agent applies them.
+This is the evidence behind shorts-studio's story-direction defaults. Each note lists rules, how strong the evidence for each one is, and where it comes from. The numbers the code uses live in [`packages/domain/src/direction.ts`](../../packages/domain/src/direction.ts). The [story-direction skill](../../.agents/skills/story-direction/SKILL.md) shows how an agent applies them.
 
 | Note                       | Covers                                                                           |
 | -------------------------- | -------------------------------------------------------------------------------- |

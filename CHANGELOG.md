@@ -6,9 +6,21 @@ Notable changes, newest first. The release workflow publishes each version's sec
 
 ### Added
 
-- Install with `nix run github:guillempuche/shorts-studio`, native binaries (`install.sh`, `install.ps1`), or the npm package.
+- Install with `nix run github:guillempuche/shorts-studio` or native binaries (`install.sh`, `install.ps1`).
 - `doctor` and `schema show`.
 - Run one command on several posts with `--post a,b`, `--day` or `--in-stage`.
+- Choose the transcription and image provider in config.json (`transcribe.provider`, `image.provider`). `doctor` checks only the keys of the providers in use.
+
+### Changed
+
+- The code is a workspace: `apps/cli`, `apps/mcp`, and packages for the domain, the use cases and the providers, built with Turbo and kept in step by syncpack.
+- Node 26 runs the TypeScript directly; there is no build step.
+- `transcript.json`, lock files and ledger lines are read through their Schemas, so a damaged file names the bad field and the fix.
+
+### Removed
+
+- `source adopt`.
+- The npm package: Node doesn't run TypeScript from inside `node_modules`.
 
 ### Fixed
 
@@ -22,6 +34,7 @@ Notable changes, newest first. The release workflow publishes each version's sec
 - A failed import leaves no temporary file.
 - A batch prints how many posts failed.
 - Commands on a post that doesn't exist fail before taking its lock.
+- With `--json`, a spending command run without `--yes` printed two objects. It now prints one, holding both the estimate and the error.
 
 ## [0.1.0] - 2026-11-06
 
