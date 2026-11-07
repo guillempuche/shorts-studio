@@ -63,11 +63,14 @@
             pnpm_config_trust_lockfile = "true";
           };
 
+          # Only what the CLI needs at run time. Pruning afterwards instead would re-run pnpm's
+          # supply-chain check, which needs the network the sandbox doesn't have.
+          pnpmInstallFlags = [ "--prod" ];
+
           dontBuild = true;
 
           installPhase = ''
             runHook preInstall
-            pnpm prune --prod --ignore-scripts
             find apps packages -name '*.test.ts' -delete
             mkdir -p $out/lib/shorts-studio
             cp -R package.json node_modules apps packages $out/lib/shorts-studio/
