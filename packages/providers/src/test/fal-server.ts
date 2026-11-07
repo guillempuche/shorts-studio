@@ -34,6 +34,8 @@ export interface FakeFalOptions {
 	readonly image?: (prompt: string, index: number) => Uint8Array;
 	/** Status to end with instead of COMPLETED, to test failed requests. */
 	readonly finalStatus?: string;
+	/** HTTP status to answer every submit with instead of queueing it, to test refusals. */
+	readonly submitStatus?: number;
 }
 
 const PLACEHOLDER = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
@@ -61,6 +63,9 @@ export const startFakeFal = (options: FakeFalOptions = {}): Promise<FakeFal> => 
 					seed: number;
 					image_size: { width: number; height: number };
 				};
+				if (options.submitStatus !== undefined) {
+					return json(options.submitStatus, { detail: "not taken" });
+				}
 				const id = `req-${submits.length + 1}`;
 				submits.push({
 					endpoint: path.slice(1),

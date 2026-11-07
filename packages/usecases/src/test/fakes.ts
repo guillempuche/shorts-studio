@@ -6,7 +6,7 @@
 
 import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fail, failBecause, RequestEnded } from "@shorts-studio/domain/errors";
+import { fail, failBecause, Refused, RequestEnded } from "@shorts-studio/domain/errors";
 import type { Model } from "@shorts-studio/domain/models";
 import type { Transcript } from "@shorts-studio/domain/post";
 import { Effect, Layer } from "effect";
@@ -30,13 +30,20 @@ export type FakeImageMaker = ImageMaker["Service"] & {
 		readonly seed: number;
 	}>;
 	/**
-	 * How `collect` answers, read on every call: with the image; never, so a run can be
-	 * interrupted while it waits; or by ending the request, as a provider that gave up would.
+	 * How the fake answers, read on every call. `collect` answers with the image; never, so a run
+	 * can be interrupted while it waits; or by ending the request, as a provider that gave up
+	 * would. `submit` fails when refused (an HTTP 4xx) or dropped (no answer, outcome unknown).
 	 */
-	answer: "image" | "never" | "ended";
+	answer: "image" | "never" | "ended" | "refused" | "dropped";
 	/** How many `collect` calls were left waiting because `answer` was "never". */
 	waits: number;
 };
+
+/** How a fake fails a paid request: refused (a 4xx, nothing billed) or dropped (unknown). */
+const paidCallFailure = (answer: "refused" | "dropped") =>
+	answer === "refused"
+		? failBecause(new Refused({ message: "The fake said no (HTTP 400).", fix: "Fix the request." }))
+		: fail("provider", "The connection dropped before the fake answered.", "Run it again.");
 
 /** The bytes the fake returns for a request: they change with the prompt and the seed. */
 export const fakeImageBytes = (prompt: string, seed: number): Uint8Array =>
@@ -78,6 +85,9 @@ export const fakeImageMaker = (
 		submit: (model, prompt, seed) =>
 			Effect.suspend(() => {
 				maker.submits.push({ endpoint: model.endpoint, prompt, seed });
+				if (maker.answer === "refused" || maker.answer === "dropped") {
+					return Effect.fail(paidCallFailure(maker.answer));
+				}
 				const requestId = `req-${maker.submits.length}`;
 				return Effect.succeed<ImageRequest>({
 					requestId,
@@ -106,7 +116,7 @@ export const fakeImageMaker = (
 								}),
 							),
 						);
-					case "image":
+					default:
 						return Effect.succeed(fakeImageBytes(sent.prompt, sent.seed));
 				}
 			}),
@@ -157,7 +167,10 @@ export type FakeTranscriber = Transcriber["Service"] & {
 	readonly calls: Array<{ readonly endpoint: string; readonly file: string }>;
 };
 
-/** A transcriber in memory that hears `transcript` in every file, or refuses every file. */
+/**
+ * A transcriber in memory that hears `transcript` in every file, unless `answer` says it refuses
+ * every file (an HTTP 4xx) or drops the connection (outcome unknown).
+ */
 export const fakeTranscriber = (
 	transcript: Transcript = {
 		language: "en",
@@ -167,7 +180,10 @@ export const fakeTranscriber = (
 			{ text: "there.", start: 0.5, end: 0.9 },
 		],
 	},
-	options: { readonly refuses?: boolean; readonly keys?: ReadonlyArray<KeySpec> } = {},
+	options: {
+		readonly answer?: "words" | "refused" | "dropped";
+		readonly keys?: ReadonlyArray<KeySpec>;
+	} = {},
 ): FakeTranscriber => {
 	const transcriber: FakeTranscriber = {
 		provider: "fake-transcriber",
@@ -188,9 +204,10 @@ export const fakeTranscriber = (
 		transcribe: (model, file) =>
 			Effect.suspend(() => {
 				transcriber.calls.push({ endpoint: model.endpoint, file });
-				return options.refuses === true
-					? Effect.fail(fail("provider", "The fake refused the audio.", "Run it again."))
-					: Effect.succeed(transcript);
+				const answer = options.answer ?? "words";
+				return answer === "words"
+					? Effect.succeed(transcript)
+					: Effect.fail(paidCallFailure(answer));
 			}),
 	};
 	return transcriber;

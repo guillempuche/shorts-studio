@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
@@ -42,6 +42,10 @@ const transcribe = (ctx: Context) =>
 	audioTranscribe.run({ post: SLUG, language: undefined, force: false }, ctx, MODE);
 
 const ledgerOf = (ctx: Context) => Effect.runPromise(readLedger(ctx));
+
+/** Damages the ledger while a paid call runs, so the call's ledger line can't be closed. */
+const damageLedger = (ctx: Context) =>
+	Effect.sync(() => appendFileSync(join(ctx.paths.data, "ledger.jsonl"), "not json\n"));
 
 describe("audio transcribe", () => {
 	it("should write each word with its time, and record the transcript on the post", async () => {
@@ -115,7 +119,7 @@ describe("audio transcribe", () => {
 		// GIVEN a post with audio, and a provider that refuses it
 		const { ctx, ports } = await ready(
 			testContext(),
-			fakeTranscriber(undefined, { refuses: true }),
+			fakeTranscriber(undefined, { answer: "refused" }),
 		);
 
 		// WHEN its audio is transcribed
@@ -126,6 +130,43 @@ describe("audio transcribe", () => {
 		const entries = await ledgerOf(ctx);
 		expect(entries.map((e) => e.type)).toEqual(["reserve", "release"]);
 		expect(spent(entries, { post: SLUG })).toBe(0);
+	});
+
+	it("should keep the reservation counted when the connection drops mid-call", async () => {
+		// GIVEN a post with 2 minutes of audio, and a connection that drops before the answer
+		const { ctx, ports } = await ready(
+			testContext(),
+			fakeTranscriber(undefined, { answer: "dropped" }),
+		);
+
+		// WHEN its audio is transcribed
+		const error = await runFailure(transcribe(ctx), ports);
+
+		// THEN it fails as a provider error
+		expect(error.code).toBe("provider");
+		// AND the $0.012 stays counted, since the provider may have billed it
+		const entries = await ledgerOf(ctx);
+		expect(entries.map((e) => e.type)).toEqual(["reserve"]);
+		expect(spent(entries, { post: SLUG })).toBeCloseTo(0.012);
+	});
+
+	it("should keep a transcript it paid for when the ledger can't be closed", async () => {
+		// GIVEN a post with audio, and a ledger damaged while the transcriber works
+		const ctx = testContext();
+		const base = fakeTranscriber();
+		const transcriber = {
+			...base,
+			transcribe: (...args: Parameters<typeof base.transcribe>) =>
+				damageLedger(ctx).pipe(Effect.andThen(base.transcribe(...args))),
+		};
+		const { ports } = await ready(ctx, transcriber);
+
+		// WHEN its audio is transcribed
+		const result = await run(transcribe(ctx), ports);
+
+		// THEN the transcript is written and recorded on the post
+		expect(result.words).toBe(2);
+		expect((await Effect.runPromise(readPost(ctx, SLUG))).transcript).toBeDefined();
 	});
 
 	it("should refuse a language that isn't a two-letter code, before sending anything", async () => {

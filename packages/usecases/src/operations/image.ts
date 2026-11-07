@@ -18,7 +18,7 @@ import { Effect, Schema } from "effect";
 import type { Context } from "../context.ts";
 import { hashBytes, hashOf, writeFileAtomic } from "../files.ts";
 import { parseBeatList, requireKey } from "../inputs.ts";
-import { release, reserve, settle } from "../ledger.ts";
+import { release, releaseIfNothingBilled, reserve, settle } from "../ledger.ts";
 import { chooseModel, costOf, type NamedModel } from "../models.ts";
 import { defineOperation, p, type RunMode } from "../operation.ts";
 import { ImageMaker, type ImageRequest } from "../ports.ts";
@@ -84,7 +84,7 @@ const generateOne = Effect.fn("generateOne")(function* (
 		});
 		const submitted = yield* maker
 			.submit(model, fullPrompt(ctx, beat.prompt ?? ""), seed)
-			.pipe(Effect.tapError(() => Effect.ignore(release(ctx, ledgerId))));
+			.pipe(Effect.tapError((error) => releaseIfNothingBilled(ctx, ledgerId, error)));
 		request = { ...submitted, ledgerId };
 		yield* updatePost(ctx, slug, "image generate", (post) =>
 			Effect.succeed(
@@ -155,7 +155,9 @@ const generateOne = Effect.fn("generateOne")(function* (
 		),
 	);
 
-	yield* settle(ctx, request.ledgerId, request.requestId);
+	// The image is saved, so a ledger that can't be closed mustn't fail the run: an open
+	// reservation counts the same amount as a settled one.
+	yield* Effect.ignore(settle(ctx, request.ledgerId, request.requestId));
 	ctx.log(`beat ${beat.index}: saved ${file}`);
 });
 

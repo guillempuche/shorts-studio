@@ -9,11 +9,11 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { withEnv } from "./env.ts";
 import { providerContext } from "./test/context.ts";
 import { startFakeTogether } from "./test/together-server.ts";
-import { togetherLayer } from "./together.ts";
+import { TOGETHER_MODELS, togetherLayer } from "./together.ts";
 
 transcriberContract("Together", {
 	make: async ({ answer, withKey }) => {
-		const fake = await startFakeTogether(answer === "refused" ? { status: 500 } : {});
+		const fake = await startFakeTogether(answer === "refused" ? { status: 400 } : {});
 		onTestFinished(() => fake.close());
 		const ctx = providerContext({
 			endpoints: { together: fake.url },
@@ -28,6 +28,32 @@ transcriberContract("Together", {
 });
 
 describe("Together transcribe", () => {
+	it("should leave a 5xx answer as an unknown outcome", async () => {
+		// GIVEN Together answering every upload with a 500
+		const fake = await startFakeTogether({ status: 500 });
+		onTestFinished(() => fake.close());
+		const ctx = providerContext({
+			endpoints: { together: fake.url },
+			secrets: { TOGETHER_API_KEY: "test-key" },
+		});
+		const together = await Effect.runPromise(
+			Effect.gen(function* () {
+				return yield* Transcriber;
+			}).pipe(Effect.provide(withEnv(togetherLayer, ctx))),
+		);
+		const file = join(tempDir(), "audio.m4a");
+		writeFileSync(file, new Uint8Array(64));
+
+		// WHEN a file is transcribed
+		const error = await Effect.runPromise(
+			Effect.flip(together.transcribe(TOGETHER_MODELS["openai/whisper-large-v3"], file, undefined)),
+		);
+
+		// THEN it is a provider failure, not a refusal, so its reservation stays counted
+		expect(error.code).toBe("provider");
+		expect(error.reason._tag).toBe("ProviderFailed");
+	});
+
 	it("should ask for the model's id, so a model added in config.json needs no code", async () => {
 		// GIVEN Together with a key, and a model it doesn't ship
 		const fake = await startFakeTogether();

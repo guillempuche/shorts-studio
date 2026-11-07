@@ -31,7 +31,11 @@ const withFakeFal = async (
 imageMakerContract("FAL", {
 	make: async ({ answer, withKey }) => {
 		const { fal } = await withFakeFal(
-			answer === "ended" ? { finalStatus: "FAILED" } : {},
+			answer === "ended"
+				? { finalStatus: "FAILED" }
+				: answer === "refused"
+					? { submitStatus: 422 }
+					: {},
 			withKey ? undefined : {},
 		);
 		return fal;
@@ -88,6 +92,36 @@ describe("FAL submit", () => {
 			statusUrl: `${fake.url}/requests/req-1/status`,
 			responseUrl: `${fake.url}/requests/req-1`,
 		});
+	});
+
+	it("should leave a 5xx answer to a submit as an unknown outcome", async () => {
+		// GIVEN FAL behind a gateway that answers 502, as one can after FAL queued the job
+		const { fal } = await withFakeFal({ submitStatus: 502 });
+
+		// WHEN an image is submitted
+		const error = await Effect.runPromise(Effect.flip(fal.submit(schnell, "a red door", 7)));
+
+		// THEN it is a provider failure, not a refusal, so its reservation stays counted
+		expect(error.code).toBe("provider");
+		expect(error.reason._tag).toBe("ProviderFailed");
+		expect(error.message).toContain("HTTP 502");
+	});
+
+	it("should leave a dropped connection as an unknown outcome", async () => {
+		// GIVEN FAL at an address where nothing answers
+		const ctx = providerContext({ secrets: { FAL_KEY: "test-key" } });
+		const fal = await Effect.runPromise(
+			Effect.gen(function* () {
+				return yield* ImageMaker;
+			}).pipe(Effect.provide(withEnv(falLayer, ctx))),
+		);
+
+		// WHEN an image is submitted
+		const error = await Effect.runPromise(Effect.flip(fal.submit(schnell, "a red door", 7)));
+
+		// THEN it is a provider failure, not a refusal
+		expect(error.code).toBe("provider");
+		expect(error.reason._tag).toBe("ProviderFailed");
 	});
 
 	it("should fail with missing-key, before sending anything, when FAL_KEY isn't set", async () => {
@@ -156,7 +190,7 @@ describe("FAL collect", () => {
 		expect(error.message).toContain("FAILED");
 	});
 
-	it("should report an HTTP error from FAL as a provider failure", async () => {
+	it("should report a 4xx from FAL as a refusal, with the HTTP status", async () => {
 		// GIVEN a request whose status address FAL doesn't know
 		const { fake, fal } = await withFakeFal();
 		const request = { requestId: "req-9", statusUrl: `${fake.url}/nope`, responseUrl: fake.url };
@@ -164,9 +198,9 @@ describe("FAL collect", () => {
 		// WHEN its image is collected
 		const error = await Effect.runPromise(Effect.flip(fal.collect(request)));
 
-		// THEN it is a provider failure with the HTTP status, which running again may fix
+		// THEN it is a refusal, a provider failure, that names the HTTP status
 		expect(error.code).toBe("provider");
-		expect(error.reason._tag).toBe("ProviderFailed");
+		expect(error.reason._tag).toBe("Refused");
 		expect(error.message).toContain("HTTP 404");
 	});
 

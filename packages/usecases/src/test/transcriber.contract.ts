@@ -76,7 +76,8 @@ export const transcriberContract = (name: string, harness: TranscriberHarness): 
 				Effect.flip(transcriber.transcribe(defaultModelOf(transcriber), audioFile(), undefined)),
 			);
 
-			// THEN it is a provider failure that says what to do
+			// THEN it is a refusal, which billed nothing, and says what to do
+			expect(error.reason._tag).toBe("Refused");
 			expect(error.code).toBe("provider");
 			expect(error.fix).not.toBe("");
 		});

@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Effect, Fiber } from "effect";
 import { describe, expect, it, vi } from "vitest";
@@ -39,6 +39,10 @@ const generate = (
 
 const ledgerOf = (ctx: Context) => Effect.runPromise(readLedger(ctx));
 const postOf = (ctx: Context) => Effect.runPromise(readPost(ctx, SLUG));
+
+/** Damages the ledger while a paid call runs, so the call's ledger line can't be closed. */
+const damageLedger = (ctx: Context) =>
+	Effect.sync(() => appendFileSync(join(ctx.paths.data, "ledger.jsonl"), "not json\n"));
 
 describe("image generate", () => {
 	it("should keep an image made by an earlier version up to date, so it isn't paid for again", async () => {
@@ -162,6 +166,55 @@ describe("image generate", () => {
 		const entries = await ledgerOf(ctx);
 		expect(entries.find((e) => e.type === "settle")?.usd).toBeCloseTo(0.01);
 		expect(spent(entries, { post: SLUG })).toBeCloseTo(0.01);
+	});
+
+	it("should free the reservation when the provider refuses the request", async () => {
+		// GIVEN a post ready for images, and a provider that answers no (an HTTP 4xx)
+		const { ctx, maker, ports } = await ready();
+		maker.answer = "refused";
+
+		// WHEN beat 0's image is generated
+		const error = await runFailure(generate(ctx, { beat: "0" }), ports);
+
+		// THEN it fails as a provider error, and nothing stays counted
+		expect(error.code).toBe("provider");
+		const entries = await ledgerOf(ctx);
+		expect(entries.map((e) => e.type)).toEqual(["reserve", "release"]);
+		expect(spent(entries, { post: SLUG })).toBe(0);
+	});
+
+	it("should keep the reservation counted when sending gets no answer", async () => {
+		// GIVEN a post ready for images, and a connection that drops before the provider answers
+		const { ctx, maker, ports } = await ready();
+		maker.answer = "dropped";
+
+		// WHEN beat 0's image is generated
+		const error = await runFailure(generate(ctx, { beat: "0" }), ports);
+
+		// THEN it fails as a provider error
+		expect(error.code).toBe("provider");
+		// AND its $0.01 stays counted, since the provider may have taken the job on
+		const entries = await ledgerOf(ctx);
+		expect(entries.map((e) => e.type)).toEqual(["reserve"]);
+		expect(spent(entries, { post: SLUG })).toBeCloseTo(0.01);
+	});
+
+	it("should keep an image it paid for when the ledger can't be closed", async () => {
+		// GIVEN a post ready for images, and a ledger damaged while the provider makes the image
+		const ctx = testContext();
+		const base = fakeImageMaker();
+		const maker = {
+			...base,
+			collect: (request: Parameters<typeof base.collect>[0]) =>
+				damageLedger(ctx).pipe(Effect.andThen(base.collect(request))),
+		};
+		const { ports } = await ready(ctx, maker);
+
+		// WHEN beat 0's image is generated
+		await run(generate(ctx, { beat: "0" }), ports);
+
+		// THEN the image is saved and recorded on the beat
+		expect((await postOf(ctx)).beats?.items[0]?.image?.file).toBe("images/beat-00.jpg");
 	});
 
 	it("should regenerate only the rerolled beat, with a new seed", async () => {

@@ -34,7 +34,7 @@ A paid call's estimate SHALL be its units (megapixels, images, seconds, characte
 
 ### Requirement: A reservation SHALL be freed only when nothing was billed
 
-A reservation SHALL be freed only when the provider refused the request (an HTTP 4xx) or reported the job failed. When the outcome is unknown, because the provider answered with a 5xx, the connection dropped or the command stopped mid-call, the reservation SHALL stay counted at its estimate.
+A reservation SHALL be freed only when nothing was billed: the provider refused the request (an HTTP 4xx) or reported the job failed, or the call stopped before anything was sent, such as on a missing key. When the outcome is unknown, because the provider answered with a 5xx, the connection dropped or the command stopped mid-call, the reservation SHALL stay counted at its estimate. A result that was paid for SHALL be kept even when its ledger line can't be closed.
 
 #### Scenario: The connection drops while sending
 
@@ -50,6 +50,12 @@ A reservation SHALL be freed only when the provider refused the request (an HTTP
 
 - **WHEN** the provider answers that the key is wrong
 - **THEN** the reservation is freed
+
+#### Scenario: The ledger can't be closed
+
+- **WHEN** a paid call succeeds but its ledger line can't be written
+- **THEN** its result is kept
+- **AND** its reservation counts in full
 
 ### Requirement: Spending SHALL have a monthly cap
 

@@ -13,5 +13,5 @@ imageMakerContract("the in-memory fake", {
 });
 
 transcriberContract("the in-memory fake", {
-	make: async ({ answer }) => fakeTranscriber(undefined, { refuses: answer === "refused" }),
+	make: async ({ answer }) => fakeTranscriber(undefined, { answer }),
 });

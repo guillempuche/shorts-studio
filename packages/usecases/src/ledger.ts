@@ -11,7 +11,7 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fail, type ShortsError } from "@shorts-studio/domain/errors";
+import { fail, type Reason, type ShortsError } from "@shorts-studio/domain/errors";
 import { Unit } from "@shorts-studio/domain/models";
 import { Effect, Schema } from "effect";
 import { type Context, DEFAULT_CAPS } from "./context.ts";
@@ -181,9 +181,30 @@ export const settle = (ctx: Context, id: string, requestId?: string) =>
 /** Frees reservation `id`, for a call that failed before anything was billed. */
 export const release = (ctx: Context, id: string) => close(ctx, id, { type: "release", usd: 0 });
 
+/** Failures that prove a paid call billed nothing. */
+const NOTHING_BILLED: ReadonlySet<Reason["_tag"]> = new Set([
+	// The provider said no, or reported that the job failed.
+	"Refused",
+	"RequestEnded",
+	// The call stopped before anything was sent.
+	"MissingKey",
+	"Usage",
+	"NotFound",
+]);
+
+/**
+ * Whether a failed paid call surely cost nothing, so its reservation may be freed. Any other
+ * failure, such as a 5xx or a dropped connection, may have been billed: it stays counted.
+ */
+const nothingBilled = (error: ShortsError): boolean => NOTHING_BILLED.has(error.reason._tag);
+
+/** Frees reservation `id` if `error` proves nothing was billed; otherwise it stays counted. */
+export const releaseIfNothingBilled = (ctx: Context, id: string, error: ShortsError) =>
+	nothingBilled(error) ? Effect.ignore(release(ctx, id)) : Effect.void;
+
 /**
  * Runs a paid call that answers in one go: reserves its cost first, settles it when the call
- * succeeds, and frees it when the call fails.
+ * succeeds, and frees it only when the call failed without billing.
  */
 export const paidCall = <A, R>(
 	ctx: Context,
@@ -192,7 +213,9 @@ export const paidCall = <A, R>(
 ): Effect.Effect<A, ShortsError, R> =>
 	Effect.flatMap(reserve(ctx, call), (id) =>
 		effect.pipe(
-			Effect.tapError(() => Effect.ignore(release(ctx, id))),
-			Effect.tap(() => settle(ctx, id)),
+			Effect.tapError((error) => releaseIfNothingBilled(ctx, id, error)),
+			// The result is paid for, so keep it even if the ledger can't be closed: an open
+			// reservation counts the same amount as a settled one.
+			Effect.tap(() => Effect.ignore(settle(ctx, id))),
 		),
 	);

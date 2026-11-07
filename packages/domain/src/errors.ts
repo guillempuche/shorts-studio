@@ -37,7 +37,10 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", said) {
 export class Stale extends Schema.TaggedError<Stale>()("Stale", said) {}
 export class MissingTool extends Schema.TaggedError<MissingTool>()("MissingTool", said) {}
 export class MissingKey extends Schema.TaggedError<MissingKey>()("MissingKey", said) {}
+/** The provider's answer is unknown or unusable: a 5xx, a dropped connection, a bad reply. */
 export class ProviderFailed extends Schema.TaggedError<ProviderFailed>()("ProviderFailed", said) {}
+/** The provider answered no, with an HTTP 4xx: it took nothing on, so it billed nothing. */
+export class Refused extends Schema.TaggedError<Refused>()("Refused", said) {}
 /** The provider gave up on a request: waiting for it again never succeeds. */
 export class RequestEnded extends Schema.TaggedError<RequestEnded>()("RequestEnded", said) {}
 
@@ -52,6 +55,7 @@ export const Reason = Schema.Union([
 	MissingTool,
 	MissingKey,
 	ProviderFailed,
+	Refused,
 	RequestEnded,
 ]);
 export type Reason = typeof Reason.Type;
@@ -67,6 +71,7 @@ const CODE: Readonly<Record<Reason["_tag"], ErrorCode>> = {
 	MissingTool: "missing-tool",
 	MissingKey: "missing-key",
 	ProviderFailed: "provider",
+	Refused: "provider",
 	RequestEnded: "provider",
 };
 
