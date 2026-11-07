@@ -23,6 +23,7 @@ export const UNITS_BY_JOB: Readonly<Record<Job, ReadonlyArray<Unit>>> = {
 /** A value sent with every request to a model, such as FAL's `num_inference_steps`. */
 const OptionValue = Schema.Union([Schema.String, Schema.Finite, Schema.Boolean]);
 
+// The fields without the unit check, so `ModelSettings` can make each one optional.
 const ModelFields = Schema.Struct({
 	provider: Schema.String.annotate({ description: 'The provider that runs it, e.g. "fal".' }),
 	job: Job.annotate({ description: "The job it does." }),
@@ -49,14 +50,15 @@ const ModelFields = Schema.Struct({
 });
 
 export const Model = ModelFields.check(
-	Schema.makeFilter((model) =>
-		UNITS_BY_JOB[model.job].includes(model.billedBy)
+	Schema.makeFilter((model) => {
+		const allowedUnits = UNITS_BY_JOB[model.job];
+		return allowedUnits.includes(model.billedBy)
 			? undefined
 			: {
 					path: ["billedBy"],
-					issue: `a ${model.job} model is billed by ${UNITS_BY_JOB[model.job].join(" or ")}`,
-				},
-	),
+					issue: `a ${model.job} model is billed by ${allowedUnits.join(" or ")}`,
+				};
+	}),
 );
 export type Model = typeof Model.Type;
 
@@ -74,10 +76,10 @@ export const price = (model: Model, amount: number) => {
 	return { units, usd: units * model.usdPerUnit };
 };
 
-/** How much of a transcription model's unit `seconds` of audio is. */
+/** What `seconds` of audio come to in a transcription model's unit. */
 export const audioAmount = (model: Model, seconds: number): number =>
 	model.billedBy === "minute" ? seconds / 60 : seconds;
 
-/** How much of an image model's unit one image at `IMAGE_SIZE` is. */
+/** What one image at `IMAGE_SIZE` comes to in an image model's unit. */
 export const imageAmount = (model: Model): number =>
 	model.billedBy === "megapixel" ? (IMAGE_SIZE.width * IMAGE_SIZE.height) / 1_000_000 : 1;

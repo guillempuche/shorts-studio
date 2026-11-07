@@ -65,22 +65,27 @@ export const readLedger = (
 const amounts = (entries: ReadonlyArray<LedgerEntry>) => {
 	const byId = new Map<string, { reserve: LedgerEntry; usd: number }>();
 	for (const entry of entries) {
-		if (entry.type === "reserve") byId.set(entry.id, { reserve: entry, usd: entry.usd });
-		else {
-			const current = byId.get(entry.id);
-			if (current !== undefined) current.usd = entry.type === "release" ? 0 : entry.usd;
+		if (entry.type === "reserve") {
+			byId.set(entry.id, { reserve: entry, usd: entry.usd });
+		} else {
+			const reservation = byId.get(entry.id);
+			if (reservation !== undefined) reservation.usd = entry.type === "release" ? 0 : entry.usd;
 		}
 	}
 	return [...byId.values()];
 };
 
+/**
+ * Dollars spent on one day (a UTC date, YYYY-MM-DD), on one post, or both. A reservation that
+ * isn't settled yet counts in full.
+ */
 export const spent = (
 	entries: ReadonlyArray<LedgerEntry>,
-	filter: { readonly day?: string; readonly post?: string },
+	{ day, post }: { readonly day?: string; readonly post?: string },
 ): number =>
 	amounts(entries)
-		.filter(({ reserve }) => filter.day === undefined || reserve.at.startsWith(filter.day))
-		.filter(({ reserve }) => filter.post === undefined || reserve.post === filter.post)
+		.filter(({ reserve }) => day === undefined || reserve.at.startsWith(day))
+		.filter(({ reserve }) => post === undefined || reserve.post === post)
 		.reduce((sum, { usd }) => sum + usd, 0);
 
 const append = (ctx: Context, entry: LedgerEntry): void => {
@@ -124,23 +129,25 @@ export const reserve = (ctx: Context, call: PaidCall): Effect.Effect<string, Sho
 		Effect.gen(function* () {
 			const entries = yield* readLedger(ctx);
 			const { dailyUsd, postUsd } = caps(ctx);
-			const today = spent(entries, { day: ctx.now().toISOString().slice(0, 10) });
-			const forPost = spent(entries, { post: call.post });
-			const config = join(ctx.paths.data, "config.json");
-			if (today + call.usd > dailyUsd) {
+			const spentToday = spent(entries, { day: ctx.now().toISOString().slice(0, 10) });
+			const spentOnPost = spent(entries, { post: call.post });
+			const configFile = join(ctx.paths.data, "config.json");
+
+			if (spentToday + call.usd > dailyUsd) {
 				return yield* fail(
 					"over-budget",
-					`This call (~$${call.usd.toFixed(3)}) would pass today's cap: $${today.toFixed(2)} of $${dailyUsd} spent.`,
-					`Wait until tomorrow, or raise caps.dailyUsd in ${config}.`,
+					`This call (~$${call.usd.toFixed(3)}) would pass today's cap: $${spentToday.toFixed(2)} of $${dailyUsd} spent.`,
+					`Wait until tomorrow, or raise caps.dailyUsd in ${configFile}.`,
 				);
 			}
-			if (forPost + call.usd > postUsd) {
+			if (spentOnPost + call.usd > postUsd) {
 				return yield* fail(
 					"over-budget",
-					`This call (~$${call.usd.toFixed(3)}) would pass the per-post cap: $${forPost.toFixed(2)} of $${postUsd} spent on ${call.post}.`,
-					`Raise caps.postUsd in ${config} if this post is worth more.`,
+					`This call (~$${call.usd.toFixed(3)}) would pass the per-post cap: $${spentOnPost.toFixed(2)} of $${postUsd} spent on ${call.post}.`,
+					`Raise caps.postUsd in ${configFile} if this post is worth more.`,
 				);
 			}
+
 			const id = randomUUID();
 			append(ctx, { id, at: ctx.now().toISOString(), type: "reserve", ...call });
 			return id;
@@ -170,6 +177,8 @@ const close = (
  */
 export const settle = (ctx: Context, id: string, requestId?: string) =>
 	close(ctx, id, { type: "settle", ...(requestId === undefined ? {} : { requestId }) });
+
+/** Frees reservation `id`, for a call that failed before anything was billed. */
 export const release = (ctx: Context, id: string) => close(ctx, id, { type: "release", usd: 0 });
 
 /**

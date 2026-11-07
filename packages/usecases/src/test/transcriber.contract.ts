@@ -37,11 +37,11 @@ export const transcriberContract = (name: string, harness: TranscriberHarness): 
 			// THEN its default model is one of its own
 			expect(Object.keys(transcriber.models)).toContain(transcriber.defaultModel);
 			// AND each of its models is a whole transcription model of this provider, with a price
-			for (const [name, model] of Object.entries(transcriber.models)) {
-				expect(Schema.is(Model)(model), name).toBe(true);
-				expect(model.provider, name).toBe(transcriber.provider);
-				expect(model.job, name).toBe("transcribe");
-				expect(model.usdPerUnit, name).toBeGreaterThan(0);
+			for (const [modelName, model] of Object.entries(transcriber.models)) {
+				expect(Schema.is(Model)(model), modelName).toBe(true);
+				expect(model.provider, modelName).toBe(transcriber.provider);
+				expect(model.job, modelName).toBe("transcribe");
+				expect(model.usdPerUnit, modelName).toBeGreaterThan(0);
 			}
 		});
 
@@ -54,13 +54,15 @@ export const transcriberContract = (name: string, harness: TranscriberHarness): 
 				transcriber.transcribe(defaultModelOf(transcriber), audioFile(), undefined),
 			);
 
-			// THEN every word has text and a start no later than its end, in order
+			// THEN it names the language and hears at least one word
 			expect(transcript.language).not.toBe("");
 			expect(transcript.words.length).toBeGreaterThan(0);
-			transcript.words.forEach((word, i) => {
+			// AND every word has text and a start no later than its end, in order
+			transcript.words.forEach((word, index) => {
 				expect(word.text).not.toBe("");
 				expect(word.start).toBeLessThanOrEqual(word.end);
-				if (i > 0) expect(word.start).toBeGreaterThanOrEqual(transcript.words[i - 1]?.start ?? 0);
+				const previous = transcript.words[index - 1];
+				if (previous !== undefined) expect(word.start).toBeGreaterThanOrEqual(previous.start);
 			});
 		});
 
@@ -81,6 +83,7 @@ export const transcriberContract = (name: string, harness: TranscriberHarness): 
 		it("should say which key to set when its key is missing", async (test) => {
 			// GIVEN the provider without its key
 			const transcriber = await harness.make({ answer: "words", withKey: false });
+			// A provider that needs no key can't miss one.
 			if (transcriber.keys.length === 0) test.skip();
 
 			// WHEN a file is transcribed

@@ -9,7 +9,10 @@ import { FAL_MODELS, falLayer } from "./fal.ts";
 import { providerContext } from "./test/context.ts";
 import { type FakeFalOptions, startFakeFal } from "./test/fal-server.ts";
 
-/** FAL's provider talking to a local fake of FAL's queue, with FAL_KEY set unless `secrets` says otherwise. */
+/**
+ * FAL's provider talking to a local fake of FAL's queue, with FAL_KEY set unless `secrets`
+ * says otherwise.
+ */
 const withFakeFal = async (
 	options: FakeFalOptions = {},
 	secrets: Readonly<Record<string, string>> = { FAL_KEY: "test-key" },
@@ -26,13 +29,13 @@ const withFakeFal = async (
 };
 
 imageMakerContract("FAL", {
-	make: async ({ answer, withKey }) =>
-		(
-			await withFakeFal(
-				answer === "ended" ? { finalStatus: "FAILED" } : {},
-				withKey ? undefined : {},
-			)
-		).fal,
+	make: async ({ answer, withKey }) => {
+		const { fal } = await withFakeFal(
+			answer === "ended" ? { finalStatus: "FAILED" } : {},
+			withKey ? undefined : {},
+		);
+		return fal;
+	},
 });
 
 const schnell = FAL_MODELS["flux-schnell"];
@@ -54,7 +57,7 @@ describe("FAL's own models", () => {
 	});
 });
 
-describe("falImageMaker submit", () => {
+describe("FAL submit", () => {
 	it("should send the prompt, seed, image size and model's options to its endpoint with the key", async () => {
 		// GIVEN FAL and a key
 		const { fake, fal } = await withFakeFal();
@@ -125,7 +128,7 @@ describe("falImageMaker submit", () => {
 	});
 });
 
-describe("falImageMaker collect", () => {
+describe("FAL collect", () => {
 	it("should wait until the request is done and return the image's bytes", async () => {
 		// GIVEN a request FAL finishes after one more check
 		const image = new Uint8Array([1, 2, 3, 4]);

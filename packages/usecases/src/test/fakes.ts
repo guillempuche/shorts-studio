@@ -87,10 +87,12 @@ export const fakeImageMaker = (
 			}),
 		collect: (request) =>
 			Effect.suspend(() => {
-				const sent = maker.submits[Number(request.requestId.slice("req-".length)) - 1];
+				const requestNumber = Number(request.requestId.slice("req-".length));
+				const sent = maker.submits[requestNumber - 1];
 				if (sent === undefined) {
 					return Effect.fail(fail("provider", `No request ${request.requestId}.`, "Submit it."));
 				}
+
 				switch (maker.answer) {
 					case "never":
 						maker.waits++;
@@ -118,8 +120,8 @@ export type FakeMediaTools = MediaTools["Service"] & {
 };
 
 /**
- * Media tools in memory: every file is `durationSec` long, audio is copied rather than
- * converted, and a rendered video is a small text file describing the job.
+ * Media tools in memory: every file is `durationSec` long (4 s unless set), audio is copied
+ * rather than converted, and a rendered video is a small JSON file of the job's beats.
  */
 export const fakeMediaTools = (
 	options: { readonly durationSec?: number; readonly checks?: ReadonlyArray<Check> } = {},
@@ -129,6 +131,7 @@ export const fakeMediaTools = (
 			mkdirSync(dirname(to), { recursive: true });
 			copyFileSync(from, to);
 		});
+
 	const media: FakeMediaTools = {
 		provider: "fake-media",
 		keys: [],

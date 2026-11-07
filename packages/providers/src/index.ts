@@ -25,7 +25,7 @@ const IMAGE_MAKERS: Readonly<Record<string, ProviderLayer<ImageMaker>>> = {
 };
 
 /** A provider the settings name but no layer offers: every call, and doctor, say how to fix it. */
-const unknown = (job: string, name: string, known: Readonly<Record<string, unknown>>) => {
+const unknownProvider = (job: string, name: string, known: Readonly<Record<string, unknown>>) => {
 	const error = fail(
 		"usage",
 		`No ${job} provider is called "${name}".`,
@@ -43,7 +43,7 @@ const unknown = (job: string, name: string, known: Readonly<Record<string, unkno
 const transcriberLayer = (name: string): ProviderLayer<Transcriber> => {
 	const layer = TRANSCRIBERS[name];
 	if (layer !== undefined) return layer;
-	const stub = unknown("transcribe", name, TRANSCRIBERS);
+	const stub = unknownProvider("transcribe", name, TRANSCRIBERS);
 	return Layer.succeed(Transcriber, {
 		...stub,
 		models: {},
@@ -55,7 +55,7 @@ const transcriberLayer = (name: string): ProviderLayer<Transcriber> => {
 const imageMakerLayer = (name: string): ProviderLayer<ImageMaker> => {
 	const layer = IMAGE_MAKERS[name];
 	if (layer !== undefined) return layer;
-	const stub = unknown("image", name, IMAGE_MAKERS);
+	const stub = unknownProvider("image", name, IMAGE_MAKERS);
 	return Layer.succeed(ImageMaker, {
 		...stub,
 		models: {},

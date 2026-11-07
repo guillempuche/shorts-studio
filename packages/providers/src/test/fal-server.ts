@@ -3,8 +3,8 @@
  * provider's tests and demos run without a key or spending anything. It records each submit,
  * which is how its tests check what was sent.
  *
- * Run it by itself for a demo: `node packages/providers/src/test/fal-server.ts` prints the base URL to put in
- * SHORTS_FAL_URL; images are flat colour cards made by ffmpeg, one colour per request.
+ * Run it by itself for a demo: `node packages/providers/src/test/fal-server.ts` prints the base
+ * URL to put in SHORTS_FAL_URL; images are colour cards made by ffmpeg, a new hue per request.
  */
 
 import { execFileSync } from "node:child_process";
@@ -78,21 +78,21 @@ export const startFakeFal = (options: FakeFalOptions = {}): Promise<FakeFal> => 
 			});
 			return;
 		}
-		const status = /^\/requests\/([^/]+)\/status$/.exec(path);
-		if (status?.[1] !== undefined) {
-			const id = status[1];
+		const statusMatch = /^\/requests\/([^/]+)\/status$/.exec(path);
+		if (statusMatch?.[1] !== undefined) {
+			const id = statusMatch[1];
 			const count = (polls.get(id) ?? 0) + 1;
 			polls.set(id, count);
 			const done = count > (options.pollsBeforeDone ?? 0);
 			return json(200, { status: done ? (options.finalStatus ?? "COMPLETED") : "IN_PROGRESS" });
 		}
-		const result = /^\/requests\/([^/]+)$/.exec(path);
-		if (result?.[1] !== undefined) {
-			return json(200, { images: [{ url: `${base}/images/${result[1]}.jpg` }] });
+		const resultMatch = /^\/requests\/([^/]+)$/.exec(path);
+		if (resultMatch?.[1] !== undefined) {
+			return json(200, { images: [{ url: `${base}/images/${resultMatch[1]}.jpg` }] });
 		}
-		const image = /^\/images\/([^/]+)\.jpg$/.exec(path);
-		if (image?.[1] !== undefined) {
-			const request = prompts.get(image[1]);
+		const imageMatch = /^\/images\/([^/]+)\.jpg$/.exec(path);
+		if (imageMatch?.[1] !== undefined) {
+			const request = prompts.get(imageMatch[1]);
 			res.writeHead(200, { "content-type": "image/jpeg" });
 			res.end(
 				request && options.image ? options.image(request.prompt, request.index) : PLACEHOLDER,
@@ -114,7 +114,7 @@ export const startFakeFal = (options: FakeFalOptions = {}): Promise<FakeFal> => 
 	});
 };
 
-/** A 1248×2224 flat colour card from ffmpeg, a different hue per request. */
+/** A 1248×2224 card of soft colour waves from ffmpeg, a different hue per request. */
 export const colourCard = (_prompt: string, index: number): Uint8Array => {
 	const hue = (index * 47) % 360;
 	return execFileSync("ffmpeg", [

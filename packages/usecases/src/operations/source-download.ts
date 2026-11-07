@@ -23,7 +23,7 @@ import { Downloader, MediaTools, Transcriber } from "../ports.ts";
 import { postDir, readPost } from "../post-store.ts";
 import { sourceImport } from "./source.ts";
 
-const COLLECTION = /^[a-z0-9][a-z0-9-]{0,99}$/;
+const COLLECTION_NAME = /^[a-z0-9][a-z0-9-]{0,99}$/;
 
 /** A saved collection's transcript also says which model made it, so old ones can be found. */
 const SavedTranscript = Schema.Struct({ ...Transcript.fields, model: Schema.String });
@@ -32,7 +32,7 @@ export const savedPath = (ctx: Context, collection: string): string =>
 	join(ctx.paths.posts, "saved", collection);
 
 const checkCollection = (name: string): Effect.Effect<string, ShortsError> =>
-	COLLECTION.test(name)
+	COLLECTION_NAME.test(name)
 		? Effect.succeed(name)
 		: Effect.fail(
 				fail(
@@ -107,6 +107,7 @@ export const sourceDownload = defineOperation({
 						: `${downloadFix} Then run it again to retry.`,
 				};
 			}
+
 			if (input.url !== undefined && input.post !== undefined) {
 				yield* readPost(ctx, input.post);
 				const audioDir = join(postDir(ctx, input.post), "audio");
@@ -133,6 +134,7 @@ export const sourceDownload = defineOperation({
 				);
 				return { downloaded: 1, failed: false, dir, next: imported.next };
 			}
+
 			return yield* fail(
 				"usage",
 				"Nothing to download.",
@@ -171,6 +173,7 @@ export const sourceTranscribe = defineOperation({
 					`Download it first: source download --collection ${name}`,
 				);
 			}
+
 			const transcriber = yield* Transcriber;
 			const media = yield* MediaTools;
 			const model = yield* chooseModel(ctx, transcriber, "transcribe");
@@ -201,9 +204,10 @@ export const sourceTranscribe = defineOperation({
 				});
 				writeFileAtomic(transcriptOf(file, "txt"), `${transcript.text}\n`);
 			});
+
 			// Every file is tried. A failed one is listed, and the next run tries it again. Past a
-			// spending cap every next file would fail the same way, so the run stops there instead;
-			// the transcripts already written stay.
+			// spending cap every later file would fail the same way, so the run stops there instead.
+			// The transcripts already written stay.
 			const outcomes = yield* Effect.forEach(todo, (file) =>
 				transcribeOne(file).pipe(
 					Effect.as(undefined),

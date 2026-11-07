@@ -238,11 +238,14 @@ describe("image generate", () => {
 	it("should keep an imported image when the other beats are generated", async () => {
 		// GIVEN a post ready for images, with a Midjourney image imported for beat 0
 		const { ctx, maker, ports } = await ready();
-		const mj = join(ctx.paths.data, "mj.png");
+		const ownImage = join(ctx.paths.data, "mj.png");
 		mkdirSync(ctx.paths.data, { recursive: true });
-		writeFileSync(mj, "png");
+		writeFileSync(ownImage, "png");
 		await run(
-			imageImport.run({ post: SLUG, beat: 0, file: mj }, ctx, { dryRun: false, confirmed: true }),
+			imageImport.run({ post: SLUG, beat: 0, file: ownImage }, ctx, {
+				dryRun: false,
+				confirmed: true,
+			}),
 		);
 
 		// WHEN images are generated

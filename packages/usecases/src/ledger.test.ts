@@ -83,8 +83,8 @@ describe("settle and release", () => {
 	it("should free a released reservation and count a settled one at what it reserved", async () => {
 		// GIVEN a $0.50 reservation and one of 4 megapixels at $0.075 each ($0.30)
 		const ctx = testContext();
-		const a = await Effect.runPromise(reserve(ctx, call("p", 0.5)));
-		const b = await Effect.runPromise(
+		const first = await Effect.runPromise(reserve(ctx, call("p", 0.5)));
+		const second = await Effect.runPromise(
 			reserve(ctx, {
 				...call("p", 0.3),
 				unit: "megapixel",
@@ -94,14 +94,14 @@ describe("settle and release", () => {
 		);
 
 		// WHEN the first is released and the second settled
-		await Effect.runPromise(release(ctx, a));
-		await Effect.runPromise(settle(ctx, b, "req-1"));
+		await Effect.runPromise(release(ctx, first));
+		await Effect.runPromise(settle(ctx, second, "req-1"));
 
 		// THEN today's spend is $0.30
 		const entries = await Effect.runPromise(readLedger(ctx));
 		expect(spent(entries, { day: "2026-11-04" })).toBeCloseTo(0.3);
 		// AND the settled line keeps the units and the price of one
-		expect(entries.find((e) => e.type === "settle")).toMatchObject({
+		expect(entries.find((entry) => entry.type === "settle")).toMatchObject({
 			usd: 0.3,
 			unit: "megapixel",
 			units: 4,
@@ -121,7 +121,7 @@ describe("readLedger", () => {
 			`${JSON.stringify({ id: "old", at: "2026-11-04T08:00:00.000Z", type: "reserve", provider: "fal", model: "flux-dev", post: "p", usd: 0.25 })}\n`,
 		);
 
-		// WHEN it is read, and a new call is reserved next to it
+		// WHEN a new call is reserved next to it, and the ledger is read
 		await Effect.runPromise(reserve(ctx, call("p", 0.1)));
 		const entries = await Effect.runPromise(readLedger(ctx));
 

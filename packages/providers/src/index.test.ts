@@ -32,17 +32,17 @@ describe("providersLayer", () => {
 			config: { image: { provider: "nope" }, transcribe: { provider: "nada" } },
 		});
 		const ports = providersLayer(ctx);
-		const model = FAL_MODELS["flux-schnell"];
+		const anyModel = FAL_MODELS["flux-schnell"];
 
 		// WHEN an image is submitted and a file transcribed
 		const image = await Effect.runPromise(
-			Effect.flip(ImageMaker.use((maker) => maker.submit(model, "a red door", 1))).pipe(
+			Effect.flip(ImageMaker.use((maker) => maker.submit(anyModel, "a red door", 1))).pipe(
 				Effect.provide(ports),
 			),
 		);
 		const transcript = await Effect.runPromise(
 			Effect.flip(
-				Transcriber.use((transcriber) => transcriber.transcribe(model, "a.m4a", undefined)),
+				Transcriber.use((transcriber) => transcriber.transcribe(anyModel, "a.m4a", undefined)),
 			).pipe(Effect.provide(ports)),
 		);
 

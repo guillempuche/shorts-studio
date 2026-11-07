@@ -36,7 +36,7 @@ describe("price", () => {
 			priceChecked: "2026-11-07",
 		};
 
-		// WHEN 90 seconds are priced
+		// WHEN 1.5 minutes (90 seconds) are priced
 		const cost = price(whisper, 1.5);
 
 		// THEN it is 1.5 minutes
@@ -79,7 +79,7 @@ describe("Model", () => {
 });
 
 describe("ModelSettings", () => {
-	it("should accept only a new price, to change a provider's own model", () => {
+	it("should accept a price on its own, to reprice a built-in model", () => {
 		// GIVEN a settings entry with only a price and the day it was checked
 		// WHEN it is read
 		const result = Schema.decodeUnknownResult(ModelSettings)({

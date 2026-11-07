@@ -30,11 +30,11 @@ export const imageMakerContract = (name: string, harness: ImageMakerHarness): vo
 			// THEN its default model is one of its own
 			expect(Object.keys(maker.models)).toContain(maker.defaultModel);
 			// AND each of its models is a whole image model of this provider, with a real price
-			for (const [name, model] of Object.entries(maker.models)) {
-				expect(Schema.is(Model)(model), name).toBe(true);
-				expect(model.provider, name).toBe(maker.provider);
-				expect(model.job, name).toBe("image");
-				expect(price(model, imageAmount(model)).usd, name).toBeGreaterThan(0);
+			for (const [modelName, model] of Object.entries(maker.models)) {
+				expect(Schema.is(Model)(model), modelName).toBe(true);
+				expect(model.provider, modelName).toBe(maker.provider);
+				expect(model.job, modelName).toBe("image");
+				expect(price(model, imageAmount(model)).usd, modelName).toBeGreaterThan(0);
 			}
 		});
 
@@ -74,6 +74,7 @@ export const imageMakerContract = (name: string, harness: ImageMakerHarness): vo
 		it("should say which key to set when its key is missing", async (test) => {
 			// GIVEN the provider without its key
 			const maker = await harness.make({ answer: "image", withKey: false });
+			// A provider that needs no key can't miss one.
 			if (maker.keys.length === 0) test.skip();
 
 			// WHEN an image is submitted

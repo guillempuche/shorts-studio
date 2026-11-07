@@ -1,5 +1,5 @@
 /**
- * Transcription with word timestamps on Together.ai (Whisper large-v3).
+ * Transcription with word timestamps on Together.ai (Whisper models).
  *
  * `verbose_json` with `timestamp_granularities=word` returns every word with its start and end
  * (docs.together.ai, "Create audio transcription request"). Uploads are capped at 80 MB.
@@ -76,7 +76,7 @@ export const togetherLayer = Layer.effect(
 					"Cut the audio shorter, then import it again.",
 				);
 			}
-			const form = new FormData();
+
 			const audio = yield* Effect.tryPromise({
 				try: () => openAsBlob(file),
 				catch: failWith(
@@ -84,22 +84,24 @@ export const togetherLayer = Layer.effect(
 					`Check that ${file} exists and is readable, then run it again.`,
 				),
 			});
+			const form = new FormData();
 			form.append("file", audio, basename(file));
 			form.append("model", model.endpoint);
 			form.append("response_format", "verbose_json");
 			form.append("timestamp_granularities", "word");
 			form.append("language", language ?? "auto");
 
-			const body = yield* HttpClientRequest.post(`${base}/v1/audio/transcriptions`).pipe(
+			const reply = yield* HttpClientRequest.post(`${base}/v1/audio/transcriptions`).pipe(
 				HttpClientRequest.bearerToken(key),
 				HttpClientRequest.bodyFormData(form),
 				http.execute,
 				Effect.flatMap(HttpClientResponse.schemaBodyJson(Response)),
 				Effect.catch(providerFailure(fix)),
 			);
-			const words = (body.words ?? [])
-				.map((w) => ({ text: (w.word ?? w.text ?? "").trim(), start: w.start, end: w.end }))
-				.filter((w) => w.text !== "");
+
+			const words = (reply.words ?? [])
+				.map(({ word, text, start, end }) => ({ text: (word ?? text ?? "").trim(), start, end }))
+				.filter((word) => word.text !== "");
 			if (words.length === 0) {
 				return yield* fail(
 					"provider",
@@ -108,8 +110,8 @@ export const togetherLayer = Layer.effect(
 				);
 			}
 			return {
-				language: body.language ?? language ?? "unknown",
-				text: body.text?.trim() ?? "",
+				language: reply.language ?? language ?? "unknown",
+				text: reply.text?.trim() ?? "",
 				words,
 			};
 		});

@@ -10,8 +10,8 @@ import { savedPath, sourceTranscribe } from "./source-download.ts";
 
 const MODE = { dryRun: false, confirmed: true } as const;
 
-/** A saved collection with these downloaded audio files; returns its folder. */
-const collection = (ctx: Context, files: ReadonlyArray<string>): string => {
+/** A saved collection with these downloaded audio files. Returns its folder. */
+const seedCollection = (ctx: Context, files: ReadonlyArray<string>): string => {
 	const dir = savedPath(ctx, "sm-awareness");
 	mkdirSync(join(dir, "audio"), { recursive: true });
 	for (const file of files) writeFileSync(join(dir, "audio", file), "");
@@ -28,12 +28,10 @@ describe("source transcribe", () => {
 	it("should save each transcript with the model that made it", async () => {
 		// GIVEN a saved collection with one downloaded audio file
 		const ctx = testContext();
-		const dir = savedPath(ctx, "sm-awareness");
-		mkdirSync(join(dir, "audio"), { recursive: true });
-		writeFileSync(join(dir, "audio", "abc.mp3"), "");
+		const dir = seedCollection(ctx, ["abc.mp3"]);
 
 		// WHEN the collection is transcribed
-		await run(sourceTranscribe.run({ collection: "sm-awareness", language: undefined }, ctx, MODE));
+		await run(transcribeCollection(ctx));
 
 		// THEN the transcript names its model next to the words
 		const saved = JSON.parse(readFileSync(join(dir, "transcripts", "abc.json"), "utf8"));
@@ -44,7 +42,7 @@ describe("source transcribe", () => {
 	it("should count each file's minutes toward the collection", async () => {
 		// GIVEN a collection with one 90-second file
 		const ctx = testContext();
-		collection(ctx, ["abc.mp3"]);
+		seedCollection(ctx, ["abc.mp3"]);
 
 		// WHEN it is transcribed
 		await run(transcribeCollection(ctx), ninetySeconds());
@@ -58,7 +56,7 @@ describe("source transcribe", () => {
 	it("should stop at a spending cap, keeping the transcripts already written", async () => {
 		// GIVEN two 90-second files ($0.009 each) and a daily cap of $0.01, which fits one
 		const ctx = testContext({ config: { caps: { dailyUsd: 0.01 } } });
-		const dir = collection(ctx, ["a.mp3", "b.mp3"]);
+		const dir = seedCollection(ctx, ["a.mp3", "b.mp3"]);
 
 		// WHEN the collection is transcribed
 		const error = await runFailure(transcribeCollection(ctx), ninetySeconds());

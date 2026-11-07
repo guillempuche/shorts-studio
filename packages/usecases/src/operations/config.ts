@@ -49,7 +49,7 @@ const settingsChecks = (ctx: Context): ReadonlyArray<Check> =>
 		fix: "Fix that file, or remove it to use the defaults.",
 	}));
 
-/** The settings, then each provider in use: its tools, then the keys it needs. */
+/** The settings, then the tools of every provider in use, then the keys they need. */
 const runChecks = (ctx: Context) =>
 	Effect.gen(function* () {
 		const providers: ReadonlyArray<ProviderInfo> = [
@@ -58,9 +58,10 @@ const runChecks = (ctx: Context) =>
 			yield* Transcriber,
 			yield* ImageMaker,
 		];
-		const tools = yield* Effect.forEach(providers, (provider) => provider.checks, {
+		const toolRows = yield* Effect.forEach(providers, (provider) => provider.checks, {
 			concurrency: "unbounded",
 		});
+		// One row per key, even when two providers need the same one.
 		const keys = new Map(
 			providers.flatMap((provider) => provider.keys.map((key) => [key.env, { provider, key }])),
 		);
@@ -69,7 +70,7 @@ const runChecks = (ctx: Context) =>
 				[...keys.values()].map(({ provider, key }) => keyCheck(ctx, provider.provider, key)),
 			),
 		);
-		return [...settingsChecks(ctx), ...tools.flat(), ...keyRows];
+		return [...settingsChecks(ctx), ...toolRows.flat(), ...keyRows];
 	});
 
 const MARK = { ok: "✓", warn: "!", fail: "✗" } as const;

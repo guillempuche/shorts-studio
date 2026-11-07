@@ -69,6 +69,7 @@ export const falLayer = Layer.effect(
 		const reader = http.pipe(
 			HttpClient.retryTransient({ schedule: Schedule.exponential("200 millis"), times: 3 }),
 		);
+
 		const base = env.endpoints["fal"] ?? BASE_URL;
 		const signed = (key: Redacted.Redacted<string>) =>
 			HttpClientRequest.setHeader("Authorization", `Key ${Redacted.value(key)}`);
@@ -80,22 +81,22 @@ export const falLayer = Layer.effect(
 				Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
 			);
 
-		/** Checks every second until FAL is done with the request; returns how it ended. */
-		const finished = (
+		/** Asks every second until FAL is done with the request. */
+		const finalStatus = (
 			key: Redacted.Redacted<string>,
 			request: ImageRequest,
 		): Effect.Effect<string, unknown> =>
 			read(key, request.statusUrl, Status).pipe(
 				Effect.flatMap(({ status }) =>
 					status === "IN_QUEUE" || status === "IN_PROGRESS"
-						? Effect.sleep("1 second").pipe(Effect.andThen(finished(key, request)))
+						? Effect.sleep("1 second").pipe(Effect.andThen(finalStatus(key, request)))
 						: Effect.succeed(status),
 				),
 			);
 
 		const submit = Effect.fn("fal.submit")(function* (model: Model, prompt: string, seed: number) {
 			const key = yield* requireKey(env, FAL_KEY);
-			const body = yield* HttpClientRequest.post(`${base}/${model.endpoint}`).pipe(
+			const queued = yield* HttpClientRequest.post(`${base}/${model.endpoint}`).pipe(
 				signed(key),
 				HttpClientRequest.bodyJsonUnsafe({
 					prompt,
@@ -112,24 +113,28 @@ export const falLayer = Layer.effect(
 				Effect.catch(providerFailure(fix)),
 			);
 			return {
-				requestId: body.request_id,
-				statusUrl: body.status_url,
-				responseUrl: body.response_url,
+				requestId: queued.request_id,
+				statusUrl: queued.status_url,
+				responseUrl: queued.response_url,
 			};
 		});
 
 		const collect = Effect.fn("fal.collect")(function* (request: ImageRequest) {
 			const key = yield* requireKey(env, FAL_KEY);
-			const status = yield* finished(key, request).pipe(Effect.catch(providerFailure(fix)));
+
+			const status = yield* finalStatus(key, request).pipe(Effect.catch(providerFailure(fix)));
 			if (status !== "COMPLETED") {
 				return yield* ended(`FAL request ${request.requestId} ended as ${status}`);
 			}
+
 			const result = yield* read(key, request.responseUrl, Result).pipe(
 				Effect.catch(providerFailure(fix)),
 			);
 			const url = result.images[0]?.url;
-			if (url === undefined)
+			if (url === undefined) {
 				return yield* ended(`FAL request ${request.requestId} returned no image`);
+			}
+
 			const bytes = yield* reader.get(url).pipe(
 				Effect.flatMap((response) => response.arrayBuffer),
 				Effect.catch(providerFailure(fix)),

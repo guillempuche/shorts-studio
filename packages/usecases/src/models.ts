@@ -15,6 +15,7 @@ import type { OwnModels, ProviderInfo } from "./ports.ts";
 /** A model and the name it was chosen by, which is what post.json and the ledger record. */
 export type NamedModel = Model & { readonly name: string };
 
+// What a provider offers: its name and its own models.
 type Offer = Pick<ProviderInfo, "provider"> & OwnModels;
 
 const decodeModel = Schema.decodeUnknownEffect(Model);
@@ -30,6 +31,7 @@ export const modelsFor = (
 		...Object.keys(offer.models),
 		...Object.keys(configured).filter((name) => configured[name]?.provider === offer.provider),
 	]);
+
 	return Effect.forEach([...names], (name) =>
 		decodeModel({ ...offer.models[name], ...configured[name] }).pipe(
 			Effect.map((model) => [name, model] as const),
@@ -58,21 +60,22 @@ export const chooseModel = Effect.fn("chooseModel")(function* (
 	wanted?: string,
 ) {
 	const models = yield* modelsFor(ctx, offer, job);
-	const names = Object.keys(models);
-	if (names.length === 0) {
+	const available = Object.keys(models);
+	if (available.length === 0) {
 		return yield* fail(
 			"usage",
 			`The ${job} provider "${offer.provider}" offers no models.`,
 			`Check ${job}.provider in config.json; doctor shows what's wrong with it.`,
 		);
 	}
+
 	const name = wanted ?? ctx.config[job]?.model ?? offer.defaultModel;
 	const model = models[name];
 	if (model === undefined) {
 		return yield* fail(
 			"usage",
 			`The ${offer.provider} ${job} provider has no model "${name}".`,
-			`Use one of: ${names.join(", ")}. Or add it under models in config.json.`,
+			`Use one of: ${available.join(", ")}. Or add it under models in config.json.`,
 		);
 	}
 	return { ...model, name } satisfies NamedModel;

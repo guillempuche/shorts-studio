@@ -26,12 +26,15 @@ import { postDir, readPost, updatePost } from "../post-store.ts";
 import { nextStep } from "./post.ts";
 
 type Maker = ImageMaker["Service"];
+
 /** How many beats are generated at once. */
 const CONCURRENCY = 3;
 
+const SEED_LIMIT = 2_147_483_647;
+
 /** A fixed default seed for each beat, so running again without --reroll gives the same image. */
 const defaultSeed = (slug: string, index: number): number =>
-	Number.parseInt(hashOf(slug, index).slice(0, 8), 16) % 2_147_483_647;
+	Number.parseInt(hashOf(slug, index).slice(0, 8), 16) % SEED_LIMIT;
 
 const fullPrompt = (ctx: Context, prompt: string): string => {
 	const suffix = ctx.brand.imagePrompt?.suffix?.trim();
@@ -41,9 +44,13 @@ const fullPrompt = (ctx: Context, prompt: string): string => {
 /** What one image at `IMAGE_SIZE` costs with `model`. */
 const imageCost = (model: NamedModel) => costOf(model, imageAmount(model));
 
-/** Beats without a prompt are always skipped, so the empty fallback is never sent. */
-const imageInputHash = (ctx: Context, model: string, beat: Beat, seed: number) =>
-	hashOf(fullPrompt(ctx, beat.prompt ?? ""), model, seed, IMAGE_SIZE);
+/**
+ * Hashes the model's name, as earlier versions did: hashing anything else would make saved
+ * images look out of date, and they would be paid for again. Beats without a prompt are always
+ * skipped, so the empty fallback is never sent.
+ */
+const imageInputHash = (ctx: Context, modelName: string, beat: Beat, seed: number) =>
+	hashOf(fullPrompt(ctx, beat.prompt ?? ""), modelName, seed, IMAGE_SIZE);
 
 const isApproved = (post: Post): boolean =>
 	post.script !== undefined && post.script.approvedHash === post.script.hash;
@@ -90,7 +97,7 @@ const generateOne = Effect.fn("generateOne")(function* (
 		ctx.log(`beat ${beat.index}: submitted (${submitted.requestId})`);
 	}
 
-	const forget = release(ctx, request.ledgerId).pipe(
+	const forgetRequest = release(ctx, request.ledgerId).pipe(
 		Effect.andThen(
 			updatePost(ctx, slug, "image generate", (post) =>
 				Effect.succeed(withBeat(post, beat.index, dropPending)),
@@ -102,7 +109,7 @@ const generateOne = Effect.fn("generateOne")(function* (
 		// The provider ended this request without an image, so it will never finish: forget it
 		// and free the reservation.
 		Effect.catchReason("ShortsError", "RequestEnded", (reason) =>
-			forget.pipe(
+			forgetRequest.pipe(
 				Effect.andThen(
 					failBecause(
 						new RequestEnded({
@@ -113,7 +120,7 @@ const generateOne = Effect.fn("generateOne")(function* (
 				),
 			),
 		),
-		// Not "run the same command": with --reroll, that would pick a new seed and pay again.
+		// The fix leaves out --reroll: running again with it would pick a new seed and pay again.
 		Effect.mapError((error) =>
 			error.reason._tag === "ProviderFailed"
 				? fail(
@@ -125,10 +132,11 @@ const generateOne = Effect.fn("generateOne")(function* (
 		),
 	);
 
-	const dir = join(postDir(ctx, slug), "images");
-	mkdirSync(dir, { recursive: true });
+	const imagesDir = join(postDir(ctx, slug), "images");
+	mkdirSync(imagesDir, { recursive: true });
 	const file = join("images", `beat-${String(beat.index).padStart(2, "0")}.jpg`);
 	writeFileAtomic(join(postDir(ctx, slug), file), bytes);
+
 	yield* updatePost(ctx, slug, "image generate", (post) =>
 		Effect.succeed(
 			withBeat(post, beat.index, (b) => ({
@@ -146,6 +154,7 @@ const generateOne = Effect.fn("generateOne")(function* (
 			})),
 		),
 	);
+
 	yield* settle(ctx, request.ledgerId, request.requestId);
 	ctx.log(`beat ${beat.index}: saved ${file}`);
 });
@@ -175,7 +184,9 @@ export const imageGenerate = defineOperation({
 		beat: p.optional(p.string("Only these beats, comma-separated (e.g. 0,3)")),
 		reroll: p.boolean("Give the chosen beats a new seed and generate them again"),
 		model: p.optional(
-			p.string("Image model: one the image provider offers or config.json adds (default: its own)"),
+			p.string(
+				"Image model: one the image provider offers or config.json adds (default: image.model in config.json, else the provider's)",
+			),
 		),
 	},
 	output: Schema.Struct({
@@ -201,16 +212,17 @@ export const imageGenerate = defineOperation({
 					`The user approves it after reading it: script approve --post ${input.post}`,
 				);
 			}
+
 			const beats = post.beats?.items ?? [];
-			const missing = beats
+			const withoutPrompt = beats
 				.filter((b) => b.prompt === undefined && b.image?.source !== "imported")
 				.map((b) => b.index);
-			if (beats.length === 0 || missing.length > 0) {
+			if (beats.length === 0 || withoutPrompt.length > 0) {
 				return yield* fail(
 					"not-found",
 					beats.length === 0
 						? `${input.post} has no beats.`
-						: `Beats without a prompt: ${missing.join(", ")}.`,
+						: `Beats without a prompt: ${withoutPrompt.join(", ")}.`,
 					nextStep(post),
 				);
 			}
@@ -221,7 +233,7 @@ export const imageGenerate = defineOperation({
 					targets.has(b.index)
 						? {
 								...dropPending(b),
-								seed: ((b.seed ?? defaultSeed(slug, b.index)) + 1) % 2_147_483_647,
+								seed: ((b.seed ?? defaultSeed(slug, b.index)) + 1) % SEED_LIMIT,
 							}
 						: b;
 				post = yield* updatePost(ctx, input.post, "image generate", (current) =>
@@ -244,6 +256,7 @@ export const imageGenerate = defineOperation({
 			);
 			const planned = chosen.map((b) => {
 				const seed = b.seed ?? defaultSeed(post.slug, b.index);
+				// A dry run doesn't save the rerolled seeds, so it plans with the next seed here.
 				const hash = imageInputHash(
 					ctx,
 					model.name,
@@ -272,10 +285,10 @@ export const imageGenerate = defineOperation({
 			if (!mode.dryRun) {
 				// Fail on a missing key before anything is reserved.
 				yield* Effect.forEach(maker.keys, (key) => requireKey(ctx, key), { discard: true });
-				const work = chosen.filter(
+				const toSend = chosen.filter(
 					(b) => planned.find((item) => item.beat === b.index)?.action !== "skip",
 				);
-				yield* Effect.forEach(work, (beat) => generateOne(ctx, maker, model, post.slug, beat), {
+				yield* Effect.forEach(toSend, (beat) => generateOne(ctx, maker, model, post.slug, beat), {
 					concurrency: CONCURRENCY,
 					discard: true,
 				});

@@ -31,6 +31,7 @@ export const startFakeTogether = (
 ): Promise<FakeTogether> => {
 	const authorizations: FakeTogether["authorizations"] = [];
 	const models: FakeTogether["models"] = [];
+
 	const server: Server = createServer((req, res) => {
 		// Read the whole upload before answering, as the real service does.
 		let body = "";
@@ -46,6 +47,7 @@ export const startFakeTogether = (
 			res.end(JSON.stringify(status === 200 ? FAKE_TRANSCRIPT : { error: "refused" }));
 		});
 	});
+
 	return new Promise((resolve) => {
 		server.listen(0, "127.0.0.1", () => {
 			resolve({

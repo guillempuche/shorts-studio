@@ -27,7 +27,7 @@ transcriberContract("Together", {
 	},
 });
 
-describe("togetherTranscriber transcribe", () => {
+describe("Together transcribe", () => {
 	it("should ask for the model's id, so a model added in config.json needs no code", async () => {
 		// GIVEN Together with a key, and a model it doesn't ship
 		const fake = await startFakeTogether();

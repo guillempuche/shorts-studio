@@ -84,10 +84,12 @@ export class MediaTools extends Context.Service<
 	ProviderInfo & {
 		/** Part of every draft's input hash: a new renderer makes old drafts out of date. */
 		readonly rendererVersion: number;
+		/** How long `file` is, in seconds. */
 		duration(file: string): Effect.Effect<number, ShortsError>;
 		/** Converts any audio or video file to AAC audio in an .m4a file. Takes absolute paths. */
 		extractAudio(input: string, output: string): Effect.Effect<void, ShortsError>;
 		renderVideo(job: VideoJob): Effect.Effect<void, ShortsError>;
+		/** Copies the audio as is, without encoding it again. Paths are relative to `cwd`. */
 		copyAudio(cwd: string, input: string, output: string): Effect.Effect<void, ShortsError>;
 	}
 >()("shorts-studio/MediaTools") {}

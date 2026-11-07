@@ -5,7 +5,8 @@ import { chooseModel, modelsFor } from "./models.ts";
 import { testContext } from "./test/context.ts";
 import { fakeImageMaker } from "./test/fakes.ts";
 
-const added = {
+/** A new image model as config.json would add it, without its provider. */
+const newImageModel = {
 	job: "image",
 	endpoint: "fake/pro",
 	billedBy: "image",
@@ -21,7 +22,7 @@ describe("modelsFor", () => {
 		const ctx = withConfig({
 			models: {
 				"fake-fast": { usdPerUnit: 0.02, priceChecked: "2026-11-07" },
-				"fake-pro": { provider: "fake-images", ...added },
+				"fake-pro": { provider: "fake-images", ...newImageModel },
 			},
 		});
 
@@ -39,7 +40,7 @@ describe("modelsFor", () => {
 		// to this one
 		const ctx = withConfig({
 			models: {
-				"other-pro": { provider: "other", ...added },
+				"other-pro": { provider: "other", ...newImageModel },
 				"fake-ears": {
 					provider: "fake-images",
 					job: "transcribe",

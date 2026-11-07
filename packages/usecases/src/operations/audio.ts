@@ -60,6 +60,7 @@ export const audioTranscribe = defineOperation({
 					"Use es, en, ca, fr…, or leave it out to detect the language.",
 				);
 			}
+
 			const post = yield* readPost(ctx, input.post);
 			if (post.audio === undefined) {
 				return yield* fail(
@@ -68,6 +69,7 @@ export const audioTranscribe = defineOperation({
 					`Import it first: source import --post ${input.post} --file <audio> --origin mine --kind speech`,
 				);
 			}
+
 			const dir = postDir(ctx, input.post);
 			const file = join(dir, TRANSCRIPT_FILE);
 			const transcriber = yield* Transcriber;
@@ -88,6 +90,7 @@ export const audioTranscribe = defineOperation({
 					next: nextStep(post),
 				};
 			}
+
 			// Fail on a missing key before anything is reserved.
 			yield* Effect.forEach(transcriber.keys, (key) => requireKey(ctx, key), { discard: true });
 			ctx.log(`Transcribing ${post.audio.durationSec.toFixed(0)} s of audio…`);
@@ -100,6 +103,7 @@ export const audioTranscribe = defineOperation({
 				},
 				transcriber.transcribe(model, join(dir, post.audio.file), input.language),
 			);
+
 			yield* writeJsonFile(file, Transcript, transcript);
 			const hash = yield* fileHash(file);
 			const updated = yield* updatePost(ctx, input.post, "audio transcribe", (current) =>

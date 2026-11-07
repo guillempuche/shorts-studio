@@ -2,8 +2,7 @@ import { fakeImageMaker, fakeTranscriber } from "./fakes.ts";
 import { imageMakerContract } from "./image-maker.contract.ts";
 import { transcriberContract } from "./transcriber.contract.ts";
 
-// The fakes the use-case tests rely on behave like the real providers, so those tests mean
-// something.
+// Use-case tests rely on these fakes, so the fakes pass the same contracts as real providers.
 
 imageMakerContract("the in-memory fake", {
 	make: async ({ answer }) => {
