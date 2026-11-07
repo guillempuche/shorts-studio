@@ -18,7 +18,7 @@ import { writeFileAtomic, writeJsonFile } from "../files.ts";
 import { checkLanguage, requireKey } from "../inputs.ts";
 import { paidCall } from "../ledger.ts";
 import { chooseModel, costOf } from "../models.ts";
-import { defineOperation, p } from "../operation.ts";
+import { defineOperation, p, type RunMode } from "../operation.ts";
 import { Downloader, MediaTools, Transcriber } from "../ports.ts";
 import { postDir, readPost } from "../post-store.ts";
 import { sourceImport } from "./source.ts";
@@ -157,11 +157,16 @@ export const sourceTranscribe = defineOperation({
 		transcribed: Schema.Int,
 		skipped: Schema.Int,
 		failed: Schema.Array(Schema.String),
+		/** Files left to transcribe; on a dry run, the ones the estimate covers. */
+		toTranscribe: Schema.Int,
+		estimateUsd: Schema.Finite,
+		dryRun: Schema.Boolean,
 	}),
 	surface: "cli-and-mcp",
-	spends: false,
+	spends: true,
+	needsYes: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: true },
-	run: (input, ctx) =>
+	run: (input, ctx, mode: RunMode) =>
 		Effect.gen(function* () {
 			const name = yield* checkCollection(input.collection);
 			yield* checkLanguage(input.language);
@@ -178,13 +183,30 @@ export const sourceTranscribe = defineOperation({
 			const transcriber = yield* Transcriber;
 			const media = yield* MediaTools;
 			const model = yield* chooseModel(ctx, transcriber, "transcribe");
-			mkdirSync(join(dir, "transcripts"), { recursive: true });
 			const files = readdirSync(audioDir)
 				.filter((f) => /\.(mp3|m4a|wav)$/i.test(f))
 				.sort();
 			const transcriptOf = (file: string, ext: string) =>
 				join(dir, "transcripts", `${basename(file).replace(/\.[^.]+$/, "")}.${ext}`);
 			const todo = files.filter((file) => !existsSync(transcriptOf(file, "json")));
+			const costOfFile = (file: string) =>
+				media
+					.duration(join(audioDir, file))
+					.pipe(Effect.map((seconds) => costOf(model, audioAmount(model, seconds))));
+
+			if (mode.dryRun) {
+				const costs = yield* Effect.forEach(todo, costOfFile);
+				return {
+					transcribed: 0,
+					skipped: files.length - todo.length,
+					failed: [],
+					toTranscribe: todo.length,
+					estimateUsd: costs.reduce((sum, cost) => sum + cost.usd, 0),
+					dryRun: true,
+				};
+			}
+
+			mkdirSync(join(dir, "transcripts"), { recursive: true });
 			if (todo.length > 0) {
 				// Fail on a missing key before anything is reserved.
 				yield* Effect.forEach(transcriber.keys, (key) => requireKey(ctx, key), { discard: true });
@@ -193,10 +215,10 @@ export const sourceTranscribe = defineOperation({
 			const transcribeOne = Effect.fn("transcribeOne")(function* (file: string) {
 				ctx.log(`Transcribing ${file}…`);
 				const audio = join(audioDir, file);
-				const seconds = yield* media.duration(audio);
+				const cost = yield* costOfFile(file);
 				const transcript = yield* paidCall(
 					ctx,
-					{ ...costOf(model, audioAmount(model, seconds)), post: `saved/${name}`, note: file },
+					{ ...cost, post: `saved/${name}`, note: file },
 					transcriber.transcribe(model, audio, input.language),
 				);
 				yield* writeJsonFile(transcriptOf(file, "json"), SavedTranscript, {
@@ -204,6 +226,7 @@ export const sourceTranscribe = defineOperation({
 					model: model.name,
 				});
 				writeFileAtomic(transcriptOf(file, "txt"), `${transcript.text}\n`);
+				return cost.usd;
 			});
 
 			// Every file is tried. A failed one is listed, and the next run tries it again. Past a
@@ -211,7 +234,6 @@ export const sourceTranscribe = defineOperation({
 			// The transcripts already written stay.
 			const outcomes = yield* Effect.forEach(todo, (file) =>
 				transcribeOne(file).pipe(
-					Effect.as(undefined),
 					Effect.catch((error) =>
 						error.code === "over-budget"
 							? Effect.fail(error)
@@ -219,17 +241,24 @@ export const sourceTranscribe = defineOperation({
 					),
 				),
 			);
-			const failed = outcomes.filter((outcome) => outcome !== undefined);
+			const failed = outcomes.filter((outcome) => typeof outcome === "string");
 			return {
 				transcribed: todo.length - failed.length,
 				skipped: files.length - todo.length,
 				failed,
+				toTranscribe: failed.length,
+				estimateUsd: outcomes
+					.filter((outcome) => typeof outcome === "number")
+					.reduce((sum, usd) => sum + usd, 0),
+				dryRun: false,
 			};
 		}),
 	render: (o) =>
-		[
-			`Transcribed ${o.transcribed}, already done ${o.skipped}, failed ${o.failed.length}.`,
-			...o.failed.map((line) => `  ✗ ${line}`),
-			...(o.failed.length > 0 ? ["Run it again to retry only the failed files."] : []),
-		].join("\n"),
+		o.dryRun
+			? `Would transcribe ${o.toTranscribe} file${o.toTranscribe === 1 ? "" : "s"} (~$${o.estimateUsd.toFixed(3)}), already done ${o.skipped}; nothing was spent.`
+			: [
+					`Transcribed ${o.transcribed}, already done ${o.skipped}, failed ${o.failed.length}.`,
+					...o.failed.map((line) => `  ✗ ${line}`),
+					...(o.failed.length > 0 ? ["Run it again to retry only the failed files."] : []),
+				].join("\n"),
 });

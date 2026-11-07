@@ -60,6 +60,31 @@ describe("source transcribe", () => {
 		expect(await Effect.runPromise(readLedger(ctx))).toHaveLength(0);
 	});
 
+	it("should report the price of every file left to transcribe on a dry run, and spend nothing", async () => {
+		// GIVEN a collection with two 90-second files, one already transcribed
+		const ctx = testContext();
+		const dir = seedCollection(ctx, ["a.mp3", "b.mp3"]);
+		mkdirSync(join(dir, "transcripts"), { recursive: true });
+		writeFileSync(join(dir, "transcripts", "a.json"), "{}");
+		const transcriber = fakeTranscriber();
+
+		// WHEN it is transcribed as a dry run
+		const result = await run(
+			sourceTranscribe.run({ collection: "sm-awareness", language: undefined }, ctx, {
+				dryRun: true,
+				confirmed: false,
+			}),
+			fakePorts({ transcriber, mediaTools: fakeMediaTools({ durationSec: 90 }) }),
+		);
+
+		// THEN it reports one file to do at the price of 1.5 minutes
+		expect(result).toMatchObject({ dryRun: true, transcribed: 0, skipped: 1, toTranscribe: 1 });
+		expect(result.estimateUsd).toBeCloseTo(0.009);
+		// AND nothing was sent or reserved
+		expect(transcriber.calls).toHaveLength(0);
+		expect(await Effect.runPromise(readLedger(ctx))).toHaveLength(0);
+	});
+
 	it("should count each file's minutes toward the collection", async () => {
 		// GIVEN a collection with one 90-second file
 		const ctx = testContext();

@@ -262,6 +262,32 @@ describe("batching posts on the CLI", () => {
 		expect(JSON.parse(run.out).error.code).toBe("usage");
 	});
 
+	it("should take --dry-run on transcription, which spends, and run it without --yes", async () => {
+		// GIVEN a post with two minutes of audio
+		const ctx = testContext();
+		await seedPost(ctx, "2026-11-04-talk", {
+			audio: {
+				file: "audio/audio.m4a",
+				hash: "a",
+				origin: "mine",
+				kind: "speech",
+				durationSec: 120,
+				source: "talk.m4a",
+			},
+		});
+		const args = ["audio", "transcribe", "--post", "2026-11-04-talk", "--json"];
+
+		// WHEN its audio is transcribed as a dry run, then for real without --yes
+		const dry = await runCli(ctx, [...args, "--dry-run"]);
+		const real = await runCli(ctx, args);
+
+		// THEN the dry run reports the estimate, and the real run transcribes
+		expect(dry.ok).toBe(true);
+		expect(JSON.parse(dry.out).result).toMatchObject({ dryRun: true, words: 0 });
+		expect(real.ok).toBe(true);
+		expect(JSON.parse(real.out).result).toMatchObject({ dryRun: false, words: 2 });
+	});
+
 	it("should refuse to run without a post", async () => {
 		// GIVEN posts exist
 		const ctx = await threePosts();

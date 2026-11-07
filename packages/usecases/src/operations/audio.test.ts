@@ -101,6 +101,28 @@ describe("audio transcribe", () => {
 		expect(existsSync(join(postDir(ctx, SLUG), "transcript.json"))).toBe(false);
 	});
 
+	it("should report the price of the audio's minutes on a dry run, and spend nothing", async () => {
+		// GIVEN a post with 2 minutes of audio, and a model at $0.006 a minute
+		const { ctx, transcriber, ports } = await ready();
+
+		// WHEN its audio is transcribed as a dry run
+		const result = await run(
+			audioTranscribe.run({ post: SLUG, language: undefined, force: false }, ctx, {
+				dryRun: true,
+				confirmed: false,
+			}),
+			ports,
+		);
+
+		// THEN it reports the price of 2 minutes
+		expect(result.dryRun).toBe(true);
+		expect(result.estimateUsd).toBeCloseTo(0.012);
+		// AND nothing was sent, reserved or written
+		expect(transcriber.calls).toHaveLength(0);
+		expect(await ledgerOf(ctx)).toHaveLength(0);
+		expect(existsSync(join(postDir(ctx, SLUG), "transcript.json"))).toBe(false);
+	});
+
 	it("should not pay again for a transcript that's up to date", async () => {
 		// GIVEN a post whose audio was transcribed
 		const { ctx, transcriber, ports } = await ready();

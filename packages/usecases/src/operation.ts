@@ -87,8 +87,13 @@ export interface Operation<P extends Params = Params, O = unknown> {
 	readonly output: Schema.Codec<O, unknown>;
 	/** Decisions that belong to the user (approving a script or a draft) stay off MCP. */
 	readonly surface: "cli-and-mcp" | "cli-only";
-	/** Spends money: needs `--yes` on the CLI and supports `--dry-run` everywhere. */
+	/** Spends money: supports `--dry-run` everywhere, and needs `--yes` on the CLI. */
 	readonly spends: boolean;
+	/**
+	 * False for a paid step that runs without `--yes`: transcription costs under a cent a post
+	 * and runs before there is a script to approve. It still takes a dry run.
+	 */
+	readonly needsYes?: false;
 	readonly hints: {
 		readonly readonly: boolean;
 		readonly destructive: boolean;

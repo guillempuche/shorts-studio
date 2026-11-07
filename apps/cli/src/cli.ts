@@ -149,7 +149,7 @@ const leaf = (op: Operation, ctx: Context, name?: string) => {
 			}
 			// Without --yes a spending command still runs as a dry run, so the user sees the estimate,
 			// then fails asking for --yes. With --json, both go in the one object stdout holds.
-			const needsConfirmation = op.spends && !shared.yes && !shared.dryRun;
+			const needsConfirmation = op.spends && op.needsYes !== false && !shared.yes && !shared.dryRun;
 			const confirmation = needsConfirmation ? confirmationError(label) : undefined;
 			const mode: RunMode = { dryRun: shared.dryRun || needsConfirmation, confirmed: shared.yes };
 			const input = raw as Record<string, unknown> & Selection;
