@@ -31,7 +31,7 @@ const captionStyle = (ctx: Context) => ({
 	highlight: ctx.config.captions?.highlight ?? DEFAULT_CAPTION_STYLE.highlight,
 });
 
-const draftInputHash = (ctx: Context, post: Post, rendererVersion: number): string =>
+export const draftInputHash = (ctx: Context, post: Post, rendererVersion: number): string =>
 	hashOf(
 		post.audio?.hash,
 		post.audio?.kind,

@@ -17,6 +17,7 @@ import { Effect, Schema } from "effect";
 import { defineOperation, p } from "../operation.ts";
 import { MediaTools } from "../ports.ts";
 import { postDir, readPost } from "../post-store.ts";
+import { draftInputHash } from "./draft.ts";
 import { nextStep } from "./post.ts";
 
 const FOLDER = "capcut";
@@ -73,6 +74,16 @@ export const capcutExport = defineOperation({
 					`The user reviews it first: post review --post ${input.post} --decision approve`,
 				);
 			}
+			// The clips are rebuilt from the beats as they are now, so they must still be the ones
+			// the approved draft was rendered from.
+			const media = yield* MediaTools;
+			if (post.draft.inputHash !== draftInputHash(ctx, post, media.rendererVersion)) {
+				return yield* fail(
+					"needs-confirmation",
+					`${input.post}'s beats, images or captions changed after the draft was approved, so the export wouldn't match it.`,
+					`Render it again with draft render --post ${input.post}, then the user reviews the new draft.`,
+				);
+			}
 			const muted = input.mute || post.audio.origin === "others";
 			const dir = postDir(ctx, input.post);
 			const out = join(dir, FOLDER);
@@ -86,7 +97,6 @@ export const capcutExport = defineOperation({
 				motion: motionOf(b.moment, b.motion),
 			}));
 			ctx.log(`Exporting ${beats.length} clips…`);
-			const media = yield* MediaTools;
 			// Each clip starts at 0 with exactly the frames its beat has in the draft, so the clips
 			// laid end to end match the draft frame for frame.
 			yield* Effect.forEach(

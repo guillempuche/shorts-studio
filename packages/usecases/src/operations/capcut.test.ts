@@ -1,12 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import type { Context } from "../context.ts";
-import { postDir } from "../post-store.ts";
+import { postDir, updatePost } from "../post-store.ts";
 import { testContext } from "../test/context.ts";
 import { fakeMediaTools, fakePorts, run, runFailure } from "../test/fakes.ts";
 import { seedPost, withDraft } from "../test/posts.ts";
 import { capcutExport } from "./capcut.ts";
+import { draftInputHash } from "./draft.ts";
 import { postReview } from "./lifecycle.ts";
 
 const SLUG = "2026-11-05-capcut";
@@ -23,6 +25,20 @@ const reviewed = async (
 		...fields,
 		...(fields.audio && { audio: { ...fields.audio, origin } }),
 	});
+	// The draft was rendered from the beats as they are, as draft render records it.
+	await Effect.runPromise(
+		updatePost(ctx, SLUG, "test", (post) =>
+			Effect.succeed({
+				...post,
+				...(post.draft && {
+					draft: {
+						...post.draft,
+						inputHash: draftInputHash(ctx, post, fakeMediaTools().rendererVersion),
+					},
+				}),
+			}),
+		),
+	);
 	const dir = postDir(ctx, SLUG);
 	mkdirSync(join(dir, "audio"), { recursive: true });
 	writeFileSync(join(dir, "audio", "audio.m4a"), "voice");
@@ -104,5 +120,32 @@ describe("capcut export", () => {
 		expect(existsSync(join(dir, "capcut", "audio.m4a"))).toBe(false);
 		// AND the steps say to use the platform's sound
 		expect(readFileSync(join(dir, "capcut", "README.txt"), "utf8")).toContain("in-app sound");
+	});
+
+	it("should refuse a draft whose beats changed after it was approved", async () => {
+		// GIVEN an approved draft, whose beat 1 got a new story moment afterwards
+		const ctx = testContext();
+		const dir = await reviewed(ctx, "approve");
+		await Effect.runPromise(
+			updatePost(ctx, SLUG, "test", (post) =>
+				Effect.succeed({
+					...post,
+					...(post.beats && {
+						beats: {
+							...post.beats,
+							items: post.beats.items.map((b) => (b.index === 1 ? { ...b, moment: "twist" } : b)),
+						},
+					}),
+				}),
+			),
+		);
+
+		// WHEN it is exported
+		const error = await runFailure(capcutExport.run({ post: SLUG, mute: false }, ctx, MODE));
+
+		// THEN nothing is exported, and the fix renders the draft again for a new review
+		expect(error.code).toBe("needs-confirmation");
+		expect(error.fix).toContain("draft render");
+		expect(existsSync(join(dir, "capcut"))).toBe(false);
 	});
 });
