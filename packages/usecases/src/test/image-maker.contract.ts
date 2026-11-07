@@ -4,9 +4,11 @@
  * the use-case tests rely on can't drift from the real providers. Only tests import this file.
  */
 
-import { Effect } from "effect";
+import { imageAmount, Model, price } from "@shorts-studio/domain/models";
+import { Effect, Schema } from "effect";
 import { describe, expect, it } from "vitest";
 import type { ImageMaker } from "../ports.ts";
+import { defaultModelOf } from "./models.ts";
 
 export interface ImageMakerHarness {
 	/**
@@ -21,13 +23,19 @@ export interface ImageMakerHarness {
 
 export const imageMakerContract = (name: string, harness: ImageMakerHarness): void => {
 	describe(`${name}, as an image provider`, () => {
-		it("should offer its default model, at a price above zero", async () => {
+		it("should offer whole image models of its own, with its default among them", async () => {
 			// GIVEN the provider
 			const maker = await harness.make({ answer: "image", withKey: true });
 
-			// THEN its default model is one it offers, and estimating it gives a real price
-			expect(maker.models).toContain(maker.defaultModel);
-			expect(maker.estimateUsd(maker.defaultModel)).toBeGreaterThan(0);
+			// THEN its default model is one of its own
+			expect(Object.keys(maker.models)).toContain(maker.defaultModel);
+			// AND each of its models is a whole image model of this provider, with a real price
+			for (const [name, model] of Object.entries(maker.models)) {
+				expect(Schema.is(Model)(model), name).toBe(true);
+				expect(model.provider, name).toBe(maker.provider);
+				expect(model.job, name).toBe("image");
+				expect(price(model, imageAmount(model)).usd, name).toBeGreaterThan(0);
+			}
 		});
 
 		it("should return the image for a request it accepted", async () => {
@@ -37,7 +45,7 @@ export const imageMakerContract = (name: string, harness: ImageMakerHarness): vo
 			// WHEN an image is submitted, then collected
 			const bytes = await Effect.runPromise(
 				maker
-					.submit(maker.defaultModel, "a red door", 7)
+					.submit(defaultModelOf(maker), "a red door", 7)
 					.pipe(Effect.flatMap((request) => maker.collect(request))),
 			);
 
@@ -53,7 +61,7 @@ export const imageMakerContract = (name: string, harness: ImageMakerHarness): vo
 			const error = await Effect.runPromise(
 				Effect.flip(
 					maker
-						.submit(maker.defaultModel, "a red door", 7)
+						.submit(defaultModelOf(maker), "a red door", 7)
 						.pipe(Effect.flatMap((request) => maker.collect(request))),
 				),
 			);
@@ -63,19 +71,6 @@ export const imageMakerContract = (name: string, harness: ImageMakerHarness): vo
 			expect(error.code).toBe("provider");
 		});
 
-		it("should refuse a model it doesn't offer, as a usage error", async () => {
-			// GIVEN the provider
-			const maker = await harness.make({ answer: "image", withKey: true });
-
-			// WHEN an image is submitted with a model it doesn't have
-			const error = await Effect.runPromise(
-				Effect.flip(maker.submit("no-such-model", "a red door", 7)),
-			);
-
-			// THEN it is a usage error, before anything is paid for
-			expect(error.code).toBe("usage");
-		});
-
 		it("should say which key to set when its key is missing", async (test) => {
 			// GIVEN the provider without its key
 			const maker = await harness.make({ answer: "image", withKey: false });
@@ -83,7 +78,7 @@ export const imageMakerContract = (name: string, harness: ImageMakerHarness): vo
 
 			// WHEN an image is submitted
 			const error = await Effect.runPromise(
-				Effect.flip(maker.submit(maker.defaultModel, "a red door", 7)),
+				Effect.flip(maker.submit(defaultModelOf(maker), "a red door", 7)),
 			);
 
 			// THEN it fails with missing-key, naming the key

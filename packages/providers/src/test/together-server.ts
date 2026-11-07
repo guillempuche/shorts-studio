@@ -11,6 +11,8 @@ export interface FakeTogether {
 	readonly url: string;
 	/** The Authorization header of each request, in order. */
 	readonly authorizations: Array<string | undefined>;
+	/** The `model` form field of each request, in order. */
+	readonly models: Array<string | undefined>;
 	readonly close: () => Promise<void>;
 }
 
@@ -28,11 +30,16 @@ export const startFakeTogether = (
 	options: { readonly status?: number } = {},
 ): Promise<FakeTogether> => {
 	const authorizations: FakeTogether["authorizations"] = [];
+	const models: FakeTogether["models"] = [];
 	const server: Server = createServer((req, res) => {
 		// Read the whole upload before answering, as the real service does.
-		req.resume();
+		let body = "";
+		req.on("data", (chunk) => {
+			body += chunk;
+		});
 		req.on("end", () => {
 			authorizations.push(req.headers.authorization);
+			models.push(/name="model"\r\n\r\n([^\r]*)\r\n/.exec(body)?.[1]);
 			const ok = req.method === "POST" && req.url === "/v1/audio/transcriptions";
 			const status = ok ? (options.status ?? 200) : 404;
 			res.writeHead(status, { "content-type": "application/json" });
@@ -44,6 +51,7 @@ export const startFakeTogether = (
 			resolve({
 				url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
 				authorizations,
+				models,
 				close: () => new Promise((done) => server.close(() => done())),
 			});
 		});

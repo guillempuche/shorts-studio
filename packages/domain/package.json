@@ -1,7 +1,7 @@
 {
   "name": "@shorts-studio/domain",
   "version": "0.0.0",
-  "description": "The rules of a post: beats, story moments, motion, captions and errors. No files, no network.",
+  "description": "The rules of a post: beats, story moments, motion, captions, models and prices, and errors. No files, no network.",
   "type": "module",
   "exports": {
     "./*": "./src/*.ts"

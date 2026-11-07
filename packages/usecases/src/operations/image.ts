@@ -12,12 +12,14 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { IMAGE_SIZE } from "@shorts-studio/domain/direction";
 import { fail, failBecause, RequestEnded } from "@shorts-studio/domain/errors";
+import { imageAmount, price } from "@shorts-studio/domain/models";
 import type { Beat, Post } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import type { Context } from "../context.ts";
 import { hashBytes, hashOf, writeFileAtomic } from "../files.ts";
 import { parseBeatList, requireKey } from "../inputs.ts";
 import { release, reserve, settle } from "../ledger.ts";
+import { chooseModel, type NamedModel } from "../models.ts";
 import { defineOperation, p, type RunMode } from "../operation.ts";
 import { ImageMaker, type ImageRequest } from "../ports.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
@@ -36,6 +38,9 @@ const fullPrompt = (ctx: Context, prompt: string): string => {
 	return suffix ? `${prompt}, ${suffix}` : prompt;
 };
 
+/** What one image costs with `model`, at `IMAGE_SIZE`. */
+const imageUsd = (model: NamedModel): number => price(model, imageAmount(model)).usd;
+
 /** Beats without a prompt are always skipped, so the empty fallback is never sent. */
 const imageInputHash = (ctx: Context, model: string, beat: Beat, seed: number) =>
 	hashOf(fullPrompt(ctx, beat.prompt ?? ""), model, seed, IMAGE_SIZE);
@@ -53,24 +58,23 @@ const Planned = Schema.Struct({
 const generateOne = Effect.fn("generateOne")(function* (
 	ctx: Context,
 	maker: Maker,
-	model: string,
+	model: NamedModel,
 	slug: string,
 	beat: Beat,
 ) {
 	const seed = beat.seed ?? defaultSeed(slug, beat.index);
-	const inputHash = imageInputHash(ctx, model, beat, seed);
+	const inputHash = imageInputHash(ctx, model.name, beat, seed);
 	let request: ImageRequest & { readonly ledgerId: string };
 
 	if (beat.pending !== undefined && beat.pending.inputHash === inputHash) {
 		ctx.log(`beat ${beat.index}: resuming request ${beat.pending.requestId}`);
 		request = beat.pending;
 	} else {
-		const usd = maker.estimateUsd(model);
 		const ledgerId = yield* reserve(ctx, {
 			provider: maker.provider,
-			model,
+			model: model.name,
 			post: slug,
-			usd,
+			usd: imageUsd(model),
 			note: `beat ${beat.index}`,
 		});
 		const submitted = yield* maker
@@ -81,7 +85,7 @@ const generateOne = Effect.fn("generateOne")(function* (
 			Effect.succeed(
 				withBeat(post, beat.index, (b) => ({
 					...b,
-					pending: { provider: maker.provider, model, inputHash, seed, ...request },
+					pending: { provider: maker.provider, model: model.name, inputHash, seed, ...request },
 				})),
 			),
 		);
@@ -137,14 +141,14 @@ const generateOne = Effect.fn("generateOne")(function* (
 					hash: hashBytes(bytes),
 					inputHash,
 					provider: maker.provider,
-					model,
+					model: model.name,
 					seed,
 					source: "generated" as const,
 				},
 			})),
 		),
 	);
-	yield* settle(ctx, request.ledgerId, maker.estimateUsd(model), request.requestId);
+	yield* settle(ctx, request.ledgerId, imageUsd(model), request.requestId);
 	ctx.log(`beat ${beat.index}: saved ${file}`);
 });
 
@@ -172,7 +176,9 @@ export const imageGenerate = defineOperation({
 		post: p.string("Post slug"),
 		beat: p.optional(p.string("Only these beats, comma-separated (e.g. 0,3)")),
 		reroll: p.boolean("Give the chosen beats a new seed and generate them again"),
-		model: p.optional(p.string("Image model, one the image provider offers (default: its own)")),
+		model: p.optional(
+			p.string("Image model: one the image provider offers or config.json adds (default: its own)"),
+		),
 	},
 	output: Schema.Struct({
 		model: Schema.String,
@@ -188,21 +194,7 @@ export const imageGenerate = defineOperation({
 		Effect.gen(function* () {
 			const only = input.beat === undefined ? undefined : yield* parseBeatList(input.beat);
 			const maker = yield* ImageMaker;
-			const model = input.model ?? ctx.config.image?.model ?? maker.defaultModel;
-			if (maker.models.length === 0) {
-				return yield* fail(
-					"usage",
-					`The image provider "${maker.provider}" offers no models.`,
-					"Check image.provider in config.json; doctor shows what's wrong with it.",
-				);
-			}
-			if (!maker.models.includes(model)) {
-				return yield* fail(
-					"usage",
-					`The ${maker.provider} image provider has no model "${model}".`,
-					`Use one of: ${maker.models.join(", ")}.`,
-				);
-			}
+			const model = yield* chooseModel(ctx, maker, "image", input.model);
 			let post = yield* readPost(ctx, input.post);
 			if (!isApproved(post)) {
 				return yield* fail(
@@ -254,7 +246,12 @@ export const imageGenerate = defineOperation({
 			);
 			const planned = chosen.map((b) => {
 				const seed = b.seed ?? defaultSeed(post.slug, b.index);
-				const hash = imageInputHash(ctx, model, b, input.reroll && mode.dryRun ? seed + 1 : seed);
+				const hash = imageInputHash(
+					ctx,
+					model.name,
+					b,
+					input.reroll && mode.dryRun ? seed + 1 : seed,
+				);
 				// An imported image (Midjourney, a photo) stays unless the beat is rerolled. A beat
 				// without a prompt (allowed only with an imported image) is never sent, rerolled or not.
 				const imported = b.image?.source === "imported" && !input.reroll;
@@ -269,7 +266,7 @@ export const imageGenerate = defineOperation({
 				return {
 					beat: b.index,
 					action,
-					estimateUsd: action === "generate" ? maker.estimateUsd(model) : 0,
+					estimateUsd: action === "generate" ? imageUsd(model) : 0,
 				} as const;
 			});
 			const total = planned.reduce((sum, item) => sum + item.estimateUsd, 0);
@@ -287,7 +284,7 @@ export const imageGenerate = defineOperation({
 				post = yield* readPost(ctx, input.post);
 			}
 			return {
-				model,
+				model: model.name,
 				planned,
 				estimateUsd: total,
 				dryRun: mode.dryRun,

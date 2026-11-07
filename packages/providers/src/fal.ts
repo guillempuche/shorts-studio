@@ -7,7 +7,8 @@
  */
 
 import { IMAGE_SIZE } from "@shorts-studio/domain/direction";
-import { fail, failBecause, RequestEnded } from "@shorts-studio/domain/errors";
+import { failBecause, RequestEnded } from "@shorts-studio/domain/errors";
+import type { Model } from "@shorts-studio/domain/models";
 import type { KeySpec } from "@shorts-studio/usecases/context";
 import { requireKey } from "@shorts-studio/usecases/inputs";
 import { ImageMaker, type ImageRequest } from "@shorts-studio/usecases/ports";
@@ -18,17 +19,32 @@ import { ProviderEnv, providerFailure } from "./env.ts";
 export const FAL_KEY: KeySpec = { env: "FAL_KEY", keychain: "fal-key" };
 const BASE_URL = "https://queue.fal.run";
 
-interface FalModel {
-	readonly endpoint: string;
-	/** For estimates only; FAL bills these models per megapixel. */
-	readonly usdPerMegapixel: number;
-	readonly steps: number;
-}
-
-const MODELS: Readonly<Record<string, FalModel>> = {
-	"flux-schnell": { endpoint: "fal-ai/flux/schnell", usdPerMegapixel: 0.003, steps: 4 },
-	"flux-dev": { endpoint: "fal-ai/flux/dev", usdPerMegapixel: 0.025, steps: 28 },
-};
+/**
+ * FAL's own models, priced from their pages on fal.ai. FAL bills each image by the megapixel,
+ * rounded up: 1344×2400 is 3.2 MP, billed as 4.
+ */
+export const FAL_MODELS = {
+	"flux-schnell": {
+		provider: "fal",
+		job: "image",
+		endpoint: "fal-ai/flux/schnell",
+		billedBy: "megapixel",
+		usdPerUnit: 0.003,
+		roundUp: true,
+		priceChecked: "2026-11-07",
+		options: { num_inference_steps: 4 },
+	},
+	"flux-dev": {
+		provider: "fal",
+		job: "image",
+		endpoint: "fal-ai/flux/dev",
+		billedBy: "megapixel",
+		usdPerUnit: 0.025,
+		roundUp: true,
+		priceChecked: "2026-11-07",
+		options: { num_inference_steps: 28 },
+	},
+} satisfies Record<string, Model>;
 
 const Submitted = Schema.Struct({
 	request_id: Schema.String,
@@ -38,8 +54,6 @@ const Submitted = Schema.Struct({
 const Status = Schema.Struct({ status: Schema.String });
 const Result = Schema.Struct({ images: Schema.Array(Schema.Struct({ url: Schema.String })) });
 
-/** FAL bills each image by the megapixel, rounded up: 1344×2400 is 3.2 MP, billed as 4. */
-const megapixels = Math.ceil((IMAGE_SIZE.width * IMAGE_SIZE.height) / 1_000_000);
 const fix = "Check FAL_KEY and your connection, then run it again.";
 
 const ended = (message: string) =>
@@ -79,15 +93,7 @@ export const falLayer = Layer.effect(
 				),
 			);
 
-		const submit = Effect.fn("fal.submit")(function* (name: string, prompt: string, seed: number) {
-			const model = MODELS[name];
-			if (model === undefined) {
-				return yield* fail(
-					"usage",
-					`FAL has no model "${name}".`,
-					`Use one of: ${Object.keys(MODELS).join(", ")}.`,
-				);
-			}
+		const submit = Effect.fn("fal.submit")(function* (model: Model, prompt: string, seed: number) {
 			const key = yield* requireKey(env, FAL_KEY);
 			const body = yield* HttpClientRequest.post(`${base}/${model.endpoint}`).pipe(
 				signed(key),
@@ -96,9 +102,10 @@ export const falLayer = Layer.effect(
 					image_size: IMAGE_SIZE,
 					seed,
 					num_images: 1,
-					num_inference_steps: model.steps,
 					output_format: "jpeg",
 					enable_safety_checker: true,
+					// Last, so a model added in config.json can change any of the fields above.
+					...model.options,
 				}),
 				http.execute,
 				Effect.flatMap(HttpClientResponse.schemaBodyJson(Submitted)),
@@ -134,9 +141,8 @@ export const falLayer = Layer.effect(
 			provider: "fal",
 			keys: [FAL_KEY],
 			checks: Effect.succeed([]),
-			models: Object.keys(MODELS),
+			models: FAL_MODELS,
 			defaultModel: "flux-schnell",
-			estimateUsd: (name) => megapixels * (MODELS[name]?.usdPerMegapixel ?? 0),
 			submit,
 			collect,
 		});

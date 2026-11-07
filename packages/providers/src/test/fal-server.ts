@@ -20,6 +20,8 @@ export interface FakeFal {
 		readonly prompt: string;
 		readonly seed: number;
 		readonly imageSize: { readonly width: number; readonly height: number };
+		/** Every other field of the request, such as the model's options. */
+		readonly extra: Readonly<Record<string, unknown>>;
 	}>;
 	readonly close: () => Promise<void>;
 }
@@ -53,7 +55,7 @@ export const startFakeFal = (options: FakeFalOptions = {}): Promise<FakeFal> => 
 				body += chunk;
 			});
 			req.on("end", () => {
-				const input = JSON.parse(body) as {
+				const { prompt, seed, image_size, ...extra } = JSON.parse(body) as {
 					prompt: string;
 					seed: number;
 					image_size: { width: number; height: number };
@@ -62,11 +64,12 @@ export const startFakeFal = (options: FakeFalOptions = {}): Promise<FakeFal> => 
 				submits.push({
 					endpoint: path.slice(1),
 					authorization: req.headers.authorization,
-					prompt: input.prompt,
-					seed: input.seed,
-					imageSize: input.image_size,
+					prompt,
+					seed,
+					imageSize: image_size,
+					extra,
 				});
-				prompts.set(id, { prompt: input.prompt, index: submits.length - 1 });
+				prompts.set(id, { prompt, index: submits.length - 1 });
 				json(200, {
 					request_id: id,
 					status_url: `${base}/requests/${id}/status`,

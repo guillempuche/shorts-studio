@@ -105,7 +105,7 @@ export const configShow = defineOperation({
 				caps: caps(ctx),
 				imageModel: ctx.config.image?.model ?? maker.defaultModel,
 				imageProvider: maker.provider,
-				transcriber: `${transcriber.provider} ${transcriber.model}`,
+				transcriber: `${transcriber.provider} ${ctx.config.transcribe?.model ?? transcriber.defaultModel}`,
 				checks: yield* runChecks(ctx),
 			};
 		}),

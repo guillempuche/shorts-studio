@@ -44,7 +44,12 @@ const transcriberLayer = (name: string): ProviderLayer<Transcriber> => {
 	const layer = TRANSCRIBERS[name];
 	if (layer !== undefined) return layer;
 	const stub = unknown("transcribe", name, TRANSCRIBERS);
-	return Layer.succeed(Transcriber, { ...stub, model: "", transcribe: () => stub.fail });
+	return Layer.succeed(Transcriber, {
+		...stub,
+		models: {},
+		defaultModel: "",
+		transcribe: () => stub.fail,
+	});
 };
 
 const imageMakerLayer = (name: string): ProviderLayer<ImageMaker> => {
@@ -53,9 +58,8 @@ const imageMakerLayer = (name: string): ProviderLayer<ImageMaker> => {
 	const stub = unknown("image", name, IMAGE_MAKERS);
 	return Layer.succeed(ImageMaker, {
 		...stub,
-		models: [],
+		models: {},
 		defaultModel: "",
-		estimateUsd: () => 0,
 		submit: () => stub.fail,
 		collect: () => stub.fail,
 	});

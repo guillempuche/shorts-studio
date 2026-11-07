@@ -265,7 +265,7 @@ describe("image generate", () => {
 
 	it("should point at config.json when the image provider offers no models", async () => {
 		// GIVEN an image provider that offers no models, as one named wrongly in config.json does
-		const maker = { ...fakeImageMaker(), provider: "nope", models: [], defaultModel: "" };
+		const maker = { ...fakeImageMaker(), provider: "nope", models: {}, defaultModel: "" };
 		const { ctx, ports } = await ready(testContext(), maker);
 
 		// WHEN images are generated
@@ -287,6 +287,85 @@ describe("image generate", () => {
 		// THEN it is a usage error naming the provider's models
 		expect(error.code).toBe("usage");
 		expect(error.fix).toContain("fake-fast");
+		expect(maker.submits).toHaveLength(0);
+	});
+
+	it("should generate with a model added in config.json, and reserve its price", async () => {
+		// GIVEN a post ready for images, and config.json adding a model the provider doesn't ship,
+		// at $0.04 per megapixel, rounded up
+		const ctx = testContext({
+			config: {
+				models: {
+					"fake-pro": {
+						provider: "fake-images",
+						job: "image",
+						endpoint: "fake/pro",
+						billedBy: "megapixel",
+						usdPerUnit: 0.04,
+						roundUp: true,
+						priceChecked: "2026-11-07",
+					},
+				},
+			},
+		});
+		const { maker, ports } = await ready(ctx);
+
+		// WHEN beat 0's image is generated with that model
+		const result = await run(generate(ctx, { beat: "0", model: "fake-pro" }), ports);
+
+		// THEN the provider got the request on that model's endpoint
+		expect(maker.submits.map((s) => s.endpoint)).toEqual(["fake/pro"]);
+		// AND 4 megapixels at its price were reserved, under its name
+		expect(result.estimateUsd).toBeCloseTo(0.16);
+		const [reserved] = await ledgerOf(ctx);
+		expect(reserved?.model).toBe("fake-pro");
+		expect(reserved?.usd).toBeCloseTo(0.16);
+	});
+
+	it("should price a built-in model at the price config.json gives it", async () => {
+		// GIVEN a post ready for images, and config.json raising fake-fast's price to $0.03
+		const ctx = testContext({
+			config: { models: { "fake-fast": { usdPerUnit: 0.03, priceChecked: "2026-11-07" } } },
+		});
+		const { maker, ports } = await ready(ctx);
+
+		// WHEN beat 0's image is generated with fake-fast
+		const result = await run(generate(ctx, { beat: "0" }), ports);
+
+		// THEN it is estimated and reserved at the new price
+		expect(result.estimateUsd).toBeCloseTo(0.03);
+		expect((await ledgerOf(ctx))[0]?.usd).toBeCloseTo(0.03);
+		// AND the rest of the built-in model is kept: the request went to fake-fast's endpoint
+		expect(maker.submits.map((s) => s.endpoint)).toEqual(["fake/fast"]);
+	});
+
+	it("should say what a model added in config.json is missing, before spending", async () => {
+		// GIVEN a post ready for images, and config.json adding a model without an endpoint
+		const ctx = testContext({
+			config: {
+				models: {
+					"fake-pro": {
+						provider: "fake-images",
+						job: "image",
+						billedBy: "image",
+						usdPerUnit: 0.04,
+						priceChecked: "2026-11-07",
+					},
+				},
+			},
+		});
+		const { maker, ports } = await ready(ctx);
+
+		// WHEN images are generated
+		const error = await runFailure(generate(ctx), ports);
+
+		// THEN it is a usage error naming the model and the missing field
+		expect(error.code).toBe("usage");
+		expect(error.message).toContain("models.fake-pro");
+		expect(error.message).toContain("endpoint");
+		expect(error.fix).toContain("config.json");
+		// AND nothing was reserved or sent
+		expect(await ledgerOf(ctx)).toHaveLength(0);
 		expect(maker.submits).toHaveLength(0);
 	});
 

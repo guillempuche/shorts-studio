@@ -14,6 +14,7 @@ import { Kind, Origin, Transcript } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import type { Context } from "../context.ts";
 import { writeFileAtomic, writeJsonFile } from "../files.ts";
+import { chooseModel } from "../models.ts";
 import { defineOperation, p } from "../operation.ts";
 import { Downloader, Transcriber } from "../ports.ts";
 import { postDir, readPost } from "../post-store.ts";
@@ -168,6 +169,7 @@ export const sourceTranscribe = defineOperation({
 				);
 			}
 			const transcriber = yield* Transcriber;
+			const model = yield* chooseModel(ctx, transcriber, "transcribe");
 			mkdirSync(join(dir, "transcripts"), { recursive: true });
 			const files = readdirSync(audioDir)
 				.filter((f) => /\.(mp3|m4a|wav)$/i.test(f))
@@ -178,11 +180,11 @@ export const sourceTranscribe = defineOperation({
 			// Every file is tried. A failed one is listed, and the next run tries it again.
 			const [done, failed] = yield* Effect.partition(todo, (file) =>
 				Effect.sync(() => ctx.log(`Transcribing ${file}…`)).pipe(
-					Effect.andThen(transcriber.transcribe(join(audioDir, file), input.language)),
+					Effect.andThen(transcriber.transcribe(model, join(audioDir, file), input.language)),
 					Effect.tap((transcript) =>
 						writeJsonFile(transcriptOf(file, "json"), SavedTranscript, {
 							...transcript,
-							model: transcriber.model,
+							model: model.name,
 						}),
 					),
 					Effect.map((transcript) => {

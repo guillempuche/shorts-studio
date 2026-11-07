@@ -8,6 +8,7 @@
 import { openAsBlob, statSync } from "node:fs";
 import { basename } from "node:path";
 import { fail } from "@shorts-studio/domain/errors";
+import type { Model } from "@shorts-studio/domain/models";
 import { failWith } from "@shorts-studio/usecases/attempt";
 import type { KeySpec } from "@shorts-studio/usecases/context";
 import { requireKey } from "@shorts-studio/usecases/inputs";
@@ -18,7 +19,19 @@ import { ProviderEnv, providerFailure } from "./env.ts";
 
 export const TOGETHER_KEY: KeySpec = { env: "TOGETHER_API_KEY", keychain: "together-api-key" };
 const BASE_URL = "https://api.together.ai";
-const MODEL = "openai/whisper-large-v3";
+
+/** Together's own models, priced from together.ai/pricing (per minute of audio). */
+export const TOGETHER_MODELS = {
+	"openai/whisper-large-v3": {
+		provider: "together",
+		job: "transcribe",
+		endpoint: "openai/whisper-large-v3",
+		billedBy: "minute",
+		usdPerUnit: 0.0015,
+		priceChecked: "2026-11-07",
+	},
+} satisfies Record<string, Model>;
+
 const MAX_UPLOAD_BYTES = 80 * 1024 * 1024;
 
 /** What Together sends back; Whisper names a word's text `word`, some versions `text`. */
@@ -45,9 +58,9 @@ export const togetherLayer = Layer.effect(
 		const env = yield* ProviderEnv;
 		const http = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
 		const base = env.endpoints["together"] ?? BASE_URL;
-		const model = env.config.transcribe?.model ?? MODEL;
 
 		const transcribe = Effect.fn("together.transcribe")(function* (
+			model: Model,
 			file: string,
 			language: string | undefined,
 		) {
@@ -72,7 +85,7 @@ export const togetherLayer = Layer.effect(
 				),
 			});
 			form.append("file", audio, basename(file));
-			form.append("model", model);
+			form.append("model", model.endpoint);
 			form.append("response_format", "verbose_json");
 			form.append("timestamp_granularities", "word");
 			form.append("language", language ?? "auto");
@@ -105,7 +118,8 @@ export const togetherLayer = Layer.effect(
 			provider: "together",
 			keys: [TOGETHER_KEY],
 			checks: Effect.succeed([]),
-			model,
+			models: TOGETHER_MODELS,
+			defaultModel: "openai/whisper-large-v3",
 			transcribe,
 		});
 	}),

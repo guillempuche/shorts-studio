@@ -6,10 +6,12 @@
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Effect } from "effect";
+import { Model } from "@shorts-studio/domain/models";
+import { Effect, Schema } from "effect";
 import { describe, expect, it } from "vitest";
 import type { Transcriber } from "../ports.ts";
 import { tempDir } from "./context.ts";
+import { defaultModelOf } from "./models.ts";
 
 export interface TranscriberHarness {
 	/** The provider, with its service answering with words or refusing, and with or without its key. */
@@ -28,12 +30,29 @@ const audioFile = (): string => {
 
 export const transcriberContract = (name: string, harness: TranscriberHarness): void => {
 	describe(`${name}, as a transcription provider`, () => {
+		it("should offer whole transcription models of its own, with its default among them", async () => {
+			// GIVEN the provider
+			const transcriber = await harness.make({ answer: "words", withKey: true });
+
+			// THEN its default model is one of its own
+			expect(Object.keys(transcriber.models)).toContain(transcriber.defaultModel);
+			// AND each of its models is a whole transcription model of this provider, with a price
+			for (const [name, model] of Object.entries(transcriber.models)) {
+				expect(Schema.is(Model)(model), name).toBe(true);
+				expect(model.provider, name).toBe(transcriber.provider);
+				expect(model.job, name).toBe("transcribe");
+				expect(model.usdPerUnit, name).toBeGreaterThan(0);
+			}
+		});
+
 		it("should return the language, the text and each word in order with its timing", async () => {
 			// GIVEN a provider whose service hears speech
 			const transcriber = await harness.make({ answer: "words", withKey: true });
 
 			// WHEN a file is transcribed
-			const transcript = await Effect.runPromise(transcriber.transcribe(audioFile(), undefined));
+			const transcript = await Effect.runPromise(
+				transcriber.transcribe(defaultModelOf(transcriber), audioFile(), undefined),
+			);
 
 			// THEN every word has text and a start no later than its end, in order
 			expect(transcript.language).not.toBe("");
@@ -51,7 +70,7 @@ export const transcriberContract = (name: string, harness: TranscriberHarness): 
 
 			// WHEN a file is transcribed
 			const error = await Effect.runPromise(
-				Effect.flip(transcriber.transcribe(audioFile(), undefined)),
+				Effect.flip(transcriber.transcribe(defaultModelOf(transcriber), audioFile(), undefined)),
 			);
 
 			// THEN it is a provider failure that says what to do
@@ -66,7 +85,7 @@ export const transcriberContract = (name: string, harness: TranscriberHarness): 
 
 			// WHEN a file is transcribed
 			const error = await Effect.runPromise(
-				Effect.flip(transcriber.transcribe(audioFile(), undefined)),
+				Effect.flip(transcriber.transcribe(defaultModelOf(transcriber), audioFile(), undefined)),
 			);
 
 			// THEN it fails with missing-key, naming the key

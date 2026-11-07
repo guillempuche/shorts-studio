@@ -11,6 +11,7 @@ import { Transcript } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import type { Context } from "../context.ts";
 import { fileHash, hashOf, readJsonFile, writeJsonFile } from "../files.ts";
+import { chooseModel } from "../models.ts";
 import { defineOperation, p } from "../operation.ts";
 import { Transcriber } from "../ports.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
@@ -67,10 +68,11 @@ export const audioTranscribe = defineOperation({
 			const dir = postDir(ctx, input.post);
 			const file = join(dir, TRANSCRIPT_FILE);
 			const transcriber = yield* Transcriber;
+			const model = yield* chooseModel(ctx, transcriber, "transcribe");
 			const inputHash = hashOf(
 				post.audio.hash,
 				transcriber.provider,
-				transcriber.model,
+				model.name,
 				input.language ?? "auto",
 			);
 			if (!input.force && post.transcript?.inputHash === inputHash && existsSync(file)) {
@@ -84,7 +86,11 @@ export const audioTranscribe = defineOperation({
 				};
 			}
 			ctx.log(`Transcribing ${post.audio.durationSec.toFixed(0)} s of audio…`);
-			const transcript = yield* transcriber.transcribe(join(dir, post.audio.file), input.language);
+			const transcript = yield* transcriber.transcribe(
+				model,
+				join(dir, post.audio.file),
+				input.language,
+			);
 			yield* writeJsonFile(file, Transcript, transcript);
 			const hash = yield* fileHash(file);
 			const updated = yield* updatePost(ctx, input.post, "audio transcribe", (current) =>
@@ -95,7 +101,7 @@ export const audioTranscribe = defineOperation({
 						hash,
 						inputHash,
 						provider: transcriber.provider,
-						model: transcriber.model,
+						model: model.name,
 						language: transcript.language,
 					},
 				}),

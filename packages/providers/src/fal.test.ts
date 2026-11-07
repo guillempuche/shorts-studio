@@ -1,10 +1,11 @@
 import { IMAGE_SIZE } from "@shorts-studio/domain/direction";
+import { imageAmount, type Model, price } from "@shorts-studio/domain/models";
 import { ImageMaker } from "@shorts-studio/usecases/ports";
 import { imageMakerContract } from "@shorts-studio/usecases/test/image-maker.contract";
 import { Effect } from "effect";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { withEnv } from "./env.ts";
-import { falLayer } from "./fal.ts";
+import { FAL_MODELS, falLayer } from "./fal.ts";
 import { providerContext } from "./test/context.ts";
 import { type FakeFalOptions, startFakeFal } from "./test/fal-server.ts";
 
@@ -34,30 +35,35 @@ imageMakerContract("FAL", {
 		).fal,
 });
 
-describe("falImageMaker estimateUsd", () => {
+const schnell = FAL_MODELS["flux-schnell"];
+
+describe("FAL's own models", () => {
 	it("should price each image by whole megapixels, as FAL bills them", async () => {
-		// GIVEN FAL, and images of 1344×2400 (3.2 megapixels)
+		// GIVEN FAL's models, and images of 1344×2400 (3.2 megapixels)
 		const { fal } = await withFakeFal();
+		const imagePrice = (name: string) => {
+			const model = fal.models[name];
+			return model === undefined ? undefined : price(model, imageAmount(model));
+		};
 
-		// WHEN the price of one image is asked for each model
-		const schnell = fal.estimateUsd("flux-schnell");
-		const dev = fal.estimateUsd("flux-dev");
-
-		// THEN each is the price of 4 megapixels
-		expect(schnell).toBeCloseTo(4 * 0.003);
-		expect(dev).toBeCloseTo(4 * 0.025);
+		// WHEN one image is priced with each model
+		// THEN each is billed as 4 megapixels
+		expect(imagePrice("flux-schnell")?.units).toBe(4);
+		expect(imagePrice("flux-schnell")?.usd).toBeCloseTo(4 * 0.003);
+		expect(imagePrice("flux-dev")?.usd).toBeCloseTo(4 * 0.025);
 	});
 });
 
 describe("falImageMaker submit", () => {
-	it("should send the prompt, seed and image size to the model's endpoint with the key", async () => {
+	it("should send the prompt, seed, image size and model's options to its endpoint with the key", async () => {
 		// GIVEN FAL and a key
 		const { fake, fal } = await withFakeFal();
 
 		// WHEN a flux-schnell image is submitted
-		const request = await Effect.runPromise(fal.submit("flux-schnell", "a red door", 7));
+		const request = await Effect.runPromise(fal.submit(schnell, "a red door", 7));
 
-		// THEN FAL received the prompt, seed and image size on that model's endpoint, with the key
+		// THEN FAL received the prompt, seed, image size and the model's steps on its endpoint,
+		// with the key
 		expect(fake.submits).toEqual([
 			{
 				endpoint: "fal-ai/flux/schnell",
@@ -65,6 +71,12 @@ describe("falImageMaker submit", () => {
 				prompt: "a red door",
 				seed: 7,
 				imageSize: IMAGE_SIZE,
+				extra: {
+					num_images: 1,
+					num_inference_steps: 4,
+					output_format: "jpeg",
+					enable_safety_checker: true,
+				},
 			},
 		]);
 		// AND the request comes back with where to check on it
@@ -80,7 +92,7 @@ describe("falImageMaker submit", () => {
 		const { fake, fal } = await withFakeFal({}, {});
 
 		// WHEN an image is submitted
-		const error = await Effect.runPromise(Effect.flip(fal.submit("flux-schnell", "a red door", 7)));
+		const error = await Effect.runPromise(Effect.flip(fal.submit(schnell, "a red door", 7)));
 
 		// THEN it says FAL_KEY isn't set
 		expect(error.code).toBe("missing-key");
@@ -89,19 +101,27 @@ describe("falImageMaker submit", () => {
 		expect(fake.submits).toHaveLength(0);
 	});
 
-	it("should refuse a model FAL doesn't offer, listing the ones it does", async () => {
-		// GIVEN FAL and a key
+	it("should send a model it doesn't ship to that model's endpoint, with its options", async () => {
+		// GIVEN FAL, and a model added in config.json, with options of its own
 		const { fake, fal } = await withFakeFal();
+		const added: Model = {
+			provider: "fal",
+			job: "image",
+			endpoint: "fal-ai/flux-pro/v1.1",
+			billedBy: "megapixel",
+			usdPerUnit: 0.04,
+			roundUp: true,
+			priceChecked: "2026-11-07",
+			options: { safety_tolerance: "2" },
+		};
 
-		// WHEN an unknown model is asked for
-		const error = await Effect.runPromise(Effect.flip(fal.submit("nope", "a red door", 7)));
+		// WHEN an image is submitted with it
+		await Effect.runPromise(fal.submit(added, "a red door", 7));
 
-		// THEN it is a usage error naming the known models
-		expect(error.code).toBe("usage");
-		expect(error.fix).toContain("flux-schnell");
-		expect(fake.submits).toHaveLength(0);
-		// AND the provider lists the same models
-		expect(fal.models).toEqual(["flux-schnell", "flux-dev"]);
+		// THEN FAL received it on that model's endpoint, with its options and no other model's
+		expect(fake.submits[0]?.endpoint).toBe("fal-ai/flux-pro/v1.1");
+		expect(fake.submits[0]?.extra["safety_tolerance"]).toBe("2");
+		expect(fake.submits[0]?.extra).not.toHaveProperty("num_inference_steps");
 	});
 });
 
@@ -110,7 +130,7 @@ describe("falImageMaker collect", () => {
 		// GIVEN a request FAL finishes after one more check
 		const image = new Uint8Array([1, 2, 3, 4]);
 		const { fal } = await withFakeFal({ pollsBeforeDone: 1, image: () => image });
-		const request = await Effect.runPromise(fal.submit("flux-schnell", "a red door", 7));
+		const request = await Effect.runPromise(fal.submit(schnell, "a red door", 7));
 
 		// WHEN its image is collected
 		const bytes = await Effect.runPromise(fal.collect(request));
@@ -122,7 +142,7 @@ describe("falImageMaker collect", () => {
 	it("should end the request with reason RequestEnded when FAL reports it failed", async () => {
 		// GIVEN a request FAL marks as failed
 		const { fal } = await withFakeFal({ finalStatus: "FAILED" });
-		const request = await Effect.runPromise(fal.submit("flux-schnell", "a red door", 7));
+		const request = await Effect.runPromise(fal.submit(schnell, "a red door", 7));
 
 		// WHEN its image is collected
 		const error = await Effect.runPromise(Effect.flip(fal.collect(request)));

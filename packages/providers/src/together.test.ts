@@ -1,7 +1,11 @@
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import type { Model } from "@shorts-studio/domain/models";
 import { Transcriber } from "@shorts-studio/usecases/ports";
+import { tempDir } from "@shorts-studio/usecases/test/context";
 import { transcriberContract } from "@shorts-studio/usecases/test/transcriber.contract";
 import { Effect } from "effect";
-import { onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { withEnv } from "./env.ts";
 import { providerContext } from "./test/context.ts";
 import { startFakeTogether } from "./test/together-server.ts";
@@ -21,4 +25,37 @@ transcriberContract("Together", {
 			}).pipe(Effect.provide(withEnv(togetherLayer, ctx))),
 		);
 	},
+});
+
+describe("togetherTranscriber transcribe", () => {
+	it("should ask for the model's id, so a model added in config.json needs no code", async () => {
+		// GIVEN Together with a key, and a model it doesn't ship
+		const fake = await startFakeTogether();
+		onTestFinished(() => fake.close());
+		const ctx = providerContext({
+			endpoints: { together: fake.url },
+			secrets: { TOGETHER_API_KEY: "test-key" },
+		});
+		const together = await Effect.runPromise(
+			Effect.gen(function* () {
+				return yield* Transcriber;
+			}).pipe(Effect.provide(withEnv(togetherLayer, ctx))),
+		);
+		const added: Model = {
+			provider: "together",
+			job: "transcribe",
+			endpoint: "openai/whisper-large-v3-turbo",
+			billedBy: "minute",
+			usdPerUnit: 0.001,
+			priceChecked: "2026-11-07",
+		};
+		const file = join(tempDir(), "audio.m4a");
+		writeFileSync(file, new Uint8Array(64));
+
+		// WHEN a file is transcribed with it
+		await Effect.runPromise(together.transcribe(added, file, undefined));
+
+		// THEN Together was asked for that model's id
+		expect(fake.models).toEqual(["openai/whisper-large-v3-turbo"]);
+	});
 });

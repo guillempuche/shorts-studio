@@ -4,6 +4,7 @@
  * (ports.ts), so a fork swaps a provider without touching a use case.
  */
 
+import { ModelSettings } from "@shorts-studio/domain/models";
 import { type Redacted, Schema } from "effect";
 
 export interface Paths {
@@ -44,6 +45,10 @@ export const Config = Schema.Struct({
 	),
 	transcribe: setting(ProviderChoice("transcribes audio"), "Transcription with word timings."),
 	image: setting(ProviderChoice("makes the images"), "One image per beat."),
+	models: setting(
+		Schema.Record(Schema.String, ModelSettings),
+		"Models by name: a new one with every field, or a provider's own one with only what changes, such as its price.",
+	),
 	download: setting(
 		Schema.Struct({
 			cookiesFromBrowser: setting(

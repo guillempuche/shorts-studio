@@ -7,6 +7,7 @@
 import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fail, failBecause, RequestEnded } from "@shorts-studio/domain/errors";
+import type { Model } from "@shorts-studio/domain/models";
 import type { Transcript } from "@shorts-studio/domain/post";
 import { Effect, Layer } from "effect";
 import type { KeySpec } from "../context.ts";
@@ -24,7 +25,7 @@ import {
 export type FakeImageMaker = ImageMaker["Service"] & {
 	/** Every paid request, in the order it was sent. */
 	readonly submits: Array<{
-		readonly model: string;
+		readonly endpoint: string;
 		readonly prompt: string;
 		readonly seed: number;
 	}>;
@@ -41,6 +42,26 @@ export type FakeImageMaker = ImageMaker["Service"] & {
 export const fakeImageBytes = (prompt: string, seed: number): Uint8Array =>
 	new TextEncoder().encode(`${prompt} #${seed}`);
 
+/** The fake's own image models, priced per image so a test's estimate is easy to read. */
+export const FAKE_IMAGE_MODELS = {
+	"fake-fast": {
+		provider: "fake-images",
+		job: "image",
+		endpoint: "fake/fast",
+		billedBy: "image",
+		usdPerUnit: 0.01,
+		priceChecked: "2026-11-01",
+	},
+	"fake-fine": {
+		provider: "fake-images",
+		job: "image",
+		endpoint: "fake/fine",
+		billedBy: "image",
+		usdPerUnit: 0.05,
+		priceChecked: "2026-11-01",
+	},
+} satisfies Record<string, Model>;
+
 /** An image provider in memory. It only collects requests it was sent. */
 export const fakeImageMaker = (
 	options: { readonly keys?: ReadonlyArray<KeySpec> } = {},
@@ -49,24 +70,14 @@ export const fakeImageMaker = (
 		provider: "fake-images",
 		keys: options.keys ?? [],
 		checks: Effect.succeed([]),
-		models: ["fake-fast", "fake-fine"],
+		models: FAKE_IMAGE_MODELS,
 		defaultModel: "fake-fast",
-		estimateUsd: (model) => (model === "fake-fine" ? 0.05 : 0.01),
 		submits: [],
 		answer: "image",
 		waits: 0,
 		submit: (model, prompt, seed) =>
 			Effect.suspend(() => {
-				if (!maker.models.includes(model)) {
-					return Effect.fail(
-						fail(
-							"usage",
-							`The fake has no model "${model}".`,
-							`Use one of: ${maker.models.join(", ")}.`,
-						),
-					);
-				}
-				maker.submits.push({ model, prompt, seed });
+				maker.submits.push({ endpoint: model.endpoint, prompt, seed });
 				const requestId = `req-${maker.submits.length}`;
 				return Effect.succeed<ImageRequest>({
 					requestId,
@@ -153,7 +164,17 @@ export const fakeTranscriber = (
 	provider: "fake-transcriber",
 	keys: [],
 	checks: Effect.succeed([]),
-	model: "fake-whisper",
+	models: {
+		"fake-whisper": {
+			provider: "fake-transcriber",
+			job: "transcribe",
+			endpoint: "fake/whisper",
+			billedBy: "minute",
+			usdPerUnit: 0.006,
+			priceChecked: "2026-11-01",
+		},
+	},
+	defaultModel: "fake-whisper",
 	transcribe: () =>
 		options.refuses === true
 			? Effect.fail(fail("provider", "The fake refused the audio.", "Run it again."))

@@ -6,6 +6,7 @@
 
 import type { RenderBeat } from "@shorts-studio/domain/direction";
 import type { ShortsError } from "@shorts-studio/domain/errors";
+import type { Model } from "@shorts-studio/domain/models";
 import type { Transcript } from "@shorts-studio/domain/post";
 import { Context, type Effect } from "effect";
 import type { KeySpec } from "./context.ts";
@@ -27,13 +28,27 @@ export interface ProviderInfo {
 	readonly checks: Effect.Effect<ReadonlyArray<Check>>;
 }
 
+/**
+ * A paid provider's own models, by name. The use case picks one, merged with config.json's
+ * `models`, and hands the whole model back, so a model added in config.json needs no code.
+ */
+export interface OwnModels {
+	readonly models: Readonly<Record<string, Model>>;
+	/** The model used when neither the command nor config.json names one. */
+	readonly defaultModel: string;
+}
+
 export class Transcriber extends Context.Service<
 	Transcriber,
-	ProviderInfo & {
-		readonly model: string;
-		/** Every word with its start and end. `language` undefined means detect it. */
-		transcribe(file: string, language: string | undefined): Effect.Effect<Transcript, ShortsError>;
-	}
+	ProviderInfo &
+		OwnModels & {
+			/** Every word with its start and end. `language` undefined means detect it. */
+			transcribe(
+				model: Model,
+				file: string,
+				language: string | undefined,
+			): Effect.Effect<Transcript, ShortsError>;
+		}
 >()("shorts-studio/Transcriber") {}
 
 /** A paid image request, saved before waiting so a cut-short run picks it up again. */
@@ -45,15 +60,12 @@ export interface ImageRequest {
 
 export class ImageMaker extends Context.Service<
 	ImageMaker,
-	ProviderInfo & {
-		readonly models: ReadonlyArray<string>;
-		readonly defaultModel: string;
-		/** Estimated price of one image at `IMAGE_SIZE`, for the spending caps. */
-		estimateUsd(model: string): number;
-		submit(model: string, prompt: string, seed: number): Effect.Effect<ImageRequest, ShortsError>;
-		/** Waits for the image. Fails with reason `RequestEnded` when the provider gave up on it. */
-		collect(request: ImageRequest): Effect.Effect<Uint8Array, ShortsError>;
-	}
+	ProviderInfo &
+		OwnModels & {
+			submit(model: Model, prompt: string, seed: number): Effect.Effect<ImageRequest, ShortsError>;
+			/** Waits for the image. Fails with reason `RequestEnded` when the provider gave up on it. */
+			collect(request: ImageRequest): Effect.Effect<Uint8Array, ShortsError>;
+		}
 >()("shorts-studio/ImageMaker") {}
 
 /** A video to render, with paths relative to `cwd` (the post folder). */
