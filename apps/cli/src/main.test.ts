@@ -12,21 +12,49 @@ const start = (args: ReadonlyArray<string>) => {
 		stdio: ["pipe", "pipe", "pipe"],
 		env: { ...process.env, SHORTS_DATA_DIR: tempDir() },
 	});
+	let stdout = "";
 	let stderr = "";
+	child.stdout.on("data", (chunk: Buffer) => {
+		stdout += chunk.toString();
+	});
 	child.stderr.on("data", (chunk: Buffer) => {
 		stderr += chunk.toString();
 	});
 	const exited = new Promise<{ code: number | null; stderr: string }>((resolve) =>
 		child.on("close", (code) => resolve({ code, stderr })),
 	);
-	return { child, exited };
+	/** Resolves once stdout contains `text`. */
+	const printed = (text: string) =>
+		new Promise<void>((resolve) => {
+			const check = () => {
+				if (!stdout.includes(text)) return;
+				child.stdout.off("data", check);
+				resolve();
+			};
+			child.stdout.on("data", check);
+			check();
+		});
+	return { child, exited, printed };
 };
+
+/** An MCP `initialize` request: the server answers it only once it's fully running. */
+const INITIALIZE = `${JSON.stringify({
+	jsonrpc: "2.0",
+	id: 1,
+	method: "initialize",
+	params: {
+		protocolVersion: "2025-11-25",
+		capabilities: {},
+		clientInfo: { name: "test", version: "0" },
+	},
+})}\n`;
 
 describe("shorts-studio", () => {
 	it("should exit 130 when interrupted with SIGINT", async () => {
-		// GIVEN the MCP server running as a real process, waiting for input
-		const { child, exited } = start(["mcp", "serve"]);
-		await new Promise((resolve) => setTimeout(resolve, 1500));
+		// GIVEN the MCP server running as a real process, which has answered a first request
+		const { child, exited, printed } = start(["mcp", "serve"]);
+		child.stdin.write(INITIALIZE);
+		await printed('"id":1');
 
 		// WHEN it receives SIGINT
 		child.kill("SIGINT");
