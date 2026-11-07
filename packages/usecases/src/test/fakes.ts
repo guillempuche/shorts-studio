@@ -56,14 +56,23 @@ export const fakeImageMaker = (
 		answer: "image",
 		waits: 0,
 		submit: (model, prompt, seed) =>
-			Effect.sync((): ImageRequest => {
+			Effect.suspend(() => {
+				if (!maker.models.includes(model)) {
+					return Effect.fail(
+						fail(
+							"usage",
+							`The fake has no model "${model}".`,
+							`Use one of: ${maker.models.join(", ")}.`,
+						),
+					);
+				}
 				maker.submits.push({ model, prompt, seed });
 				const requestId = `req-${maker.submits.length}`;
-				return {
+				return Effect.succeed<ImageRequest>({
 					requestId,
 					statusUrl: `memory://${requestId}/status`,
 					responseUrl: `memory://${requestId}`,
-				};
+				});
 			}),
 		collect: (request) =>
 			Effect.suspend(() => {
@@ -139,12 +148,16 @@ export const fakeTranscriber = (
 			{ text: "there.", start: 0.5, end: 0.9 },
 		],
 	},
+	options: { readonly refuses?: boolean } = {},
 ): Transcriber["Service"] => ({
 	provider: "fake-transcriber",
 	keys: [],
 	checks: Effect.succeed([]),
 	model: "fake-whisper",
-	transcribe: () => Effect.succeed(transcript),
+	transcribe: () =>
+		options.refuses === true
+			? Effect.fail(fail("provider", "The fake refused the audio.", "Run it again."))
+			: Effect.succeed(transcript),
 });
 
 /** A downloader in memory that reports every download as done. */

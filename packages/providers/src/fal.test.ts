@@ -1,5 +1,6 @@
 import { IMAGE_SIZE } from "@shorts-studio/domain/direction";
 import { ImageMaker } from "@shorts-studio/usecases/ports";
+import { imageMakerContract } from "@shorts-studio/usecases/test/image-maker.contract";
 import { Effect } from "effect";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { withEnv } from "./env.ts";
@@ -22,6 +23,16 @@ const withFakeFal = async (
 	);
 	return { fake, fal };
 };
+
+imageMakerContract("FAL", {
+	make: async ({ answer, withKey }) =>
+		(
+			await withFakeFal(
+				answer === "ended" ? { finalStatus: "FAILED" } : {},
+				withKey ? undefined : {},
+			)
+		).fal,
+});
 
 describe("falImageMaker submit", () => {
 	it("should send the prompt, seed and image size to the model's endpoint with the key", async () => {
