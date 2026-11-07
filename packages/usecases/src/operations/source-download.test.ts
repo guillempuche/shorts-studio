@@ -1,7 +1,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { run, testContext } from "../testing.ts";
+import { testContext } from "../test/context.ts";
+import { run } from "../test/fakes.ts";
 import { savedPath, sourceTranscribe } from "./source-download.ts";
 
 const MODE = { dryRun: false, confirmed: true } as const;

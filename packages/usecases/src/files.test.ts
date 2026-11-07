@@ -2,7 +2,7 @@ import { utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { acquireLock } from "./files.ts";
-import { tempDir } from "./testing.ts";
+import { tempDir } from "./test/context.ts";
 
 describe("acquireLock", () => {
 	it("should take over a lock whose process is gone", async () => {

@@ -4,7 +4,7 @@ import { Effect, Exit } from "effect";
 import { describe, expect, it } from "vitest";
 import { acquireLock } from "./files.ts";
 import { readLedger, release, reserve, settle, spent } from "./ledger.ts";
-import { testContext } from "./testing.ts";
+import { testContext } from "./test/context.ts";
 
 const call = (post: string, usd: number) => ({ provider: "fal", model: "m", post, usd });
 

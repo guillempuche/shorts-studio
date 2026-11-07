@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tempDir } from "@shorts-studio/usecases/testing";
+import { tempDir } from "@shorts-studio/usecases/test/context";
 import { describe, expect, it } from "vitest";
 import { makeContext } from "./node.ts";
 

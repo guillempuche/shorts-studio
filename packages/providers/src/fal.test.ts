@@ -3,9 +3,9 @@ import { ImageMaker } from "@shorts-studio/usecases/ports";
 import { Effect } from "effect";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { withEnv } from "./env.ts";
-import { type FakeFalOptions, startFakeFal } from "./fal.fake.ts";
 import { falLayer } from "./fal.ts";
-import { providerContext } from "./testing.ts";
+import { providerContext } from "./test/context.ts";
+import { type FakeFalOptions, startFakeFal } from "./test/fal-server.ts";
 
 /** FAL's provider talking to a local fake of FAL's queue, with FAL_KEY set unless `secrets` says otherwise. */
 const withFakeFal = async (

@@ -3,7 +3,7 @@ import { ImageMaker, Transcriber } from "@shorts-studio/usecases/ports";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { providersLayer } from "./index.ts";
-import { providerContext } from "./testing.ts";
+import { providerContext } from "./test/context.ts";
 
 const MODE = { dryRun: false, confirmed: true } as const;
 const notInstalled = () => Promise.reject(new Error("spawn ENOENT"));

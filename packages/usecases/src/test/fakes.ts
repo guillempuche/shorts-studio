@@ -1,17 +1,15 @@
 /**
- * Test helpers for the use cases: a `Context` in a temporary folder, in-memory fakes of every
- * port, and posts seeded at a given stage. A use case then runs without keys, ffmpeg or the
- * network. Only tests import this file.
+ * In-memory fakes of every port, and helpers that run a use case with them, so it runs without
+ * keys, ffmpeg or the network. The contracts in this folder check the fakes behave like the real
+ * providers.
  */
 
-import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fail, failBecause, RequestEnded } from "@shorts-studio/domain/errors";
-import type { Post, Transcript } from "@shorts-studio/domain/post";
+import type { Transcript } from "@shorts-studio/domain/post";
 import { Effect, Layer } from "effect";
-import { onTestFinished } from "vitest";
-import type { Context, KeySpec } from "./context.ts";
+import type { KeySpec } from "../context.ts";
 import {
 	type Check,
 	Downloader,
@@ -21,39 +19,7 @@ import {
 	type Ports,
 	Transcriber,
 	type VideoJob,
-} from "./ports.ts";
-import { createPost, updatePost } from "./post-store.ts";
-
-/** The time every test context reads: 2026-11-04, 09:00 UTC. */
-export const NOW = new Date("2026-11-04T09:00:00Z");
-
-/** A new empty folder, removed when the test finishes. */
-export const tempDir = (): string => {
-	// realpath: macOS hands out /var/… paths that are really /private/var/….
-	const dir = realpathSync(mkdtempSync(join(tmpdir(), "shorts-studio-test-")));
-	onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
-	return dir;
-};
-
-/** A Context in a temporary folder. No API key is set unless `secrets` names its variable. */
-export const testContext = (
-	overrides: Partial<Context> & { readonly secrets?: Readonly<Record<string, string>> } = {},
-): Context => {
-	const root = tempDir();
-	const { secrets = {}, ...rest } = overrides;
-	return {
-		paths: { data: join(root, "data"), posts: join(root, "posts") },
-		config: {},
-		brand: {},
-		settingsIssues: [],
-		secret: async (key) => secrets[key.env],
-		now: () => NOW,
-		log: () => {},
-		...rest,
-	};
-};
-
-// --- Fake ports -------------------------------------------------------------------------------
+} from "../ports.ts";
 
 export type FakeImageMaker = ImageMaker["Service"] & {
 	/** Every paid request, in the order it was sent. */
@@ -217,60 +183,3 @@ export const runFailure = <A, E>(
 	effect: Effect.Effect<A, E, Ports>,
 	ports: Layer.Layer<Ports> = fakePorts(),
 ): Promise<E> => Effect.runPromise(Effect.flip(effect).pipe(Effect.provide(ports)));
-
-// --- Seeded posts -----------------------------------------------------------------------------
-
-export type PostFields = Partial<Omit<Post, "slug" | "manifestVersion" | "revision">>;
-
-/** Creates a post with these fields, as if the commands that record them had already run. */
-export const seedPost = (ctx: Context, slug: string, fields: PostFields = {}): Promise<Post> =>
-	Effect.runPromise(
-		createPost(ctx, { slug, createdAt: NOW.toISOString() }).pipe(
-			Effect.andThen(
-				updatePost(ctx, slug, "test", (post) => Effect.succeed({ ...post, ...fields })),
-			),
-		),
-	);
-
-/** An approved script and two beats with prompts and no images: ready for `image generate`. */
-export const readyForImages = (): PostFields => ({
-	script: { file: "script.md", hash: "s", approvedHash: "s" },
-	beats: {
-		inputHash: "b",
-		items: [
-			{ index: 0, start: 0, end: 2, text: "one", prompt: "a red door" },
-			{ index: 1, start: 2, end: 4, text: "two", prompt: "a blue sky" },
-		],
-	},
-});
-
-const generatedImage = (index: number) => ({
-	file: `images/beat-0${index}.jpg`,
-	hash: `i${index}`,
-	inputHash: `h${index}`,
-	provider: "fake-images",
-	model: "fake-fast",
-	seed: 1,
-	source: "generated" as const,
-});
-
-/** Your own speech audio, two beats with images and a rendered draft waiting for review. */
-export const withDraft = (draftHash = "d1"): PostFields => ({
-	script: { file: "script.md", hash: "s", approvedHash: "s" },
-	audio: {
-		file: "audio/audio.m4a",
-		hash: "a",
-		origin: "mine",
-		kind: "speech",
-		durationSec: 4,
-		source: "recording.m4a",
-	},
-	beats: {
-		inputHash: "b",
-		items: [
-			{ index: 0, start: 0, end: 2, text: "one", prompt: "a door", image: generatedImage(0) },
-			{ index: 1, start: 2, end: 4, text: "two", prompt: "a sky", image: generatedImage(1) },
-		],
-	},
-	draft: { file: "draft.mp4", hash: draftHash, inputHash: "x", rendererVersion: 1, durationSec: 4 },
-});

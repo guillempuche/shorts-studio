@@ -1,9 +1,9 @@
 import { Downloader } from "@shorts-studio/usecases/ports";
-import { tempDir } from "@shorts-studio/usecases/testing";
+import { tempDir } from "@shorts-studio/usecases/test/context";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { withEnv } from "./env.ts";
-import { providerContext } from "./testing.ts";
+import { providerContext } from "./test/context.ts";
 import { ytDlpLayer } from "./yt-dlp.ts";
 
 /** yt-dlp's downloader with a stand-in for the program that records the arguments it gets. */

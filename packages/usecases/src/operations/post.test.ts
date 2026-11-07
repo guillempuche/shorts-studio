@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { run, seedPost, testContext } from "../testing.ts";
+import { testContext } from "../test/context.ts";
+import { run } from "../test/fakes.ts";
+import { seedPost } from "../test/posts.ts";
 import { postArchive } from "./lifecycle.ts";
 import { postCreate, postList } from "./post.ts";
 

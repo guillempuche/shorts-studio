@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-	fakeImageMaker,
-	fakeMediaTools,
-	fakePorts,
-	run,
-	runFailure,
-	testContext,
-} from "../testing.ts";
+import { testContext } from "../test/context.ts";
+import { fakeImageMaker, fakeMediaTools, fakePorts, run, runFailure } from "../test/fakes.ts";
 import { configCheck, configShow } from "./config.ts";
 
 const MODE = { dryRun: false, confirmed: true } as const;

@@ -37,4 +37,4 @@ Costs are estimates based on the prices above, because providers don't report wh
 
 ## Testing without spending
 
-`SHORTS_FAL_URL` and `SHORTS_TOGETHER_URL` point the CLI at fake services. `node packages/providers/src/fal.fake.ts` starts a local fake of FAL's queue that returns colour cards.
+`SHORTS_FAL_URL` and `SHORTS_TOGETHER_URL` point the CLI at fake services. `node packages/providers/src/test/fal-server.ts` starts a local fake of FAL's queue that returns colour cards.

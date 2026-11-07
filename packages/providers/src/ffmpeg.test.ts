@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { withEnv } from "./env.ts";
 import { ffmpegLayer } from "./ffmpeg.ts";
 import type { ProviderContext } from "./node.ts";
-import { providerContext } from "./testing.ts";
+import { providerContext } from "./test/context.ts";
 
 /** ffmpeg's MediaTools with a stand-in for running ffprobe and ffmpeg. */
 const mediaToolsWith = (run: ProviderContext["run"]) =>

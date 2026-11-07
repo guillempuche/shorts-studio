@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { run, runFailure, testContext } from "../testing.ts";
+import { testContext } from "../test/context.ts";
+import { run, runFailure } from "../test/fakes.ts";
 import { operations } from "./index.ts";
 import { makeSchemaShow, postSchemaFile } from "./schema.ts";
 

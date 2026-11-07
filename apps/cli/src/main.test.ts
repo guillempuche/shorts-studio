@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { tempDir } from "@shorts-studio/usecases/testing";
+import { tempDir } from "@shorts-studio/usecases/test/context";
 import { describe, expect, it } from "vitest";
 
 const MAIN = join(import.meta.dirname, "main.ts");

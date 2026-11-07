@@ -5,9 +5,9 @@
  */
 
 import type { Context } from "@shorts-studio/usecases/context";
-import { testContext } from "@shorts-studio/usecases/testing";
-import type { ProviderContext } from "./node.ts";
-import { runProcess } from "./process.ts";
+import { testContext } from "@shorts-studio/usecases/test/context";
+import type { ProviderContext } from "../node.ts";
+import { runProcess } from "../process.ts";
 
 export const providerContext = (
 	overrides: Partial<ProviderContext> & {

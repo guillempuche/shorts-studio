@@ -26,6 +26,35 @@
       }
     }
   },
+  "overrides": [
+    {
+      // Production code never imports test helpers: src/test/ holds fakes and test setup only,
+      // and the Nix package leaves it out.
+      "includes": [
+        "apps/*/src/**/*.ts",
+        "packages/*/src/**/*.ts",
+        "!**/*.test.ts",
+        "!**/src/test/**"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["**/test/*", "@shorts-studio/*/test/*"],
+                    "message": "src/test/ is for tests only; production code can't import it."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "json": {
     "parser": {
       "allowComments": true,

@@ -5,17 +5,16 @@ import { describe, expect, it, vi } from "vitest";
 import type { Context } from "../context.ts";
 import { readLedger, spent } from "../ledger.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
+import { testContext } from "../test/context.ts";
 import {
 	type FakeImageMaker,
 	fakeImageBytes,
 	fakeImageMaker,
 	fakePorts,
-	readyForImages,
 	run,
 	runFailure,
-	seedPost,
-	testContext,
-} from "../testing.ts";
+} from "../test/fakes.ts";
+import { readyForImages, seedPost } from "../test/posts.ts";
 import { imageGenerate } from "./image.ts";
 import { imageImport } from "./image-import.ts";
 

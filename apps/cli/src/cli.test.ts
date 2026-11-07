@@ -7,13 +7,9 @@ import type { Context } from "@shorts-studio/usecases/context";
 import { commandPath } from "@shorts-studio/usecases/operation";
 import { operations } from "@shorts-studio/usecases/operations/index";
 import type { Ports } from "@shorts-studio/usecases/ports";
-import {
-	fakeImageMaker,
-	fakePorts,
-	readyForImages,
-	seedPost,
-	testContext,
-} from "@shorts-studio/usecases/testing";
+import { testContext } from "@shorts-studio/usecases/test/context";
+import { fakeImageMaker, fakePorts } from "@shorts-studio/usecases/test/fakes";
+import { readyForImages, seedPost } from "@shorts-studio/usecases/test/posts";
 import { Effect, Exit, Layer } from "effect";
 import { Command } from "effect/cli";
 import { TestConsole } from "effect/testing";

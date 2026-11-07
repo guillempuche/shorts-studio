@@ -5,15 +5,9 @@ import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import type { Context } from "../context.ts";
 import { postDir, readPost } from "../post-store.ts";
-import {
-	fakeMediaTools,
-	fakePorts,
-	run,
-	runFailure,
-	seedPost,
-	testContext,
-	withDraft,
-} from "../testing.ts";
+import { testContext } from "../test/context.ts";
+import { fakeMediaTools, fakePorts, run, runFailure } from "../test/fakes.ts";
+import { seedPost, withDraft } from "../test/posts.ts";
 import { postArchive, postFinalize, postPublish, postReview } from "./lifecycle.ts";
 
 const SLUG = "2026-11-05-life";

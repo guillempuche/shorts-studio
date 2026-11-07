@@ -3,7 +3,7 @@
  * provider's tests and demos run without a key or spending anything. It records each submit,
  * which is how its tests check what was sent.
  *
- * Run it by itself for a demo: `node src/providers/fal.fake.ts` prints the base URL to put in
+ * Run it by itself for a demo: `node packages/providers/src/test/fal-server.ts` prints the base URL to put in
  * SHORTS_FAL_URL; images are flat colour cards made by ffmpeg, one colour per request.
  */
 

@@ -3,15 +3,9 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Context } from "../context.ts";
 import { postDir } from "../post-store.ts";
-import {
-	fakeMediaTools,
-	fakePorts,
-	run,
-	runFailure,
-	seedPost,
-	testContext,
-	withDraft,
-} from "../testing.ts";
+import { testContext } from "../test/context.ts";
+import { fakeMediaTools, fakePorts, run, runFailure } from "../test/fakes.ts";
+import { seedPost, withDraft } from "../test/posts.ts";
 import { capcutExport } from "./capcut.ts";
 import { postReview } from "./lifecycle.ts";
 

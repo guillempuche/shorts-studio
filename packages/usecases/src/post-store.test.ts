@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { createPost, postDir, readPost, updatePost } from "./post-store.ts";
-import { seedPost, testContext } from "./testing.ts";
+import { testContext } from "./test/context.ts";
+import { seedPost } from "./test/posts.ts";
 
 const SLUG = "2026-11-04-store";
 

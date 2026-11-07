@@ -71,7 +71,9 @@
 
           installPhase = ''
             runHook preInstall
+            # Tests and their helpers (src/test/) never run here.
             find apps packages -name '*.test.ts' -delete
+            find apps packages -type d -path '*/src/test' -prune -exec rm -r {} +
             mkdir -p $out/lib/shorts-studio
             cp -R package.json node_modules apps packages $out/lib/shorts-studio/
             makeWrapper ${pkgs.nodejs_26}/bin/node $out/bin/shorts-studio \
