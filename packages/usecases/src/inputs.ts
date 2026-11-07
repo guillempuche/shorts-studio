@@ -1,6 +1,6 @@
 /**
- * Reading API keys, and beat lists and language codes typed as text. Shared, so each failure
- * reads the same in every command.
+ * Reading API keys, and beat lists and language codes typed as text, and checking the user is
+ * there. Shared, so each failure reads the same in every command.
  */
 
 import { fail, type ShortsError } from "@shorts-studio/domain/errors";
@@ -25,6 +25,21 @@ export const requireKey = (
 				: Effect.succeed(value),
 		),
 	);
+
+/**
+ * Fails unless a person is at the terminal. Approving a script or a draft is the user's
+ * decision, and an agent's shell has no terminal, however it writes the command.
+ */
+export const requireUser = (ctx: Context, command: string): Effect.Effect<void, ShortsError> =>
+	ctx.interactive
+		? Effect.void
+		: Effect.fail(
+				fail(
+					"needs-confirmation",
+					`${command} records the user's decision, and no one is at a terminal.`,
+					`The user runs it in their own terminal: ${command}`,
+				),
+			);
 
 /**
  * A language code to force on transcription, or undefined to detect it. Checked before the

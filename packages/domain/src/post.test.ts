@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type Post, stageOf } from "./post.ts";
+import { approvalOf, changesSinceApproval, type Post, stageOf } from "./post.ts";
 
 const post = (fields: Partial<Post> = {}): Post => ({
 	manifestVersion: 1,
@@ -39,5 +39,43 @@ describe("stageOf", () => {
 
 		// THEN the post waits for the user to approve the new script
 		expect(stageOf(edited)).toBe("script-ready");
+	});
+
+	it("should count a script approval only for the audio and prompts that were approved", () => {
+		// GIVEN a post with audio and two prompted beats, as the user approved it
+		const audio = {
+			file: "audio/audio.m4a",
+			hash: "a1",
+			origin: "mine",
+			kind: "speech",
+			durationSec: 4,
+			source: "voice.m4a",
+		} as const;
+		const door = { index: 0, start: 0, end: 2, text: "one", prompt: "a red door" };
+		const sky = { index: 1, start: 2, end: 4, text: "two", prompt: "a blue sky" };
+		const ready = post({
+			script: { file: "script.md", hash: "s" },
+			audio,
+			beats: { inputHash: "b", items: [door, sky] },
+		});
+		const approved = post({
+			...ready,
+			script: { file: "script.md", hash: "s", ...approvalOf(ready) },
+		});
+
+		// WHEN beat 1's prompt changes, or new audio is imported
+		const reprompted = post({
+			...approved,
+			beats: { inputHash: "b", items: [door, { ...sky, prompt: "fire" }] },
+		});
+		const newAudio = post({ ...approved, audio: { ...audio, hash: "a2" } });
+
+		// THEN only the post as approved counts as approved, and each change is named
+		expect(stageOf(approved)).toBe("assets");
+		expect(changesSinceApproval(approved)).toEqual([]);
+		expect(stageOf(reprompted)).toBe("script-ready");
+		expect(changesSinceApproval(reprompted)).toEqual(["the prompt of beat 1"]);
+		expect(stageOf(newAudio)).toBe("script-ready");
+		expect(changesSinceApproval(newAudio)).toEqual(["the audio"]);
 	});
 });

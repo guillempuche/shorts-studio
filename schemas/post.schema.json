@@ -44,6 +44,15 @@
         "approvedHash": {
           "type": "string"
         },
+        "approvedAudio": {
+          "type": "string"
+        },
+        "approvedPrompts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "approvedAt": {
           "type": "string"
         },

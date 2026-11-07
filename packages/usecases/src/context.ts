@@ -105,6 +105,11 @@ export interface Context {
 	/** An API key, or undefined when it isn't set. Redacted, so printing it shows `<redacted>`. */
 	readonly secret: (key: KeySpec) => Promise<Redacted.Redacted<string> | undefined>;
 	readonly now: () => Date;
+	/**
+	 * A person is at the terminal: stdin is one. An agent's shell and an MCP server have none,
+	 * so the user's own decisions check it.
+	 */
+	readonly interactive: boolean;
 	/** Progress and diagnostics: always stderr, since stdout carries results and MCP messages. */
 	readonly log: (line: string) => void;
 }

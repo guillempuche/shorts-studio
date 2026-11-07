@@ -13,10 +13,22 @@
     ],
     "ask": [
       "mcp__shorts-studio__image_generate",
-      "Bash(bin/shorts-studio image generate:*)",
-      "Bash(bin/shorts-studio script approve:*)"
+      "mcp__shorts-studio__audio_transcribe",
+      "mcp__shorts-studio__source_transcribe",
+      "Bash(*shorts-studio *image generate*)",
+      "Bash(*shorts-studio *audio transcribe*)",
+      "Bash(*shorts-studio *source transcribe*)"
     ],
-    "deny": ["Read(**/.env)", "Read(**/.env.*)", "Read(**/client_secret*.json)", "Read(**/*.p8)"]
+    "deny": [
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(**/client_secret*.json)",
+      "Read(**/*.p8)",
+      "Bash(*shorts-studio *script approve*)",
+      "Bash(*shorts-studio *post review*)",
+      "Bash(*main.ts *script approve*)",
+      "Bash(*main.ts *post review*)"
+    ]
   },
   "claudeMdExcludes": ["**/docs/vendors/**"],
   "enabledPlugins": {

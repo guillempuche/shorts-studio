@@ -1,5 +1,7 @@
 # What Codex may run from shorts-studio's CLI. Codex reads this file once you trust the
-# folder. A rule matches the first words of a command, word for word.
+# folder. A rule matches the first words of a command, word for word, so each rule also lists
+# the shared flags an agent may put before the command. The CLI itself refuses approvals
+# without a terminal; these rules stop the attempt earlier.
 
 # Approving a script or a draft is the user's decision (AGENTS.md, "The user decides").
 prefix_rule(
@@ -9,12 +11,33 @@ prefix_rule(
     match = ["bin/shorts-studio script approve --post x", "shorts-studio post review --post x --decision approve"],
     not_match = ["bin/shorts-studio post show --post x"],
 )
+prefix_rule(
+    pattern = [["bin/shorts-studio", "shorts-studio"], ["--json", "--yes", "--dry-run"], ["script", "post"], ["approve", "review"]],
+    decision = "forbidden",
+    justification = "Approving a script or reviewing a draft is the user's decision; ask them to run it.",
+    match = ["bin/shorts-studio --json script approve --post x", "shorts-studio --yes post review --post x"],
+    not_match = ["bin/shorts-studio --json post show --post x"],
+)
+prefix_rule(
+    pattern = [["bin/shorts-studio", "shorts-studio"], ["--json", "--yes", "--dry-run"], ["--json", "--yes", "--dry-run"], ["script", "post"], ["approve", "review"]],
+    decision = "forbidden",
+    justification = "Approving a script or reviewing a draft is the user's decision; ask them to run it.",
+    match = ["bin/shorts-studio --json --yes script approve --post x"],
+)
 
 # Steps that spend money ask first. Run them with --dry-run and show the estimate before asking.
 prefix_rule(
-    pattern = [["bin/shorts-studio", "shorts-studio"], "image", "generate"],
+    pattern = [["bin/shorts-studio", "shorts-studio"], ["image", "audio", "source"], ["generate", "transcribe"]],
     decision = "prompt",
-    justification = "Image generation spends money. Show the --dry-run estimate first.",
+    justification = "This step spends money. Show the --dry-run estimate first.",
+    match = ["bin/shorts-studio image generate --post x", "shorts-studio audio transcribe --post x"],
+    not_match = ["bin/shorts-studio source import --post x --file a.m4a"],
+)
+prefix_rule(
+    pattern = [["bin/shorts-studio", "shorts-studio"], ["--json", "--yes", "--dry-run"], ["image", "audio", "source"], ["generate", "transcribe"]],
+    decision = "prompt",
+    justification = "This step spends money. Show the --dry-run estimate first.",
+    match = ["bin/shorts-studio --yes image generate --post x", "shorts-studio --json source transcribe --collection x"],
 )
 
 # Downloads use the user's browser session and platform accounts.

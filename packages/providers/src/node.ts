@@ -147,6 +147,7 @@ export const makeContext = (env: NodeJS.ProcessEnv = process.env): ProviderConte
 		},
 		run: runProcess,
 		now: () => new Date(),
+		interactive: process.stdin.isTTY === true,
 		log: (line) => process.stderr.write(`${line}\n`),
 	};
 };

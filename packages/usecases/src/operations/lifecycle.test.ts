@@ -35,6 +35,20 @@ const finishedVideo = (ctx: Context): string => {
 };
 
 describe("post review", () => {
+	it("should record nothing when no one is at a terminal, since the decision is the user's", async () => {
+		// GIVEN a post with a draft, and a command run from an agent's shell, which has no terminal
+		const ctx = testContext({ interactive: false });
+		await seedPost(ctx, SLUG, withDraft());
+
+		// WHEN the draft is approved
+		const error = await runFailure(review(ctx, "approve"));
+
+		// THEN no review is recorded, and the user is asked to run it themselves
+		expect(error.code).toBe("needs-confirmation");
+		expect(error.fix).toContain("terminal");
+		expect((await postOf(ctx)).review).toBeUndefined();
+	});
+
 	it("should move an approved draft to approved, keeping notes and beats to animate", async () => {
 		// GIVEN a post with a draft
 		const ctx = testContext();

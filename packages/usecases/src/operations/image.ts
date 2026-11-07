@@ -13,7 +13,12 @@ import { join } from "node:path";
 import { IMAGE_SIZE } from "@shorts-studio/domain/direction";
 import { fail, failBecause, RequestEnded } from "@shorts-studio/domain/errors";
 import { imageAmount } from "@shorts-studio/domain/models";
-import type { Beat, Post } from "@shorts-studio/domain/post";
+import {
+	type Beat,
+	changesSinceApproval,
+	isScriptApproved,
+	type Post,
+} from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import type { Context } from "../context.ts";
 import { hashBytes, hashOf, writeFileAtomic } from "../files.ts";
@@ -54,9 +59,6 @@ const imageCost = (model: NamedModel) => costOf(model, imageAmount(model));
  */
 const imageInputHash = (ctx: Context, modelName: string, beat: Beat, seed: number) =>
 	hashOf(fullPrompt(ctx, beat.prompt ?? ""), modelName, seed, IMAGE_SIZE);
-
-const isApproved = (post: Post): boolean =>
-	post.script !== undefined && post.script.approvedHash === post.script.hash;
 
 const Planned = Schema.Struct({
 	beat: Schema.Int,
@@ -229,11 +231,14 @@ export const imageGenerate = defineOperation({
 			const maker = yield* ImageMaker;
 			const model = yield* chooseModel(ctx, maker, "image", input.model);
 			let post = yield* readPost(ctx, input.post);
-			if (!isApproved(post)) {
+			if (!isScriptApproved(post)) {
+				const changed = changesSinceApproval(post);
 				return yield* fail(
 					"needs-confirmation",
-					`${input.post}'s script isn't approved, so nothing will be spent on images yet.`,
-					`The user approves it after reading it: script approve --post ${input.post}`,
+					changed.length === 0
+						? `${input.post}'s script isn't approved, so nothing will be spent on images yet.`
+						: `${input.post} changed since the user approved it (${changed.join(", ")}), so nothing will be spent on images yet.`,
+					`The user approves it after reading it, in their terminal: script approve --post ${input.post}`,
 				);
 			}
 

@@ -97,6 +97,10 @@ export const Post = Schema.Struct({
 			hash: Schema.String,
 			/** The script hash that was approved; a later edit needs a new approval. */
 			approvedHash: Schema.optionalKey(Schema.String),
+			/** The audio hash when it was approved, if there was audio. New audio needs approving. */
+			approvedAudio: Schema.optionalKey(Schema.String),
+			/** Each beat's image prompt as approved, in order ("" for none). */
+			approvedPrompts: Schema.optionalKey(Schema.Array(Schema.String)),
 			approvedAt: Schema.optionalKey(Schema.String),
 			/** On-screen title for the first seconds of the draft (3–7 words). */
 			hook: Schema.optionalKey(Schema.String),
@@ -174,6 +178,51 @@ export const Stage = Schema.Literals([
 ]);
 export type Stage = typeof Stage.Type;
 
+/** Each beat's image prompt, in order, as an approval records them. */
+const promptsOf = (post: Post): ReadonlyArray<string> =>
+	(post.beats?.items ?? []).map((b) => b.prompt ?? "");
+
+/**
+ * What `script approve` records: the script, the audio and every beat's image prompt, so images
+ * are made only from what the user read. Kept as values, not one hash, so the domain needs no
+ * hashing and `post.json` shows what was approved.
+ */
+export const approvalOf = (post: Post) => ({
+	approvedHash: post.script?.hash ?? "",
+	...(post.audio === undefined ? {} : { approvedAudio: post.audio.hash }),
+	approvedPrompts: promptsOf(post),
+});
+
+/** What changed since the script was approved, in words for `next`; empty while it holds. */
+export const changesSinceApproval = (post: Post): ReadonlyArray<string> => {
+	const script = post.script;
+	if (script?.approvedHash === undefined) return [];
+	const changes: Array<string> = [];
+	if (script.approvedHash !== script.hash) changes.push("the script");
+	if (script.approvedAudio !== post.audio?.hash) changes.push("the audio");
+	const approved = script.approvedPrompts ?? [];
+	const current = promptsOf(post);
+	if (approved.length !== current.length) {
+		changes.push("the beats");
+	} else {
+		const changed = (post.beats?.items ?? []).flatMap((b, i) =>
+			current[i] === approved[i] ? [] : [b.index],
+		);
+		if (changed.length > 0) {
+			changes.push(
+				changed.length === 1
+					? `the prompt of beat ${changed[0]}`
+					: `the prompts of beats ${changed.join(", ")}`,
+			);
+		}
+	}
+	return changes;
+};
+
+/** The user approved the script, and nothing images are made from changed since. */
+export const isScriptApproved = (post: Post): boolean =>
+	post.script?.approvedHash !== undefined && changesSinceApproval(post).length === 0;
+
 /** The review counts only for the draft it was made on; a new render needs a new review. */
 export const currentReview = (post: Post) =>
 	post.review !== undefined && post.draft !== undefined && post.review.draftHash === post.draft.hash
@@ -194,8 +243,7 @@ export const stageOf = (post: Post): Stage => {
 	if (review?.decision === "fix") return "needs-fix";
 	if (review?.decision === "reject") return "rejected";
 	if (post.draft !== undefined) return "draft";
-	const approved =
-		post.script?.approvedHash !== undefined && post.script.approvedHash === post.script.hash;
+	const approved = isScriptApproved(post);
 	if (approved && (post.audio !== undefined || post.beats !== undefined)) return "assets";
 	if (approved) return "script-approved";
 	if (post.script !== undefined) return "script-ready";

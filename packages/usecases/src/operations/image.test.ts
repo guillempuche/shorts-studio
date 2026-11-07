@@ -14,7 +14,7 @@ import {
 	run,
 	runFailure,
 } from "../test/fakes.ts";
-import { readyForImages, seedPost } from "../test/posts.ts";
+import { approveAsIs, approvedAsIs, readyForImages, seedPost } from "../test/posts.ts";
 import { imageGenerate } from "./image.ts";
 import { imageImport } from "./image-import.ts";
 
@@ -49,31 +49,35 @@ describe("image generate", () => {
 		// GIVEN beat 0's image, saved with the input hash earlier versions wrote for its prompt,
 		// model, seed 7 and image size
 		const ctx = testContext();
-		await seedPost(ctx, SLUG, {
-			...readyForImages(),
-			beats: {
-				inputHash: "b",
-				items: [
-					{
-						index: 0,
-						start: 0,
-						end: 2,
-						text: "one",
-						prompt: "a red door",
-						seed: 7,
-						image: {
-							file: "images/beat-00.jpg",
-							hash: "i0",
-							inputHash: "ad97fbe67d3945f02a672cefa4b98e8664c70201bf82b3e2a8f5e5c854345822",
-							provider: "fake-images",
-							model: "fake-fast",
+		await seedPost(
+			ctx,
+			SLUG,
+			approvedAsIs({
+				...readyForImages(),
+				beats: {
+					inputHash: "b",
+					items: [
+						{
+							index: 0,
+							start: 0,
+							end: 2,
+							text: "one",
+							prompt: "a red door",
 							seed: 7,
-							source: "generated",
+							image: {
+								file: "images/beat-00.jpg",
+								hash: "i0",
+								inputHash: "ad97fbe67d3945f02a672cefa4b98e8664c70201bf82b3e2a8f5e5c854345822",
+								provider: "fake-images",
+								model: "fake-fast",
+								seed: 7,
+								source: "generated",
+							},
 						},
-					},
-				],
-			},
-		});
+					],
+				},
+			}),
+		);
 		const maker = fakeImageMaker();
 
 		// WHEN images are generated
@@ -271,6 +275,35 @@ describe("image generate", () => {
 		expect(maker.submits).toHaveLength(0);
 	});
 
+	it("should refuse to spend when a prompt changed after the script was approved", async () => {
+		// GIVEN a post ready for images, whose beat 1 got a new prompt after approval
+		const { ctx, maker, ports } = await ready();
+		await Effect.runPromise(
+			updatePost(ctx, SLUG, "test", (post) =>
+				Effect.succeed({
+					...post,
+					...(post.beats && {
+						beats: {
+							...post.beats,
+							items: post.beats.items.map((b) =>
+								b.index === 1 ? { ...b, prompt: "a burning house" } : b,
+							),
+						},
+					}),
+				}),
+			),
+		);
+
+		// WHEN images are generated
+		const error = await runFailure(generate(ctx), ports);
+
+		// THEN nothing reaches the provider, and the user is asked to approve the new prompt
+		expect(error.code).toBe("needs-confirmation");
+		expect(error.message).toContain("prompt of beat 1");
+		expect(error.fix).toContain("script approve");
+		expect(maker.submits).toHaveLength(0);
+	});
+
 	it("should never send a beat that has no prompt, even when rerolled", async () => {
 		// GIVEN beat 1 has an imported image and no prompt
 		const { ctx, maker, ports } = await ready();
@@ -302,6 +335,8 @@ describe("image generate", () => {
 				}),
 			),
 		);
+		// AND the user approved the post as it now stands
+		await approveAsIs(ctx, SLUG);
 
 		// WHEN every beat is rerolled
 		await run(generate(ctx, { reroll: true }), ports);

@@ -12,7 +12,7 @@ import { Decision, Platform, Stage, stageOf } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import { failWith } from "../attempt.ts";
 import { fileHash } from "../files.ts";
-import { parseBeatList } from "../inputs.ts";
+import { parseBeatList, requireUser } from "../inputs.ts";
 import { defineOperation, p } from "../operation.ts";
 import { MediaTools } from "../ports.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
@@ -58,6 +58,7 @@ export const postReview = defineOperation({
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
 	run: (input, ctx) =>
 		Effect.gen(function* () {
+			yield* requireUser(ctx, `post review --post ${input.post} --decision ${input.decision}`);
 			const beatNotes = yield* parseBeatNotes(input.beatNotes);
 			const animate = yield* parseBeatList(input.animate);
 			const post = yield* updatePost(ctx, input.post, "post review", (current) => {

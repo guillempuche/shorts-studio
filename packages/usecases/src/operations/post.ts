@@ -4,7 +4,13 @@
  */
 
 import { join } from "node:path";
-import { type Post, Stage, stageOf } from "@shorts-studio/domain/post";
+import {
+	changesSinceApproval,
+	isScriptApproved,
+	type Post,
+	Stage,
+	stageOf,
+} from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import type { Context } from "../context.ts";
 import { defineOperation, p } from "../operation.ts";
@@ -25,8 +31,10 @@ export const nextStep = (post: Post): string => {
 		return `beat set --post ${s} --from <beats.json>   (a story moment and an image prompt for every beat: see the story-direction skill)`;
 	}
 	if (post.script === undefined) return `script set --post ${s} --file script.md`;
-	if (post.script.approvedHash !== post.script.hash) {
-		return `script approve --post ${s}   (the user's morning check: CLI only)`;
+	if (!isScriptApproved(post)) {
+		const changed = changesSinceApproval(post);
+		const why = changed.length === 0 ? "" : `; changed since approval: ${changed.join(", ")}`;
+		return `script approve --post ${s}   (the user's morning check, in their terminal${why})`;
 	}
 	if (post.audio === undefined)
 		return `source import --post ${s} --file <audio> --origin ai --kind speech`;
@@ -167,7 +175,7 @@ export const postShow = defineOperation({
 				: "  transcript: none",
 			`  beats: ${beats.length}, prompts ${beats.filter((b) => b.prompt).length}, images ${beats.filter((b) => b.image).length}`,
 			post.script
-				? `  script: ${post.script.approvedHash === post.script.hash ? "approved" : "not approved"}`
+				? `  script: ${isScriptApproved(post) ? "approved" : "not approved"}`
 				: "  script: none",
 			post.draft ? `  draft: ${post.draft.file}` : "  draft: none",
 			`Next: ${o.next}`,

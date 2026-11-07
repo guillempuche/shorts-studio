@@ -2,15 +2,17 @@
  * The script: the story the user checks in the morning, before anything is spent on images.
  *
  * The agent writes it with `script set`. The user approves it with `script approve`, which is
- * CLI-only because it's the user's decision. Approval is tied to the script's hash, so an edited
- * script needs approving again.
+ * CLI-only and needs a terminal because it's the user's decision. Approval covers the script, the
+ * audio and every image prompt, so a change to any of them needs approving again.
  */
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fail } from "@shorts-studio/domain/errors";
+import { approvalOf, isScriptApproved } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import { hashOf, writeFileAtomic } from "../files.ts";
+import { requireUser } from "../inputs.ts";
 import { defineOperation, p } from "../operation.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
 import { nextStep } from "./post.ts";
@@ -44,28 +46,20 @@ export const scriptSet = defineOperation({
 			yield* readPost(ctx, input.post);
 			writeFileAtomic(join(postDir(ctx, input.post), SCRIPT_FILE), text);
 			const post = yield* updatePost(ctx, input.post, "script set", (post) =>
+				// The approval and hook stay; the approval holds only if the text is unchanged.
 				Effect.succeed({
 					...post,
 					script: {
+						...post.script,
 						file: SCRIPT_FILE,
 						hash,
-						...(input.hook !== undefined
-							? { hook: input.hook }
-							: post.script?.hook !== undefined
-								? { hook: post.script.hook }
-								: {}),
-						...(post.script?.approvedHash !== undefined
-							? { approvedHash: post.script.approvedHash }
-							: {}),
-						...(post.script?.approvedAt !== undefined
-							? { approvedAt: post.script.approvedAt }
-							: {}),
+						...(input.hook !== undefined ? { hook: input.hook } : {}),
 					},
 				}),
 			);
 			return {
 				file: join(postDir(ctx, input.post), SCRIPT_FILE),
-				approved: post.script?.approvedHash === hash,
+				approved: isScriptApproved(post),
 				next: nextStep(post),
 			};
 		}),
@@ -76,7 +70,7 @@ export const scriptSet = defineOperation({
 export const scriptApprove = defineOperation({
 	name: "script_approve",
 	description:
-		"Approve the post's current script: the user's morning check. Image generation needs it.",
+		"Approve the post's current script, audio and image prompts: the user's morning check, run in their own terminal. Image generation needs it.",
 	params: { post: p.string("Post slug") },
 	output: Schema.Struct({ approvedAt: Schema.String, next: Schema.String }),
 	surface: "cli-only",
@@ -84,6 +78,7 @@ export const scriptApprove = defineOperation({
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
 	run: (input, ctx) =>
 		Effect.gen(function* () {
+			yield* requireUser(ctx, `script approve --post ${input.post}`);
 			const approvedAt = ctx.now().toISOString();
 			const post = yield* updatePost(ctx, input.post, "script approve", (post) =>
 				post.script === undefined
@@ -96,7 +91,7 @@ export const scriptApprove = defineOperation({
 						)
 					: Effect.succeed({
 							...post,
-							script: { ...post.script, approvedHash: post.script.hash, approvedAt },
+							script: { ...post.script, ...approvalOf(post), approvedAt },
 						}),
 			);
 			return { approvedAt, next: nextStep(post) };

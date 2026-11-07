@@ -37,6 +37,7 @@ export const testContext = (
 			return value === undefined ? undefined : Redacted.make(value);
 		},
 		now: () => NOW,
+		interactive: true,
 		log: () => {},
 		...rest,
 	};
