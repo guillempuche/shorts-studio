@@ -4,39 +4,42 @@ import { describe, expect, it } from "vitest";
 import { testContext } from "../test/context.ts";
 import { run, runFailure } from "../test/fakes.ts";
 import { operations } from "./index.ts";
-import { makeSchemaShow, postSchemaFile } from "./schema.ts";
+import { FILE_SCHEMAS, fileSchema, makeSchemaShow } from "./schema.ts";
 
 const MODE = { dryRun: false, confirmed: true } as const;
 const schemaShow = makeSchemaShow(() => operations);
 
-/** The repository's schemas/post.schema.json, found from here however deep this file sits. */
-const committedSchemaFile = (from = import.meta.dirname): string => {
-	const file = join(from, "schemas", "post.schema.json");
+/** The repository's schemas/<name>.schema.json, found from here however deep this file sits. */
+const committedSchemaFile = (name: string, from = import.meta.dirname): string => {
+	const file = join(from, "schemas", `${name}.schema.json`);
 	if (existsSync(file)) return file;
 	const parent = dirname(from);
-	if (parent === from) throw new Error("schemas/post.schema.json not found above this test");
-	return committedSchemaFile(parent);
+	if (parent === from) throw new Error(`schemas/${name}.schema.json not found above this test`);
+	return committedSchemaFile(name, parent);
 };
 
-describe("postSchemaFile", () => {
-	it("should match the committed schemas/post.schema.json", () => {
-		// GIVEN the schema file that each post.json points at
-		const committed = JSON.parse(readFileSync(committedSchemaFile(), "utf8"));
+describe("fileSchema", () => {
+	it.each(Object.keys(FILE_SCHEMAS) as Array<keyof typeof FILE_SCHEMAS>)(
+		"should match the committed schemas/%s.schema.json",
+		(name) => {
+			// GIVEN the schema file that this kind of file points at
+			const committed = JSON.parse(readFileSync(committedSchemaFile(name), "utf8"));
 
-		// WHEN a fresh one is made from the Post Schema
-		// THEN they match (if not, run: pnpm schemas)
-		expect(committed).toEqual(postSchemaFile());
-	});
+			// WHEN a fresh one is made from its Effect Schema
+			// THEN they match (if not, run: pnpm schemas)
+			expect(committed).toEqual(fileSchema(name));
+		},
+	);
 });
 
 describe("schema show", () => {
-	it("should list post and every command's name when no name is given", async () => {
+	it("should list the three files and every command's name when no name is given", async () => {
 		// GIVEN the registry
 		// WHEN schema show runs without a name
 		const result = await run(schemaShow.run({ name: undefined }, testContext(), MODE));
 
-		// THEN it lists post, then each operation
-		expect(result.names).toEqual(["post", ...operations.map((op) => op.name)]);
+		// THEN it lists post, config and brand, then each operation
+		expect(result.names).toEqual(["post", "config", "brand", ...operations.map((op) => op.name)]);
 	});
 
 	it("should show a command's input and output schemas", async () => {

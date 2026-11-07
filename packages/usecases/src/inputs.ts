@@ -4,11 +4,14 @@
  */
 
 import { fail, type ShortsError } from "@shorts-studio/domain/errors";
-import { Effect } from "effect";
+import { Effect, type Redacted } from "effect";
 import type { Context, KeySpec } from "./context.ts";
 
 /** An API key, or a `missing-key` failure that says where to set it. */
-export const requireKey = (ctx: Context, key: KeySpec): Effect.Effect<string, ShortsError> =>
+export const requireKey = (
+	ctx: Context,
+	key: KeySpec,
+): Effect.Effect<Redacted.Redacted<string>, ShortsError> =>
 	Effect.promise(() => ctx.secret(key)).pipe(
 		Effect.flatMap((value) =>
 			value === undefined

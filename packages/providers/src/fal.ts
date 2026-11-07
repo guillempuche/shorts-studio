@@ -11,7 +11,7 @@ import { fail, failBecause, RequestEnded } from "@shorts-studio/domain/errors";
 import type { KeySpec } from "@shorts-studio/usecases/context";
 import { requireKey } from "@shorts-studio/usecases/inputs";
 import { ImageMaker, type ImageRequest } from "@shorts-studio/usecases/ports";
-import { Effect, Layer, Schedule, Schema } from "effect";
+import { Effect, Layer, Redacted, Schedule, Schema } from "effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ProviderEnv, providerFailure } from "./env.ts";
 
@@ -55,9 +55,10 @@ export const falLayer = Layer.effect(
 			HttpClient.retryTransient({ schedule: Schedule.exponential("200 millis"), times: 3 }),
 		);
 		const base = env.endpoints["fal"] ?? BASE_URL;
-		const signed = (key: string) => HttpClientRequest.setHeader("Authorization", `Key ${key}`);
+		const signed = (key: Redacted.Redacted<string>) =>
+			HttpClientRequest.setHeader("Authorization", `Key ${Redacted.value(key)}`);
 
-		const read = <S extends Schema.Top>(key: string, url: string, schema: S) =>
+		const read = <S extends Schema.Top>(key: Redacted.Redacted<string>, url: string, schema: S) =>
 			HttpClientRequest.get(url).pipe(
 				signed(key),
 				reader.execute,
@@ -65,7 +66,10 @@ export const falLayer = Layer.effect(
 			);
 
 		/** Checks every second until FAL is done with the request; returns how it ended. */
-		const finished = (key: string, request: ImageRequest): Effect.Effect<string, unknown> =>
+		const finished = (
+			key: Redacted.Redacted<string>,
+			request: ImageRequest,
+		): Effect.Effect<string, unknown> =>
 			read(key, request.statusUrl, Status).pipe(
 				Effect.flatMap(({ status }) =>
 					status === "IN_QUEUE" || status === "IN_PROGRESS"

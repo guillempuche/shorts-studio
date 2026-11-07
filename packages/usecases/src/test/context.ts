@@ -6,6 +6,7 @@
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Redacted } from "effect";
 import { onTestFinished } from "vitest";
 import type { Context } from "../context.ts";
 
@@ -31,7 +32,10 @@ export const testContext = (
 		config: {},
 		brand: {},
 		settingsIssues: [],
-		secret: async (key) => secrets[key.env],
+		secret: async (key) => {
+			const value = secrets[key.env];
+			return value === undefined ? undefined : Redacted.make(value);
+		},
 		now: () => NOW,
 		log: () => {},
 		...rest,

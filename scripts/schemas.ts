@@ -1,10 +1,13 @@
-// Writes schemas/post.schema.json from the Post Schema. A test fails when it's out of date.
+// Writes schemas/<name>.schema.json for post.json, config.json and brand.json from their Effect
+// Schemas. A test fails when one is out of date.
 //   node scripts/schemas.ts
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { postSchemaFile } from "../packages/usecases/src/operations/schema.ts";
+import { FILE_SCHEMAS, fileSchema } from "../packages/usecases/src/operations/schema.ts";
 
-const file = join(import.meta.dirname, "..", "schemas", "post.schema.json");
-writeFileSync(file, `${JSON.stringify(postSchemaFile(), null, 2)}\n`);
-console.log(`Wrote ${file}`);
+for (const name of Object.keys(FILE_SCHEMAS) as Array<keyof typeof FILE_SCHEMAS>) {
+	const file = join(import.meta.dirname, "..", "schemas", `${name}.schema.json`);
+	writeFileSync(file, `${JSON.stringify(fileSchema(name), null, 2)}\n`);
+	console.log(`Wrote ${file}`);
+}

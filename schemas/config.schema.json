@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Where the JSON Schema for this file is, so an editor can complete and check it."
+    },
+    "caps": {
+      "type": "object",
+      "properties": {
+        "dailyUsd": {
+          "type": "number",
+          "description": "Most spent on paid calls in one day, in US dollars. Default 5."
+        },
+        "postUsd": {
+          "type": "number",
+          "description": "Most spent on one post, in US dollars. Default 2."
+        }
+      },
+      "additionalProperties": true,
+      "description": "Spending limits, checked before every paid call."
+    },
+    "transcribe": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "description": "The provider that transcribes audio, e.g. \"fal\". Unset: the default."
+        },
+        "model": {
+          "type": "string",
+          "description": "One of the provider's models. Unset: the provider's default."
+        }
+      },
+      "additionalProperties": true,
+      "description": "Transcription with word timings."
+    },
+    "image": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "description": "The provider that makes the images, e.g. \"fal\". Unset: the default."
+        },
+        "model": {
+          "type": "string",
+          "description": "One of the provider's models. Unset: the provider's default."
+        }
+      },
+      "additionalProperties": true,
+      "description": "One image per beat."
+    },
+    "download": {
+      "type": "object",
+      "properties": {
+        "cookiesFromBrowser": {
+          "type": "string",
+          "description": "Browser whose login yt-dlp reuses, e.g. chrome. Instagram needs one. Unset: none."
+        }
+      },
+      "additionalProperties": true,
+      "description": "Downloading saved reels and TikToks."
+    },
+    "captions": {
+      "type": "object",
+      "properties": {
+        "font": {
+          "type": "string",
+          "description": "Font family for burned-in captions. Default \"Arial\"."
+        },
+        "fontsDir": {
+          "type": "string",
+          "description": "Folder with the font files, if it isn't installed."
+        },
+        "fontSize": {
+          "type": "number",
+          "description": "Caption size in pixels on the 1080×1920 frame."
+        },
+        "highlight": {
+          "type": "boolean",
+          "description": "Colour each word as it's spoken. Off by default (docs/research/captions.md)."
+        }
+      },
+      "additionalProperties": true,
+      "description": "How burned-in captions look."
+    }
+  },
+  "additionalProperties": true
+}

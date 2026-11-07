@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Where the JSON Schema for this file is, so an editor can complete and check it."
+    },
+    "imagePrompt": {
+      "type": "object",
+      "properties": {
+        "suffix": {
+          "type": "string",
+          "description": "Style added to every image prompt, e.g. \"soft film grain, muted colours\"."
+        }
+      },
+      "additionalProperties": true,
+      "description": "How every image prompt ends."
+    }
+  },
+  "additionalProperties": true
+}

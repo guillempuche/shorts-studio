@@ -4,7 +4,7 @@
  * (ports.ts), so a fork swaps a provider without touching a use case.
  */
 
-import { Schema } from "effect";
+import { type Redacted, Schema } from "effect";
 
 export interface Paths {
 	/** brand.json, config.json and the spend ledger. */
@@ -13,44 +13,72 @@ export interface Paths {
 	readonly posts: string;
 }
 
-/** Which provider does a job, and with which model. Unset: the provider's own default. */
-const ProviderChoice = Schema.Struct({
-	provider: Schema.optionalKey(Schema.String),
-	model: Schema.optionalKey(Schema.String),
-});
+/** An optional setting with the description editors show (it's in the published JSON Schema). */
+const setting = <S extends Schema.Top>(schema: S, description: string) =>
+	Schema.optionalKey(schema.annotate({ description }));
 
+/** Which provider does a job, and with which model. Unset: the provider's own default. */
+const ProviderChoice = (job: string) =>
+	Schema.Struct({
+		provider: setting(Schema.String, `The provider that ${job}, e.g. "fal". Unset: the default.`),
+		model: setting(Schema.String, "One of the provider's models. Unset: the provider's default."),
+	});
+
+const SchemaLink = setting(
+	Schema.String,
+	"Where the JSON Schema for this file is, so an editor can complete and check it.",
+);
+
+/** config.json: providers, limits and tools. Every value can be overridden by `SHORTS_<PATH>`. */
 export const Config = Schema.Struct({
-	caps: Schema.optionalKey(
+	$schema: SchemaLink,
+	caps: setting(
 		Schema.Struct({
-			dailyUsd: Schema.optionalKey(Schema.Finite),
-			postUsd: Schema.optionalKey(Schema.Finite),
+			dailyUsd: setting(
+				Schema.Finite,
+				"Most spent on paid calls in one day, in US dollars. Default 5.",
+			),
+			postUsd: setting(Schema.Finite, "Most spent on one post, in US dollars. Default 2."),
 		}),
+		"Spending limits, checked before every paid call.",
 	),
-	transcribe: Schema.optionalKey(ProviderChoice),
-	image: Schema.optionalKey(ProviderChoice),
-	download: Schema.optionalKey(
+	transcribe: setting(ProviderChoice("transcribes audio"), "Transcription with word timings."),
+	image: setting(ProviderChoice("makes the images"), "One image per beat."),
+	download: setting(
 		Schema.Struct({
-			/** Browser whose session yt-dlp reuses (Instagram needs a login), e.g. chrome. Opt-in. */
-			cookiesFromBrowser: Schema.optionalKey(Schema.String),
+			cookiesFromBrowser: setting(
+				Schema.String,
+				"Browser whose login yt-dlp reuses, e.g. chrome. Instagram needs one. Unset: none.",
+			),
 		}),
+		"Downloading saved reels and TikToks.",
 	),
-	captions: Schema.optionalKey(
+	captions: setting(
 		Schema.Struct({
-			font: Schema.optionalKey(Schema.String),
-			fontsDir: Schema.optionalKey(Schema.String),
-			fontSize: Schema.optionalKey(Schema.Finite),
-			/** Colour each word as it's spoken; off by default (docs/research/captions.md). */
-			highlight: Schema.optionalKey(Schema.Boolean),
+			font: setting(Schema.String, 'Font family for burned-in captions. Default "Arial".'),
+			fontsDir: setting(Schema.String, "Folder with the font files, if it isn't installed."),
+			fontSize: setting(Schema.Finite, "Caption size in pixels on the 1080×1920 frame."),
+			highlight: setting(
+				Schema.Boolean,
+				"Colour each word as it's spoken. Off by default (docs/research/captions.md).",
+			),
 		}),
+		"How burned-in captions look.",
 	),
 });
 export type Config = typeof Config.Type;
 
+/** brand.json: the creative identity. Every value can be overridden by `SHORTS_BRAND_<PATH>`. */
 export const Brand = Schema.Struct({
-	imagePrompt: Schema.optionalKey(
+	$schema: SchemaLink,
+	imagePrompt: setting(
 		Schema.Struct({
-			suffix: Schema.optionalKey(Schema.String),
+			suffix: setting(
+				Schema.String,
+				'Style added to every image prompt, e.g. "soft film grain, muted colours".',
+			),
 		}),
+		"How every image prompt ends.",
 	),
 });
 export type Brand = typeof Brand.Type;
@@ -69,8 +97,8 @@ export interface Context {
 	readonly brand: Brand;
 	/** Why config.json or brand.json couldn't be read. Defaults apply, and doctor reports it. */
 	readonly settingsIssues: ReadonlyArray<string>;
-	/** An API key, or undefined when it isn't set. Never logged. */
-	readonly secret: (key: KeySpec) => Promise<string | undefined>;
+	/** An API key, or undefined when it isn't set. Redacted, so printing it shows `<redacted>`. */
+	readonly secret: (key: KeySpec) => Promise<Redacted.Redacted<string> | undefined>;
 	readonly now: () => Date;
 	/** Progress and diagnostics: always stderr, since stdout carries results and MCP messages. */
 	readonly log: (line: string) => void;
