@@ -74,6 +74,10 @@ export const price = (model: Model, amount: number) => {
 	return { units, usd: units * model.usdPerUnit };
 };
 
+/** How much of a transcription model's unit `seconds` of audio is. */
+export const audioAmount = (model: Model, seconds: number): number =>
+	model.billedBy === "minute" ? seconds / 60 : seconds;
+
 /** How much of an image model's unit one image at `IMAGE_SIZE` is. */
 export const imageAmount = (model: Model): number =>
 	model.billedBy === "megapixel" ? (IMAGE_SIZE.width * IMAGE_SIZE.height) / 1_000_000 : 1;

@@ -168,6 +168,22 @@ const close = (
  * Settles reservation `id` at the amount it reserved, even if the model's price changed since:
  * the provider billed the price of the day the call was sent.
  */
-export const settle = (ctx: Context, id: string, requestId: string) =>
-	close(ctx, id, { type: "settle", requestId });
+export const settle = (ctx: Context, id: string, requestId?: string) =>
+	close(ctx, id, { type: "settle", ...(requestId === undefined ? {} : { requestId }) });
 export const release = (ctx: Context, id: string) => close(ctx, id, { type: "release", usd: 0 });
+
+/**
+ * Runs a paid call that answers in one go: reserves its cost first, settles it when the call
+ * succeeds, and frees it when the call fails.
+ */
+export const paidCall = <A, R>(
+	ctx: Context,
+	call: PaidCall,
+	effect: Effect.Effect<A, ShortsError, R>,
+): Effect.Effect<A, ShortsError, R> =>
+	Effect.flatMap(reserve(ctx, call), (id) =>
+		effect.pipe(
+			Effect.tapError(() => Effect.ignore(release(ctx, id))),
+			Effect.tap(() => settle(ctx, id)),
+		),
+	);

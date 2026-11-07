@@ -7,11 +7,14 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fail } from "@shorts-studio/domain/errors";
+import { audioAmount } from "@shorts-studio/domain/models";
 import { Transcript } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import type { Context } from "../context.ts";
 import { fileHash, hashOf, readJsonFile, writeJsonFile } from "../files.ts";
-import { chooseModel } from "../models.ts";
+import { requireKey } from "../inputs.ts";
+import { paidCall } from "../ledger.ts";
+import { chooseModel, costOf } from "../models.ts";
 import { defineOperation, p } from "../operation.ts";
 import { Transcriber } from "../ports.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
@@ -30,7 +33,7 @@ export const readTranscript = (ctx: Context, slug: string) =>
 export const audioTranscribe = defineOperation({
 	name: "audio_transcribe",
 	description:
-		"Transcribe the post's audio with a timestamp for each word, using the transcription provider in config.json (Together's Whisper large-v3 by default). Skips the work when the transcript is already up to date. Detects the language unless you pass one.",
+		"Transcribe the post's audio with a timestamp for each word, using the transcription provider in config.json (Together's Whisper large-v3 by default). Skips the work when the transcript is already up to date. Detects the language unless you pass one. Its cost, by the minute of audio, counts toward the spending caps.",
 	params: {
 		post: p.string("Post slug"),
 		language: p.optional(
@@ -85,11 +88,17 @@ export const audioTranscribe = defineOperation({
 					next: nextStep(post),
 				};
 			}
+			// Fail on a missing key before anything is reserved.
+			yield* Effect.forEach(transcriber.keys, (key) => requireKey(ctx, key), { discard: true });
 			ctx.log(`Transcribing ${post.audio.durationSec.toFixed(0)} s of audio…`);
-			const transcript = yield* transcriber.transcribe(
-				model,
-				join(dir, post.audio.file),
-				input.language,
+			const transcript = yield* paidCall(
+				ctx,
+				{
+					...costOf(model, audioAmount(model, post.audio.durationSec)),
+					post: input.post,
+					note: "transcript",
+				},
+				transcriber.transcribe(model, join(dir, post.audio.file), input.language),
 			);
 			yield* writeJsonFile(file, Transcript, transcript);
 			const hash = yield* fileHash(file);

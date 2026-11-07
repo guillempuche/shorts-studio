@@ -149,7 +149,12 @@ export const fakeMediaTools = (
 	return media;
 };
 
-/** A transcriber in memory that hears `transcript` in every file. */
+export type FakeTranscriber = Transcriber["Service"] & {
+	/** Every file sent, in order, with the endpoint of the model it was sent to. */
+	readonly calls: Array<{ readonly endpoint: string; readonly file: string }>;
+};
+
+/** A transcriber in memory that hears `transcript` in every file, or refuses every file. */
 export const fakeTranscriber = (
 	transcript: Transcript = {
 		language: "en",
@@ -159,27 +164,34 @@ export const fakeTranscriber = (
 			{ text: "there.", start: 0.5, end: 0.9 },
 		],
 	},
-	options: { readonly refuses?: boolean } = {},
-): Transcriber["Service"] => ({
-	provider: "fake-transcriber",
-	keys: [],
-	checks: Effect.succeed([]),
-	models: {
-		"fake-whisper": {
-			provider: "fake-transcriber",
-			job: "transcribe",
-			endpoint: "fake/whisper",
-			billedBy: "minute",
-			usdPerUnit: 0.006,
-			priceChecked: "2026-11-01",
+	options: { readonly refuses?: boolean; readonly keys?: ReadonlyArray<KeySpec> } = {},
+): FakeTranscriber => {
+	const transcriber: FakeTranscriber = {
+		provider: "fake-transcriber",
+		keys: options.keys ?? [],
+		checks: Effect.succeed([]),
+		models: {
+			"fake-whisper": {
+				provider: "fake-transcriber",
+				job: "transcribe",
+				endpoint: "fake/whisper",
+				billedBy: "minute",
+				usdPerUnit: 0.006,
+				priceChecked: "2026-11-01",
+			},
 		},
-	},
-	defaultModel: "fake-whisper",
-	transcribe: () =>
-		options.refuses === true
-			? Effect.fail(fail("provider", "The fake refused the audio.", "Run it again."))
-			: Effect.succeed(transcript),
-});
+		defaultModel: "fake-whisper",
+		calls: [],
+		transcribe: (model, file) =>
+			Effect.suspend(() => {
+				transcriber.calls.push({ endpoint: model.endpoint, file });
+				return options.refuses === true
+					? Effect.fail(fail("provider", "The fake refused the audio.", "Run it again."))
+					: Effect.succeed(transcript);
+			}),
+	};
+	return transcriber;
+};
 
 /** A downloader in memory that reports every download as done. */
 export const fakeDownloader = (): Downloader["Service"] => ({

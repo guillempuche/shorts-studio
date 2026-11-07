@@ -10,13 +10,16 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { fail, type ShortsError } from "@shorts-studio/domain/errors";
+import { audioAmount } from "@shorts-studio/domain/models";
 import { Kind, Origin, Transcript } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import type { Context } from "../context.ts";
 import { writeFileAtomic, writeJsonFile } from "../files.ts";
-import { chooseModel } from "../models.ts";
+import { requireKey } from "../inputs.ts";
+import { paidCall } from "../ledger.ts";
+import { chooseModel, costOf } from "../models.ts";
 import { defineOperation, p } from "../operation.ts";
-import { Downloader, Transcriber } from "../ports.ts";
+import { Downloader, MediaTools, Transcriber } from "../ports.ts";
 import { postDir, readPost } from "../post-store.ts";
 import { sourceImport } from "./source.ts";
 
@@ -143,7 +146,7 @@ export const sourceDownload = defineOperation({
 export const sourceTranscribe = defineOperation({
 	name: "source_transcribe",
 	description:
-		"Transcribe every downloaded audio file in a saved collection, with a time for each word (transcripts/<id>.json and .txt). Skips files already transcribed. Detects the language unless you pass one.",
+		"Transcribe every downloaded audio file in a saved collection, with a time for each word (transcripts/<id>.json and .txt). Skips files already transcribed. Detects the language unless you pass one. Its cost, by the minute of audio, counts toward the spending caps as saved/<collection>.",
 	params: {
 		collection: p.string("Saved collection under <posts>/saved/"),
 		language: p.optional(p.string("Two-letter language code to force (es, en, ca…)")),
@@ -169,6 +172,7 @@ export const sourceTranscribe = defineOperation({
 				);
 			}
 			const transcriber = yield* Transcriber;
+			const media = yield* MediaTools;
 			const model = yield* chooseModel(ctx, transcriber, "transcribe");
 			mkdirSync(join(dir, "transcripts"), { recursive: true });
 			const files = readdirSync(audioDir)
@@ -177,24 +181,45 @@ export const sourceTranscribe = defineOperation({
 			const transcriptOf = (file: string, ext: string) =>
 				join(dir, "transcripts", `${basename(file).replace(/\.[^.]+$/, "")}.${ext}`);
 			const todo = files.filter((file) => !existsSync(transcriptOf(file, "json")));
-			// Every file is tried. A failed one is listed, and the next run tries it again.
-			const [done, failed] = yield* Effect.partition(todo, (file) =>
-				Effect.sync(() => ctx.log(`Transcribing ${file}…`)).pipe(
-					Effect.andThen(transcriber.transcribe(model, join(audioDir, file), input.language)),
-					Effect.tap((transcript) =>
-						writeJsonFile(transcriptOf(file, "json"), SavedTranscript, {
-							...transcript,
-							model: model.name,
-						}),
+			if (todo.length > 0) {
+				// Fail on a missing key before anything is reserved.
+				yield* Effect.forEach(transcriber.keys, (key) => requireKey(ctx, key), { discard: true });
+			}
+
+			const transcribeOne = Effect.fn("transcribeOne")(function* (file: string) {
+				ctx.log(`Transcribing ${file}…`);
+				const audio = join(audioDir, file);
+				const seconds = yield* media.duration(audio);
+				const transcript = yield* paidCall(
+					ctx,
+					{ ...costOf(model, audioAmount(model, seconds)), post: `saved/${name}`, note: file },
+					transcriber.transcribe(model, audio, input.language),
+				);
+				yield* writeJsonFile(transcriptOf(file, "json"), SavedTranscript, {
+					...transcript,
+					model: model.name,
+				});
+				writeFileAtomic(transcriptOf(file, "txt"), `${transcript.text}\n`);
+			});
+			// Every file is tried. A failed one is listed, and the next run tries it again. Past a
+			// spending cap every next file would fail the same way, so the run stops there instead;
+			// the transcripts already written stay.
+			const outcomes = yield* Effect.forEach(todo, (file) =>
+				transcribeOne(file).pipe(
+					Effect.as(undefined),
+					Effect.catch((error) =>
+						error.code === "over-budget"
+							? Effect.fail(error)
+							: Effect.succeed(`${file}: ${error.message}`),
 					),
-					Effect.map((transcript) => {
-						writeFileAtomic(transcriptOf(file, "txt"), `${transcript.text}\n`);
-						return file;
-					}),
-					Effect.mapError((error) => `${file}: ${error.message}`),
 				),
 			);
-			return { transcribed: done.length, skipped: files.length - todo.length, failed };
+			const failed = outcomes.filter((outcome) => outcome !== undefined);
+			return {
+				transcribed: todo.length - failed.length,
+				skipped: files.length - todo.length,
+				failed,
+			};
 		}),
 	render: (o) =>
 		[
