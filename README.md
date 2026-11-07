@@ -62,7 +62,7 @@ shorts-studio draft render --post 2026-11-06-morning-routine
 - Download and transcribe saved reels and TikToks.
 - Spending caps, paid requests that can resume, and no spending until you approve the script.
 
-[openspec/specs](openspec/specs) describes exactly how it behaves. Planned work is in [openspec/changes](openspec/changes): AI voice and music, AI video for chosen beats, and carousels.
+[openspec/specs](openspec/specs) describes exactly how it behaves. Planned work is in [openspec/changes](openspec/changes): models and prices kept as data, trying models side by side and keeping what works, AI voice and music, AI video for chosen beats, and carousels.
 
 ## How it compares
 

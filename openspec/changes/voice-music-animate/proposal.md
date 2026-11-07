@@ -12,5 +12,6 @@ Posts without their own audio need a voice or music. An approved draft sometimes
 - `audio music` makes music with the ElevenLabs Music API. Suno and Fish have no public API for music, so their tracks come in through `source import --kind music`.
 - Beats for music follow the start of each note or hit, or the tempo (BPM), found with aubio. If that isn't possible, beats fall back to equal lengths.
 - `clip animate --beat` turns a beat's image into video with FAL, only for beats marked in review. It reserves its cost in the ledger, like images do.
+- Voice, music and clips reserve their cost like images do, priced by their units from the models list: voice by character, music by minute, clips by second. This builds on the models-and-prices change.
 
 Not part of this change: lip-sync.

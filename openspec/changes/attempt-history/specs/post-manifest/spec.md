@@ -18,3 +18,28 @@ A generated file that is replaced SHALL move to the post's `attempts/` folder. `
 - **WHEN** a post with three attempts for beat 3 is archived
 - **THEN** only the kept image remains
 - **AND** `history.jsonl` still lists all three
+
+### Requirement: Models SHALL be tried side by side without replacing
+
+With `--try`, `image generate` SHALL make one attempt per model listed in `--model`, from the same prompt, and SHALL leave the beat's current image as it is. Each attempt SHALL reserve its own cost and get its own line in `history.jsonl`.
+
+#### Scenario: Two models for one beat
+
+- **WHEN** `image generate --beat 3 --model flux-schnell,flux-dev --try` runs
+- **THEN** beat 3 gets two new attempts, one per model, from the same prompt
+- **AND** its current image is unchanged
+
+### Requirement: Verdicts SHALL be the user's
+
+`attempt pick` and `attempt reject` SHALL be CLI-only. Each SHALL add a verdict line to `history.jsonl` that names the attempt; `attempt pick` SHALL also make that attempt the current one. `attempt report --by model` SHALL count attempts, kept attempts and cost per kept attempt, for each job and model.
+
+#### Scenario: Picking the flux-dev attempt
+
+- **WHEN** the user picks beat 3's flux-dev attempt
+- **THEN** it becomes beat 3's image
+- **AND** `attempt report --by model` counts one kept attempt for flux-dev
+
+#### Scenario: An agent's tools
+
+- **WHEN** an MCP client lists the tools
+- **THEN** no tool records a verdict
