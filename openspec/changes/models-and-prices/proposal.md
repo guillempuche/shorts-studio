@@ -6,12 +6,13 @@ Models change often, and the same job is worth trying with several. Today each p
 
 ## What Changes
 
-- **Models are data.** Each provider ships the models it knows. `config.json` can add more under `models`, or change a price. A model names its provider, its endpoint, what it's billed by (megapixel, second, character or minute), its price per unit and the date that price was checked. A new model from a family the provider already handles needs no code.
+- **Models are data.** Each provider ships the models it knows. `config.json` can add more under `models`, or change a price. A model names its provider, its endpoint, what it's billed by (megapixel, image, second, character or minute), its price per unit, the date that price was checked, and any fields sent with every request. A new model from a family the provider already handles needs no code. `transcribe.model` and `image.model` name one of these models.
 - `models list` shows each job's models with their prices and when each price was checked. `doctor` warns when a model in use has a price checked more than 90 days ago.
-- **Every paid call is priced by its units**, rounded the way the provider bills: images by megapixel, clips by second, voice by character, music and transcription by minute. Each ledger line records the units and the price per unit it used, so old totals stay true after a price changes.
-- **Transcription is reserved** like any other paid call.
-- **A reservation is freed only when the provider said no.** When the outcome is unknown (the connection dropped, or the command stopped mid-call), the reservation stays counted.
+- **Every paid call is priced by its units**, rounded the way the provider bills: images by megapixel or by image, clips by second, voice by character, music and transcription by minute. Each ledger line records the units and the price per unit it used, so old totals stay true after a price changes.
+- **Transcription is reserved** like any other paid call, and counts toward the caps. It doesn't need `--yes`: it costs under a cent per post and runs before the script exists. Transcribing a saved collection counts toward `saved/<name>` instead of a post.
+- **A reservation is freed only when the provider said no**: it refused the request (an HTTP 4xx) or reported the job failed. When the outcome is unknown (a 5xx, which a gateway can send after the job was queued, a dropped connection, or a command stopped mid-call), the reservation stays counted.
 - A provider billed from a plan's credits, like ElevenLabs, is priced at what one unit costs on your plan, set in `config.json`.
-- **A monthly cap**, `caps.monthlyUsd` ($100 by default), next to the daily and per-post caps. Days and months follow your local time, not UTC.
+- **A monthly cap**, `caps.monthlyUsd` ($100 by default), next to the daily and per-post caps. Days and months follow the machine's time zone, not UTC.
+- Old ledger lines are never rewritten. Lines without units still count by their amount.
 
 Not part of this change: reading the real charge back from providers (none of the current ones report it per call), splitting the ledger by month (one file stays fast for about a year: a reservation takes 170 ms with 36,000 in the ledger), and currencies other than US dollars.

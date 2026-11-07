@@ -2,7 +2,19 @@
 
 ### Requirement: Every paid call SHALL be priced by its units
 
-A paid call's estimate SHALL be its units (megapixels, seconds, characters or minutes, rounded the way the provider bills) times the model's price per unit. Its ledger line SHALL record the units and the price per unit used. Transcription SHALL be reserved like any other paid call.
+A paid call's estimate SHALL be its units (megapixels, images, seconds, characters or minutes, rounded the way the provider bills) times the model's price per unit. Its ledger line SHALL record the units and the price per unit used. Transcription SHALL be reserved like any other paid call, but SHALL NOT need `--yes`.
+
+#### Scenario: Transcribing a post
+
+- **WHEN** `audio transcribe` runs on 2 minutes of audio, without `--yes`
+- **THEN** the model's price for 2 minutes is reserved
+- **AND** the transcript is written
+
+#### Scenario: Transcription over the cap
+
+- **WHEN** transcribing would pass the daily cap
+- **THEN** it fails with `over-budget`
+- **AND** nothing is sent to the provider
 
 #### Scenario: An image billed by whole megapixels
 
@@ -17,11 +29,16 @@ A paid call's estimate SHALL be its units (megapixels, seconds, characters or mi
 
 ### Requirement: A reservation SHALL be freed only when nothing was billed
 
-A reservation SHALL be freed only when the provider refused the request or reported it failed. When the outcome is unknown, because the connection dropped or the command stopped mid-call, the reservation SHALL stay counted at its estimate.
+A reservation SHALL be freed only when the provider refused the request (an HTTP 4xx) or reported the job failed. When the outcome is unknown, because the provider answered with a 5xx, the connection dropped or the command stopped mid-call, the reservation SHALL stay counted at its estimate.
 
 #### Scenario: The connection drops while sending
 
 - **WHEN** the connection drops before the provider answers a request
+- **THEN** the reservation still counts toward the caps
+
+#### Scenario: A server error while sending
+
+- **WHEN** the provider answers a request with a 502
 - **THEN** the reservation still counts toward the caps
 
 #### Scenario: The provider refuses
@@ -31,7 +48,7 @@ A reservation SHALL be freed only when the provider refused the request or repor
 
 ### Requirement: Spending SHALL have a monthly cap
 
-A paid call SHALL fail with `over-budget` when it would pass `caps.monthlyUsd`, as it does for the daily and per-post caps. `budget show` SHALL report this month's total against it. Days and months SHALL follow the local time zone.
+A paid call SHALL fail with `over-budget` when it would pass `caps.monthlyUsd`, as it does for the daily and per-post caps. `budget show` SHALL report this month's total against it. Days and months SHALL follow the machine's time zone.
 
 #### Scenario: Near the end of the month
 
