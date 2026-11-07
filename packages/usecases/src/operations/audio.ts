@@ -12,7 +12,7 @@ import { Transcript } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import type { Context } from "../context.ts";
 import { fileHash, hashOf, readJsonFile, writeJsonFile } from "../files.ts";
-import { requireKey } from "../inputs.ts";
+import { checkLanguage, requireKey } from "../inputs.ts";
 import { paidCall } from "../ledger.ts";
 import { chooseModel, costOf } from "../models.ts";
 import { defineOperation, p } from "../operation.ts";
@@ -53,13 +53,7 @@ export const audioTranscribe = defineOperation({
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: true },
 	run: (input, ctx) =>
 		Effect.gen(function* () {
-			if (input.language !== undefined && !/^[a-z]{2}$/.test(input.language)) {
-				return yield* fail(
-					"usage",
-					`"${input.language}" isn't a two-letter language code.`,
-					"Use es, en, ca, fr…, or leave it out to detect the language.",
-				);
-			}
+			yield* checkLanguage(input.language);
 
 			const post = yield* readPost(ctx, input.post);
 			if (post.audio === undefined) {

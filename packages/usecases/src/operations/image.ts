@@ -227,6 +227,12 @@ export const imageGenerate = defineOperation({
 				);
 			}
 
+			if (!mode.dryRun) {
+				// Fail on a missing key before anything changes: --reroll saves new seeds, and
+				// sending reserves money.
+				yield* Effect.forEach(maker.keys, (key) => requireKey(ctx, key), { discard: true });
+			}
+
 			if (input.reroll && !mode.dryRun) {
 				const targets = new Set(only ?? beats.map((b) => b.index));
 				const reseed = (b: Beat, slug: string): Beat =>
@@ -283,8 +289,6 @@ export const imageGenerate = defineOperation({
 			const total = planned.reduce((sum, item) => sum + item.estimateUsd, 0);
 
 			if (!mode.dryRun) {
-				// Fail on a missing key before anything is reserved.
-				yield* Effect.forEach(maker.keys, (key) => requireKey(ctx, key), { discard: true });
 				const toSend = chosen.filter(
 					(b) => planned.find((item) => item.beat === b.index)?.action !== "skip",
 				);

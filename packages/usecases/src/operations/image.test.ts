@@ -289,6 +289,21 @@ describe("image generate", () => {
 		expect(maker.submits).toHaveLength(0);
 	});
 
+	it("should keep the seeds when --reroll stops on a missing key", async () => {
+		// GIVEN a post ready for images, and a provider that needs a key that isn't set
+		const maker = fakeImageMaker({ keys: [{ env: "FAKE_IMAGES_KEY", keychain: "fake-images" }] });
+		const { ctx, ports } = await ready(testContext(), maker);
+		const before = (await postOf(ctx)).beats?.items.map((b) => b.seed);
+
+		// WHEN beat 0 is rerolled
+		const error = await runFailure(generate(ctx, { beat: "0", reroll: true }), ports);
+
+		// THEN it says which key to set
+		expect(error.code).toBe("missing-key");
+		// AND the seeds are as they were, so running it again with the key rerolls only once
+		expect((await postOf(ctx)).beats?.items.map((b) => b.seed)).toEqual(before);
+	});
+
 	it("should point at config.json when the image provider offers no models", async () => {
 		// GIVEN an image provider that offers no models, as one named wrongly in config.json does
 		const maker = { ...fakeImageMaker(), provider: "nope", models: {}, defaultModel: "" };

@@ -128,6 +128,22 @@ describe("audio transcribe", () => {
 		expect(spent(entries, { post: SLUG })).toBe(0);
 	});
 
+	it("should refuse a language that isn't a two-letter code, before sending anything", async () => {
+		// GIVEN a post with audio
+		const { ctx, transcriber, ports } = await ready();
+
+		// WHEN it is transcribed with the language "spanish"
+		const error = await runFailure(
+			audioTranscribe.run({ post: SLUG, language: "spanish", force: false }, ctx, MODE),
+			ports,
+		);
+
+		// THEN it is a usage error, and nothing was sent or reserved
+		expect(error.code).toBe("usage");
+		expect(transcriber.calls).toHaveLength(0);
+		expect(await ledgerOf(ctx)).toHaveLength(0);
+	});
+
 	it("should say which key to set before reserving anything", async () => {
 		// GIVEN a provider that needs a key that isn't set
 		const transcriber = fakeTranscriber(undefined, {

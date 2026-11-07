@@ -54,8 +54,9 @@ export const transcriberContract = (name: string, harness: TranscriberHarness): 
 				transcriber.transcribe(defaultModelOf(transcriber), audioFile(), undefined),
 			);
 
-			// THEN it names the language and hears at least one word
+			// THEN it names the language and gives the text and at least one word
 			expect(transcript.language).not.toBe("");
+			expect(transcript.text).not.toBe("");
 			expect(transcript.words.length).toBeGreaterThan(0);
 			// AND every word has text and a start no later than its end, in order
 			transcript.words.forEach((word, index) => {

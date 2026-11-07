@@ -10,6 +10,7 @@
 import { execFileSync } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { IMAGE_SIZE } from "@shorts-studio/domain/direction";
 
 export interface FakeFal {
 	readonly url: string;
@@ -124,7 +125,7 @@ export const colourCard = (_prompt: string, index: number): Uint8Array => {
 		"-f",
 		"lavfi",
 		"-i",
-		`color=c=black:s=1248x2224,geq=r='128+100*sin(${hue}*PI/180+X/300)':g='128+100*sin(${hue}*PI/180+Y/300)':b='128+100*cos(${hue}*PI/180)'`,
+		`color=c=black:s=${IMAGE_SIZE.width}x${IMAGE_SIZE.height},geq=r='128+100*sin(${hue}*PI/180+X/300)':g='128+100*sin(${hue}*PI/180+Y/300)':b='128+100*cos(${hue}*PI/180)'`,
 		"-frames:v",
 		"1",
 		"-f",

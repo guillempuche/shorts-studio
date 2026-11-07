@@ -115,7 +115,7 @@ export const configShow = defineOperation({
 		return [
 			`data:  ${o.paths.data}`,
 			`posts: ${o.paths.posts}`,
-			`caps:  $${o.caps.dailyUsd}/day, $${o.caps.postUsd}/post   `,
+			`caps:  $${o.caps.dailyUsd}/day, $${o.caps.postUsd}/post`,
 			`transcription: ${o.transcriber}   images: ${o.imageProvider} ${o.imageModel}`,
 			"",
 			...renderChecks(o.checks),

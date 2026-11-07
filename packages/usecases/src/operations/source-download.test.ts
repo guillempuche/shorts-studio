@@ -5,10 +5,11 @@ import { describe, expect, it } from "vitest";
 import type { Context } from "../context.ts";
 import { readLedger } from "../ledger.ts";
 import { testContext } from "../test/context.ts";
-import { fakeMediaTools, fakePorts, run, runFailure } from "../test/fakes.ts";
+import { fakeMediaTools, fakePorts, fakeTranscriber, run, runFailure } from "../test/fakes.ts";
 import { savedPath, sourceTranscribe } from "./source-download.ts";
 
-const MODE = { dryRun: false, confirmed: true } as const;
+// Transcription needs no --yes, so these runs never confirm.
+const MODE = { dryRun: false, confirmed: false } as const;
 
 /** A saved collection with these downloaded audio files. Returns its folder. */
 const seedCollection = (ctx: Context, files: ReadonlyArray<string>): string => {
@@ -37,6 +38,26 @@ describe("source transcribe", () => {
 		const saved = JSON.parse(readFileSync(join(dir, "transcripts", "abc.json"), "utf8"));
 		expect(saved.model).toBe("fake-whisper");
 		expect(saved.words).toHaveLength(2);
+	});
+
+	it("should refuse a language that isn't a two-letter code, before sending anything", async () => {
+		// GIVEN a collection with one file
+		const ctx = testContext();
+		seedCollection(ctx, ["abc.mp3"]);
+		const transcriber = fakeTranscriber();
+
+		// WHEN it is transcribed with the language "spanish"
+		const error = await runFailure(
+			sourceTranscribe.run({ collection: "sm-awareness", language: "spanish" }, ctx, MODE),
+			fakePorts({ transcriber }),
+		);
+
+		// THEN it is a usage error that says what to use
+		expect(error.code).toBe("usage");
+		expect(error.fix).toContain("es, en, ca");
+		// AND nothing was sent or reserved
+		expect(transcriber.calls).toHaveLength(0);
+		expect(await Effect.runPromise(readLedger(ctx))).toHaveLength(0);
 	});
 
 	it("should count each file's minutes toward the collection", async () => {

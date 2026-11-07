@@ -15,7 +15,7 @@ import { Kind, Origin, Transcript } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import type { Context } from "../context.ts";
 import { writeFileAtomic, writeJsonFile } from "../files.ts";
-import { requireKey } from "../inputs.ts";
+import { checkLanguage, requireKey } from "../inputs.ts";
 import { paidCall } from "../ledger.ts";
 import { chooseModel, costOf } from "../models.ts";
 import { defineOperation, p } from "../operation.ts";
@@ -164,6 +164,7 @@ export const sourceTranscribe = defineOperation({
 	run: (input, ctx) =>
 		Effect.gen(function* () {
 			const name = yield* checkCollection(input.collection);
+			yield* checkLanguage(input.language);
 			const dir = savedPath(ctx, name);
 			const audioDir = join(dir, "audio");
 			if (!existsSync(audioDir)) {

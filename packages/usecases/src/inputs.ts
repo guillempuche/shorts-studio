@@ -1,6 +1,6 @@
 /**
- * Reading API keys, and beat lists typed as text. Shared, so each failure reads the same in
- * every command.
+ * Reading API keys, and beat lists and language codes typed as text. Shared, so each failure
+ * reads the same in every command.
  */
 
 import { fail, type ShortsError } from "@shorts-studio/domain/errors";
@@ -25,6 +25,23 @@ export const requireKey = (
 				: Effect.succeed(value),
 		),
 	);
+
+/**
+ * A language code to force on transcription, or undefined to detect it. Checked before the
+ * audio goes to a paid provider, which would bill a request it can't use.
+ */
+export const checkLanguage = (
+	language: string | undefined,
+): Effect.Effect<string | undefined, ShortsError> =>
+	language === undefined || /^[a-z]{2}$/.test(language)
+		? Effect.succeed(language)
+		: Effect.fail(
+				fail(
+					"usage",
+					`"${language}" isn't a two-letter language code.`,
+					"Use es, en, ca, fr…, or leave it out to detect the language.",
+				),
+			);
 
 /** `"0, 3,4"` → `[0, 3, 4]`; undefined → empty. */
 export const parseBeatList = (
