@@ -27,6 +27,11 @@ A paid call's estimate SHALL be its units (megapixels, images, seconds, characte
 - **THEN** earlier ledger lines keep the price they were made with
 - **AND** `budget show` reports the same totals as before for those lines
 
+#### Scenario: A request resumed after a price change
+
+- **WHEN** a request sent at one price is resumed after the model's price changed
+- **THEN** it settles at the price it was sent at
+
 ### Requirement: A reservation SHALL be freed only when nothing was billed
 
 A reservation SHALL be freed only when the provider refused the request (an HTTP 4xx) or reported the job failed. When the outcome is unknown, because the provider answered with a 5xx, the connection dropped or the command stopped mid-call, the reservation SHALL stay counted at its estimate.

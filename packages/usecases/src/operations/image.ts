@@ -12,14 +12,14 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { IMAGE_SIZE } from "@shorts-studio/domain/direction";
 import { fail, failBecause, RequestEnded } from "@shorts-studio/domain/errors";
-import { imageAmount, price } from "@shorts-studio/domain/models";
+import { imageAmount } from "@shorts-studio/domain/models";
 import type { Beat, Post } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import type { Context } from "../context.ts";
 import { hashBytes, hashOf, writeFileAtomic } from "../files.ts";
 import { parseBeatList, requireKey } from "../inputs.ts";
 import { release, reserve, settle } from "../ledger.ts";
-import { chooseModel, type NamedModel } from "../models.ts";
+import { chooseModel, costOf, type NamedModel } from "../models.ts";
 import { defineOperation, p, type RunMode } from "../operation.ts";
 import { ImageMaker, type ImageRequest } from "../ports.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
@@ -38,8 +38,8 @@ const fullPrompt = (ctx: Context, prompt: string): string => {
 	return suffix ? `${prompt}, ${suffix}` : prompt;
 };
 
-/** What one image costs with `model`, at `IMAGE_SIZE`. */
-const imageUsd = (model: NamedModel): number => price(model, imageAmount(model)).usd;
+/** What one image at `IMAGE_SIZE` costs with `model`. */
+const imageCost = (model: NamedModel) => costOf(model, imageAmount(model));
 
 /** Beats without a prompt are always skipped, so the empty fallback is never sent. */
 const imageInputHash = (ctx: Context, model: string, beat: Beat, seed: number) =>
@@ -71,10 +71,8 @@ const generateOne = Effect.fn("generateOne")(function* (
 		request = beat.pending;
 	} else {
 		const ledgerId = yield* reserve(ctx, {
-			provider: maker.provider,
-			model: model.name,
+			...imageCost(model),
 			post: slug,
-			usd: imageUsd(model),
 			note: `beat ${beat.index}`,
 		});
 		const submitted = yield* maker
@@ -148,7 +146,7 @@ const generateOne = Effect.fn("generateOne")(function* (
 			})),
 		),
 	);
-	yield* settle(ctx, request.ledgerId, imageUsd(model), request.requestId);
+	yield* settle(ctx, request.ledgerId, request.requestId);
 	ctx.log(`beat ${beat.index}: saved ${file}`);
 });
 
@@ -266,7 +264,7 @@ export const imageGenerate = defineOperation({
 				return {
 					beat: b.index,
 					action,
-					estimateUsd: action === "generate" ? imageUsd(model) : 0,
+					estimateUsd: action === "generate" ? imageCost(model).usd : 0,
 				} as const;
 			});
 			const total = planned.reduce((sum, item) => sum + item.estimateUsd, 0);

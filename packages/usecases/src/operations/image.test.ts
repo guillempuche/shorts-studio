@@ -141,6 +141,29 @@ describe("image generate", () => {
 		expect((await ledgerOf(ctx)).filter((e) => e.type === "reserve")).toHaveLength(1);
 	});
 
+	it("should settle a resumed request at the price it was reserved at, after a price change", async () => {
+		// GIVEN beat 0's request sent at fake-fast's $0.01, and cut short while it waited
+		const { ctx, maker, ports } = await ready();
+		maker.answer = "never";
+		const fiber = Effect.runFork(generate(ctx, { beat: "0" }).pipe(Effect.provide(ports)));
+		await vi.waitUntil(() => maker.waits === 1);
+		await Effect.runPromise(Fiber.interrupt(fiber));
+		// AND fake-fast's price raised to $0.50 in config.json since
+		const later = {
+			...ctx,
+			config: { models: { "fake-fast": { usdPerUnit: 0.5, priceChecked: "2026-11-07" } } },
+		};
+
+		// WHEN the run is resumed and the image arrives
+		maker.answer = "image";
+		await run(generate(later, { beat: "0" }), ports);
+
+		// THEN the call settles at the $0.01 it reserved
+		const entries = await ledgerOf(ctx);
+		expect(entries.find((e) => e.type === "settle")?.usd).toBeCloseTo(0.01);
+		expect(spent(entries, { post: SLUG })).toBeCloseTo(0.01);
+	});
+
 	it("should regenerate only the rerolled beat, with a new seed", async () => {
 		// GIVEN a post whose images exist
 		const { ctx, maker, ports } = await ready();
@@ -318,7 +341,12 @@ describe("image generate", () => {
 		// AND 4 megapixels at its price were reserved, under its name
 		expect(result.estimateUsd).toBeCloseTo(0.16);
 		const [reserved] = await ledgerOf(ctx);
-		expect(reserved?.model).toBe("fake-pro");
+		expect(reserved).toMatchObject({
+			model: "fake-pro",
+			unit: "megapixel",
+			units: 4,
+			usdPerUnit: 0.04,
+		});
 		expect(reserved?.usd).toBeCloseTo(0.16);
 	});
 

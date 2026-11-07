@@ -6,9 +6,10 @@
 
 import { join } from "node:path";
 import { fail, type ShortsError } from "@shorts-studio/domain/errors";
-import { type Job, Model } from "@shorts-studio/domain/models";
+import { type Job, Model, price } from "@shorts-studio/domain/models";
 import { Effect, Schema } from "effect";
 import type { Context } from "./context.ts";
+import type { PaidCall } from "./ledger.ts";
 import type { OwnModels, ProviderInfo } from "./ports.ts";
 
 /** A model and the name it was chosen by, which is what post.json and the ledger record. */
@@ -76,3 +77,16 @@ export const chooseModel = Effect.fn("chooseModel")(function* (
 	}
 	return { ...model, name } satisfies NamedModel;
 });
+
+/** What a call of `amount` (in the model's unit) costs, as its ledger line records it. */
+export const costOf = (model: NamedModel, amount: number): Omit<PaidCall, "post" | "note"> => {
+	const { units, usd } = price(model, amount);
+	return {
+		provider: model.provider,
+		model: model.name,
+		unit: model.billedBy,
+		units,
+		usdPerUnit: model.usdPerUnit,
+		usd,
+	};
+};

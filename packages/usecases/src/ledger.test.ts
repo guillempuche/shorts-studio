@@ -1,12 +1,21 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Effect, Exit } from "effect";
 import { describe, expect, it } from "vitest";
 import { acquireLock } from "./files.ts";
-import { readLedger, release, reserve, settle, spent } from "./ledger.ts";
+import { type PaidCall, readLedger, release, reserve, settle, spent } from "./ledger.ts";
 import { testContext } from "./test/context.ts";
 
-const call = (post: string, usd: number) => ({ provider: "fal", model: "m", post, usd });
+/** One call of `usd`, billed as one image. */
+const call = (post: string, usd: number): PaidCall => ({
+	provider: "fal",
+	model: "m",
+	post,
+	unit: "image",
+	units: 1,
+	usdPerUnit: usd,
+	usd,
+});
 
 describe("reserve", () => {
 	it("should refuse a call that would pass the daily cap", async () => {
@@ -71,23 +80,55 @@ describe("reserve", () => {
 });
 
 describe("settle and release", () => {
-	it("should free a released reservation and count a settled one at its final amount", async () => {
-		// GIVEN two $0.50 reservations
+	it("should free a released reservation and count a settled one at what it reserved", async () => {
+		// GIVEN a $0.50 reservation and one of 4 megapixels at $0.075 each ($0.30)
 		const ctx = testContext();
 		const a = await Effect.runPromise(reserve(ctx, call("p", 0.5)));
-		const b = await Effect.runPromise(reserve(ctx, call("p", 0.5)));
+		const b = await Effect.runPromise(
+			reserve(ctx, {
+				...call("p", 0.3),
+				unit: "megapixel",
+				units: 4,
+				usdPerUnit: 0.075,
+			}),
+		);
 
-		// WHEN one is released and the other settled at $0.30
+		// WHEN the first is released and the second settled
 		await Effect.runPromise(release(ctx, a));
-		await Effect.runPromise(settle(ctx, b, 0.3, "req-1"));
+		await Effect.runPromise(settle(ctx, b, "req-1"));
 
 		// THEN today's spend is $0.30
 		const entries = await Effect.runPromise(readLedger(ctx));
 		expect(spent(entries, { day: "2026-11-04" })).toBeCloseTo(0.3);
+		// AND the settled line keeps the units and the price of one
+		expect(entries.find((e) => e.type === "settle")).toMatchObject({
+			usd: 0.3,
+			unit: "megapixel",
+			units: 4,
+			usdPerUnit: 0.075,
+			requestId: "req-1",
+		});
 	});
 });
 
 describe("readLedger", () => {
+	it("should count a line written before lines had units, by its amount", async () => {
+		// GIVEN a ledger with a $0.25 reservation from before lines recorded units
+		const ctx = testContext();
+		mkdirSync(ctx.paths.data, { recursive: true });
+		appendFileSync(
+			join(ctx.paths.data, "ledger.jsonl"),
+			`${JSON.stringify({ id: "old", at: "2026-11-04T08:00:00.000Z", type: "reserve", provider: "fal", model: "flux-dev", post: "p", usd: 0.25 })}\n`,
+		);
+
+		// WHEN it is read, and a new call is reserved next to it
+		await Effect.runPromise(reserve(ctx, call("p", 0.1)));
+		const entries = await Effect.runPromise(readLedger(ctx));
+
+		// THEN both count toward the day
+		expect(spent(entries, { day: "2026-11-04" })).toBeCloseTo(0.35);
+	});
+
 	it("should refuse a ledger with a corrupt line, naming the line", async () => {
 		// GIVEN a ledger whose second line was damaged
 		const ctx = testContext();

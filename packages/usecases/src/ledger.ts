@@ -4,13 +4,15 @@
  * Every paid call reserves its estimated cost before it's sent. All processes share one lock
  * for this, so five posts generating at once can't all pass the daily cap. The reservation is
  * settled when the result arrives, or released if the call failed before anything was billed.
- * These providers don't report the actual charge, so a settled amount is the estimate.
+ * These providers don't report the actual charge, so a call settles at what it reserved. Each
+ * line keeps its units and the price of one, so totals don't move when a price changes later.
  */
 
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fail, type ShortsError } from "@shorts-studio/domain/errors";
+import { Unit } from "@shorts-studio/domain/models";
 import { Effect, Schema } from "effect";
 import { type Context, DEFAULT_CAPS } from "./context.ts";
 import { withLock } from "./lock.ts";
@@ -23,6 +25,11 @@ export const LedgerEntry = Schema.Struct({
 	model: Schema.String,
 	post: Schema.String,
 	usd: Schema.Finite,
+	// What the call was billed by, how many, and the price of one. Lines written before prices
+	// were data don't have them, and count by `usd` alone.
+	unit: Schema.optionalKey(Unit),
+	units: Schema.optionalKey(Schema.Finite),
+	usdPerUnit: Schema.optionalKey(Schema.Finite),
 	requestId: Schema.optionalKey(Schema.String),
 	note: Schema.optionalKey(Schema.String),
 });
@@ -98,17 +105,20 @@ const withLedgerLock = <A>(ctx: Context, use: Effect.Effect<A, ShortsError>) =>
 
 export const caps = (ctx: Context) => ({ ...DEFAULT_CAPS, ...ctx.config.caps });
 
-/** Reserves `usd` for one paid call, or fails with `over-budget` when a cap would be passed. */
-export const reserve = (
-	ctx: Context,
-	call: {
-		readonly provider: string;
-		readonly model: string;
-		readonly post: string;
-		readonly usd: number;
-		readonly note?: string;
-	},
-): Effect.Effect<string, ShortsError> =>
+/** One paid call, priced: what `costOf` gives, plus the post it's for. */
+export interface PaidCall {
+	readonly provider: string;
+	readonly model: string;
+	readonly post: string;
+	readonly unit: Unit;
+	readonly units: number;
+	readonly usdPerUnit: number;
+	readonly usd: number;
+	readonly note?: string;
+}
+
+/** Reserves `call.usd`, or fails with `over-budget` when a cap would be passed. */
+export const reserve = (ctx: Context, call: PaidCall): Effect.Effect<string, ShortsError> =>
 	withLedgerLock(
 		ctx,
 		Effect.gen(function* () {
@@ -137,30 +147,27 @@ export const reserve = (
 		}),
 	);
 
+/** Adds a line closing reservation `id`. It repeats the reservation, so each line reads alone. */
 const close = (
 	ctx: Context,
 	id: string,
-	type: "settle" | "release",
-	usd: number,
-	requestId?: string,
+	change: Pick<LedgerEntry, "type"> & Partial<Pick<LedgerEntry, "usd" | "requestId">>,
 ) =>
 	withLedgerLock(
 		ctx,
 		Effect.gen(function* () {
-			const original = (yield* readLedger(ctx)).find(
+			const reserved = (yield* readLedger(ctx)).find(
 				(entry) => entry.id === id && entry.type === "reserve",
 			);
-			if (original === undefined) return;
-			append(ctx, {
-				...original,
-				at: ctx.now().toISOString(),
-				type,
-				usd,
-				...(requestId !== undefined ? { requestId } : {}),
-			});
+			if (reserved === undefined) return;
+			append(ctx, { ...reserved, at: ctx.now().toISOString(), ...change });
 		}),
 	);
 
-export const settle = (ctx: Context, id: string, usd: number, requestId: string) =>
-	close(ctx, id, "settle", usd, requestId);
-export const release = (ctx: Context, id: string) => close(ctx, id, "release", 0);
+/**
+ * Settles reservation `id` at the amount it reserved, even if the model's price changed since:
+ * the provider billed the price of the day the call was sent.
+ */
+export const settle = (ctx: Context, id: string, requestId: string) =>
+	close(ctx, id, { type: "settle", requestId });
+export const release = (ctx: Context, id: string) => close(ctx, id, { type: "release", usd: 0 });
