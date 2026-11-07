@@ -46,7 +46,7 @@ You are responsible for following each platform's terms when you download and re
 
 ### Claude Code
 
-- **MCP server:** in a clone, `.mcp.json` registers it. With an installed binary, point your client at `shorts-studio mcp serve`. Claude Code asks you once to approve the project's server. The server runs on your machine over stdio, so there is nothing to sign in to. Keys come from your environment or the Keychain. Paid tools ask before every call (set in `.claude/settings.json`).
+- **MCP server:** in a clone, `.mcp.json` registers it. With an installed binary, point your client at `shorts-studio mcp serve`. Claude Code asks you once to approve the project's server. The server runs on your machine over stdio, so there is nothing to sign in to. Keys come from your environment or the Keychain. Paid tools (image generation and transcription) ask before every call, and approvals are denied (set in `.claude/settings.json`).
 - **Cloudflare MCP:** `.mcp.json` and `.codex/config.toml` also list Cloudflare's MCP server, for the R2 bucket that backs up posts. You only need it if you back up to R2. Sign in once per machine (`/mcp` in Claude Code, `codex mcp login cloudflare` in Codex) and pick the account.
 - **Skills:** `.claude/skills/` loads with the project. It is a copy of `.agents/skills/`. `commit`, `pr` and `test-bdd` come from the `ai-standards` plugin marketplace, which `.claude/settings.json` registers. They turn on once you trust the folder.
 

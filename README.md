@@ -6,7 +6,7 @@ Turn audio into short vertical videos with AI images, word-timed captions and FF
 
 ## Why
 
-If you post several short videos a day, you have no time to edit them. With shorts-studio, you only check the story and the vibe. You approve the script before any money is spent, and you review the draft at the end. The tool, or your AI agent driving it, makes everything in between: transcription, beats, images, motion, captions and the render. You do the final polish in CapCut.
+If you post several short videos a day, you have no time to edit them. With shorts-studio, you only check the story and the vibe. You approve the script, with its audio and image prompts, before any money goes on images, and you review the draft at the end. The tool, or your AI agent driving it, makes everything in between: transcription, beats, images, motion, captions and the render. You do the final polish in CapCut.
 
 ## See it work
 
@@ -53,14 +53,14 @@ shorts-studio draft render --post 2026-11-06-morning-routine
 
 ## Use it from an AI agent
 
-`shorts-studio mcp serve` runs an MCP server over stdio, with one tool per command. Claude Code reads [.mcp.json](.mcp.json), and Codex reads [.codex/config.toml](.codex/config.toml). Any other client can point at the same command. Tools that spend money ask first. Only you can approve a script or a draft.
+`shorts-studio mcp serve` runs an MCP server over stdio, with one tool per command. Claude Code reads [.mcp.json](.mcp.json), and Codex reads [.codex/config.toml](.codex/config.toml). Any other client can point at the same command. Tools that spend money ask first. Only you can approve a script or a draft, in your own terminal.
 
 ## What's in it today
 
 - Audio to draft, with word-timed captions, a hook title and motion picked for each story moment ([the research behind it](docs/research/README.md)).
 - An evening review, a frame-exact CapCut export, and a record of the final video and where you published it.
 - Download and transcribe saved reels and TikToks.
-- Spending caps, paid requests that can resume, and no spending until you approve the script.
+- Spending caps, paid requests that can resume, and no images until you approve the script and its prompts.
 
 [openspec/specs](openspec/specs) describes exactly how it behaves. Planned work is in [openspec/changes](openspec/changes): models and prices kept as data, trying models side by side and keeping what works, AI voice and music, AI video for chosen beats, and carousels.
 

@@ -15,6 +15,11 @@ Notable changes, newest first. The release workflow publishes each version's sec
 
 ### Changed
 
+- `script approve` covers the audio and every image prompt, not just the script: changing any of them needs approving again, and `next` says what changed. Posts approved before need approving again.
+- `script approve` and `post review` run only from a terminal, so no agent can record your decision. The Claude Code and Codex rules also catch them with flags placed first.
+- `audio transcribe` and `source transcribe` take `--dry-run` and show their cost. They still run without `--yes`, and the agent settings ask before them.
+- Beats: a silence before the first word, inside a short phrase or before the last word gets beats of its own. Plans made before are stale.
+- Captions: a lone word joins its neighbour only within 4 words and never across a pause.
 - The code is a workspace: `apps/cli`, `apps/mcp`, and packages for the domain, the use cases and the providers, built with Turbo and kept in step by syncpack.
 - Node 26 runs the TypeScript directly; there is no build step.
 - `transcript.json`, lock files and ledger lines are read through their Schemas, so a damaged file names the bad field and the fix.
@@ -27,6 +32,9 @@ Notable changes, newest first. The release workflow publishes each version's sec
 
 ### Fixed
 
+- Interrupting `image generate` while a request is being sent saves the request, so the next run resumes it instead of paying again.
+- `capcut export` refuses a draft whose beats, images or captions changed after it was approved.
+- A model's `options` in config.json can't change the image size, count, seed or prompt FAL is asked for, so the reservation always matches the bill.
 - When you interrupt a command, it waits for ffmpeg to stop. No render keeps running and no temporary file is left.
 - A command that spends nothing now refuses `--dry-run` instead of running for real.
 - A config.json or brand.json that doesn't parse no longer stops every command. `doctor` reports it.

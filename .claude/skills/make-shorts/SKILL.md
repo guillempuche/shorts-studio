@@ -1,7 +1,7 @@
 ---
 
 name: make-shorts
-description: Run the daily short-video loop with shorts-studio - from audio or a brief to a reviewable draft per post, with the user approving each script before anything is spent. Use when asked to make, continue or batch short videos, reels or TikToks, or to prepare today's posts.
+description: Run the daily short-video loop with shorts-studio - from audio or a brief to a reviewable draft per post, with the user approving each script and its image prompts before anything is spent on images. Use when asked to make, continue or batch short videos, reels or TikToks, or to prepare today's posts.
 compatibility: Claude Code, Codex and other agents in this repository; needs Node 26 and an FFmpeg with libass (nix develop).
 ---
 
@@ -18,14 +18,14 @@ The order of the steps. The rules behind them are in [AGENTS.md](../../../AGENTS
 
 1. `post create --post <slug> --title "…"`
 2. `source import --post <slug> --file <audio-or-video> --origin mine|others|ai --kind speech|music`. Use `others` for someone else's reel: it's a guide track, and the post must be published with the platform's in-app sound.
-3. `audio transcribe --post <slug>`. Add `--language es` only when the auto-detected language is wrong.
+3. `audio transcribe --post <slug>`. It costs a little, counted toward the caps: on a long file, show the `--dry-run` estimate first. Add `--language es` only when the auto-detected language is wrong.
 4. `beat plan --post <slug>`, then direct the beats with the [story-direction skill](../story-direction/SKILL.md): mark each beat's moment, re-cut with `--by-moment`, then write one image prompt per beat.
 5. Write the story to `script.md` (hook in the first 3 s, the turn, the CTA): concrete subjects, one idea per image, the brand style is added for you.
 6. `script set --post <slug> --file script.md --hook "3 to 7 words"`, then `beat set --post <slug> --from beats.json`.
-7. **Stop.** Ask the user to read the script and run `script approve --post <slug>` themselves. Never approve it.
+7. **Stop.** Ask the user to read the script and the prompts, and run `script approve --post <slug>` in their own terminal. Never approve it: it refuses without a terminal anyway. Changing a prompt or the audio afterwards needs approving again.
 8. `image generate --post <slug> --dry-run`, show the estimate, then run it for real (the CLI needs `--yes`; over MCP the user's approval prompt is the gate).
 9. `draft render --post <slug>`, then give the user the path to `draft.mp4` for the evening check.
-10. **Stop.** The user reviews it with `post review --post <slug> --decision approve|fix|reject` (CLI only). For `fix`, read `post show` for their notes, change what they name (`beat set`, `image generate --beat N --reroll`, `image import`), and render again.
+10. **Stop.** The user reviews it with `post review --post <slug> --decision approve|fix|reject` (CLI only). For `fix`, read `post show` for their notes, change what they name (`beat set`, `image generate --beat N --reroll`, `image import`), and render again. A new prompt needs the user's `script approve` before `image generate`.
 11. Once approved: `capcut export --post <slug>`; the user polishes in CapCut desktop (steps in `capcut/README.txt`). Then `post finalize --post <slug> --file <final.mp4>`, `post publish` once per platform, and `post archive` when it's done.
 
 ## Flow B: AI voice from a brief

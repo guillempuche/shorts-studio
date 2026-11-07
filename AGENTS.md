@@ -37,7 +37,7 @@ Run `nix develop` (or direnv with `.envrc`), then `pnpm install` and `bin/shorts
 2. **No user content in git.** Posts, media, `brand.json` and the ledger live under `SHORTS_POSTS_DIR` / `SHORTS_DATA_DIR`.
 3. **Brand-neutral.** No product, client or brand names in code, docs or samples.
 4. **One place per fact.** Link to it instead of repeating it. The table above says where each thing lives.
-5. **The user decides.** Approving a script (`script approve`) or a draft (`post review`) is CLI-only. Never run them for the user. Run spending commands with `--dry-run` first and show the estimate. The repo's agent settings ask before each paid call. Never raise spending caps unless the user asks.
+5. **The user decides.** Approving a script (`script approve`) or a draft (`post review`) is CLI-only and needs the user's terminal. Never run them for the user. Run spending commands with `--dry-run` first and show the estimate. The repo's agent settings ask before each paid call. Never raise spending caps unless the user asks.
 6. **Effect where it fits.** The repo uses `effect@4.1.2` (`effect/cli`, `effect/ai`). Outside services are ports (Effect services) with one layer per provider. Failures are one `ShortsError` with a tagged `reason`. Child processes use `spawn` with `stopWhenAborted`. Check every API against `node_modules/effect/dist/**/*.d.ts` or [docs/vendors/effect](docs/vendors/README.md), never from memory. Why: [key decisions](docs/architecture.md#key-decisions).
 
 ## Skills

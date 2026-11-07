@@ -63,7 +63,7 @@ Moments, length ranges and motions are defined in `packages/domain/src/direction
 
 ### Images
 
-`image generate` (`packages/usecases/src/operations/image.ts`) needs the approved script. It works on each beat whose image is missing or out of date. For each one, it:
+`image generate` (`packages/usecases/src/operations/image.ts`) needs the approved script. `script approve` records the script, the audio and every beat's image prompt, so a change to any of them needs approving again. It works on each beat whose image is missing or out of date. For each one, it:
 
 1. reserves the estimated cost in the ledger;
 2. sends the request to FAL's queue;
@@ -118,7 +118,7 @@ Results go to stdout. Progress and log messages go to stderr. With `--json`, std
 
 When a spending command runs without `--yes`, that one object holds both the estimate (`result`) and the request for confirmation (`error`).
 
-Spending commands need `--yes` on the CLI. Over MCP they take `dryRun` instead, and the client's approval prompt does the job of `--yes`.
+Spending commands take `--dry-run` and need `--yes` on the CLI, except transcription, which costs under a cent a post and runs before there is a script to approve. Over MCP they take `dryRun` instead, and the client's approval prompt does the job of `--yes`. `script approve` and `post review` refuse to run unless stdin is a terminal, so an agent can't record the user's decisions.
 
 ### Exit codes
 
