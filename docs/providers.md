@@ -27,10 +27,10 @@ security add-generic-password -U -a "$USER" -s fal-key -w
 
 ## Spending caps
 
-The cost of every paid call is reserved before the call is made. A call that would pass a cap is refused. The defaults are $5 a day and $2 a post. Change them in `<data>/config.json`:
+The cost of every paid call is reserved before the call is made. A call that would pass a cap is refused. The defaults are $5 a day and $2 a post. Change them in `config.json` (see [settings](getting-started.md#settings)):
 
 ```json
-{ "caps": { "dailyUsd": 5, "postUsd": 2 }, "image": { "model": "flux-schnell" } }
+{ "caps": { "dailyUsd": 5, "postUsd": 2 } }
 ```
 
 Costs are estimates based on the prices above, because providers don't report what each call actually cost.
@@ -38,3 +38,7 @@ Costs are estimates based on the prices above, because providers don't report wh
 ## Testing without spending
 
 `SHORTS_FAL_URL` and `SHORTS_TOGETHER_URL` point the CLI at fake services. `node packages/providers/src/test/fal-server.ts` starts a local fake of FAL's queue that returns colour cards.
+
+## Adding a provider
+
+Write a layer for the port in `packages/providers/src/` (see `fal.ts` and `together.ts`), add one line for it in `packages/providers/src/index.ts`, and choose it in `config.json`. Its test file runs the shared contract for that port (`imageMakerContract` or `transcriberContract` in `packages/usecases/src/test/`) against a local fake of the service, so it behaves like every other provider: the same errors, a resumable request, and its key checked before anything is paid.

@@ -10,12 +10,15 @@ Notable changes, newest first. The release workflow publishes each version's sec
 - `doctor` and `schema show`.
 - Run one command on several posts with `--post a,b`, `--day` or `--in-stage`.
 - Choose the transcription and image provider in config.json (`transcribe.provider`, `image.provider`). `doctor` checks only the keys of the providers in use.
+- Any setting can come from a `SHORTS_*` environment variable, which wins over config.json and brand.json, such as `SHORTS_IMAGE_MODEL=flux-dev`.
+- JSON Schemas for config.json and brand.json in `schemas/`, with a description for every setting, so editors complete and check them. `schema show --name config` prints one.
 
 ### Changed
 
 - The code is a workspace: `apps/cli`, `apps/mcp`, and packages for the domain, the use cases and the providers, built with Turbo and kept in step by syncpack.
 - Node 26 runs the TypeScript directly; there is no build step.
 - `transcript.json`, lock files and ledger lines are read through their Schemas, so a damaged file names the bad field and the fix.
+- API keys are held as redacted values, so a key printed by mistake shows `<redacted>`.
 
 ### Removed
 

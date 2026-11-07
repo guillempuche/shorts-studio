@@ -33,7 +33,9 @@ Every command is an `Operation` in `packages/usecases/src/operations/`, listed i
 
 An operation takes plain values in a `Context` (folders, settings, `secret()`, `now`, `log`) and asks for outside work through ports (`packages/usecases/src/ports.ts`): `Transcriber`, `ImageMaker`, `MediaTools` and `Downloader`. Each port is an Effect service. Each provider in `packages/providers` is a layer that implements one or more ports, and says which API keys it needs and how `doctor` checks it.
 
-`providersLayer` (`packages/providers/src/index.ts`) picks the provider for each job from `config.json` (`transcribe.provider`, `image.provider`). A fork adds a provider by writing its module and adding one line to the list for each job it does. No use case changes.
+`providersLayer` (`packages/providers/src/index.ts`) picks the provider for each job from `config.json` (`transcribe.provider`, `image.provider`). A fork adds a provider by writing its module and adding one line to the list for each job it does. No use case changes. Every provider, and every in-memory fake the use-case tests use, runs the same contract suite for its port, so they can't drift apart.
+
+Settings come in layers, read through Effect's `ConfigProvider`: built-in defaults, then `config.json` and `brand.json`, then `SHORTS_*` environment variables, then flags. Each value comes from the highest layer that sets it, and the result is checked against the same Schema that publishes `schemas/config.schema.json` and `schemas/brand.schema.json`. API keys come only from the environment or the macOS Keychain, as `Redacted` values, so a key printed by mistake shows `<redacted>`.
 
 Tests sit next to the module they test (`beats.ts` and `beats.test.ts`). Use-case tests provide in-memory fake ports; provider tests run against a local fake of the service.
 

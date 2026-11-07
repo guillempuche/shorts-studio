@@ -16,6 +16,20 @@ Pick one option from the [README's install table](../README.md#install). Nix is 
 2. By default, posts go in your system's application-data folder. To choose another place, set `SHORTS_POSTS_DIR` (and `SHORTS_DATA_DIR`) in your shell profile.
 3. `shorts-studio doctor` should end with `Ready.`
 
+## Settings
+
+Two optional files in the data folder hold your settings: `config.json` (providers, spending caps, captions, downloads) and `brand.json` (the style added to every image prompt). Start each with a `$schema` line, and your editor completes and checks them:
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/guillempuche/shorts-studio/main/schemas/config.schema.json",
+  "caps": { "dailyUsd": 5, "postUsd": 2 },
+  "image": { "provider": "fal", "model": "flux-schnell" }
+}
+```
+
+Any setting can also come from the environment, which wins over the file: `SHORTS_` and the setting's path in capitals, such as `SHORTS_IMAGE_MODEL=flux-dev` or `SHORTS_CAPS_DAILY_USD=10`. brand.json's settings use `SHORTS_BRAND_`, such as `SHORTS_BRAND_IMAGE_PROMPT_SUFFIX`. A command's flags win over both. `doctor` names any setting it can't read; the built-in defaults apply until you fix it.
+
 ## Downloading saved reels
 
 `source download` uses your own yt-dlp. Install it and keep it up to date with `pip install -U yt-dlp`, because Instagram and TikTok break old versions. Instagram needs your login. yt-dlp can read it from your browser, but only if you turn that on in `<data>/config.json`:
