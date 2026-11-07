@@ -38,6 +38,7 @@ Notable changes, newest first. The release workflow publishes each version's sec
 - A batch prints how many posts failed.
 - Commands on a post that doesn't exist fail before taking its lock.
 - With `--json`, a spending command run without `--yes` printed two objects. It now prints one, holding both the estimate and the error.
+- Image estimates were about 24% low. FAL bills each image by whole megapixels, so a 1344×2400 image costs 4 MP: $0.012 with flux-schnell, $0.10 with flux-dev.
 
 ## [0.1.0] - 2026-11-06
 

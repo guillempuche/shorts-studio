@@ -2,13 +2,13 @@
 
 Which outside services shorts-studio calls, what for, and what they cost. `config.json` chooses the provider for each job (`transcribe.provider`, `image.provider`); a fork adds its own in `packages/providers/src/`. [.env.example](../.env.example) lists the key names. `shorts-studio doctor` checks the keys of the providers in use.
 
-| Need           | Provider                                                                                       | Status  | Notes                                                                                                                                   |
-| -------------- | ---------------------------------------------------------------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Transcription  | [Together](https://docs.together.ai/reference/audio-transcriptions), `openai/whisper-large-v3` | Default | `verbose_json` with word timestamps. Uploads up to 80 MB. Billed per minute of audio                                                    |
-| Images         | [FAL](https://fal.ai/models/fal-ai/flux/schnell), `flux-schnell` (default) or `flux-dev`       | Default | Each image is 1344×2400. flux-schnell ≈ $0.003/MP (≈ $0.010 per image), flux-dev ≈ $0.025/MP. See [FAL pricing](https://fal.ai/pricing) |
-| Voice          | Fish Audio, ElevenLabs                                                                         | Planned | Planned: [voice-music-animate](../openspec/changes/voice-music-animate/proposal.md)                                                     |
-| Music          | ElevenLabs Music API                                                                           | Planned | Suno has no official API, and Fish Audio's music is only in its web app. Import their tracks with `source import --kind music`          |
-| Image to video | FAL                                                                                            | Planned | Only for beats chosen in review                                                                                                         |
+| Need           | Provider                                                                                       | Status  | Notes                                                                                                                            |
+| -------------- | ---------------------------------------------------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Transcription  | [Together](https://docs.together.ai/reference/audio-transcriptions), `openai/whisper-large-v3` | Default | `verbose_json` with word timestamps. Uploads up to 80 MB. Billed per minute of audio                                             |
+| Images         | [FAL](https://fal.ai/models/fal-ai/flux/schnell), `flux-schnell` (default) or `flux-dev`       | Default | Each 1344×2400 image is billed as 4 MP: $0.012 with flux-schnell, $0.10 with flux-dev. See [FAL pricing](https://fal.ai/pricing) |
+| Voice          | Fish Audio, ElevenLabs                                                                         | Planned | Planned: [voice-music-animate](../openspec/changes/voice-music-animate/proposal.md)                                              |
+| Music          | ElevenLabs Music API                                                                           | Planned | Suno has no official API, and Fish Audio's music is only in its web app. Import their tracks with `source import --kind music`   |
+| Image to video | FAL                                                                                            | Planned | Only for beats chosen in review                                                                                                  |
 
 ## Keys
 

@@ -34,6 +34,21 @@ imageMakerContract("FAL", {
 		).fal,
 });
 
+describe("falImageMaker estimateUsd", () => {
+	it("should price each image by whole megapixels, as FAL bills them", async () => {
+		// GIVEN FAL, and images of 1344×2400 (3.2 megapixels)
+		const { fal } = await withFakeFal();
+
+		// WHEN the price of one image is asked for each model
+		const schnell = fal.estimateUsd("flux-schnell");
+		const dev = fal.estimateUsd("flux-dev");
+
+		// THEN each is the price of 4 megapixels
+		expect(schnell).toBeCloseTo(4 * 0.003);
+		expect(dev).toBeCloseTo(4 * 0.025);
+	});
+});
+
 describe("falImageMaker submit", () => {
 	it("should send the prompt, seed and image size to the model's endpoint with the key", async () => {
 		// GIVEN FAL and a key

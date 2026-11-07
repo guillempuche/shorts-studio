@@ -38,7 +38,8 @@ const Submitted = Schema.Struct({
 const Status = Schema.Struct({ status: Schema.String });
 const Result = Schema.Struct({ images: Schema.Array(Schema.Struct({ url: Schema.String })) });
 
-const megapixels = (IMAGE_SIZE.width * IMAGE_SIZE.height) / 1_000_000;
+/** FAL bills each image by the megapixel, rounded up: 1344×2400 is 3.2 MP, billed as 4. */
+const megapixels = Math.ceil((IMAGE_SIZE.width * IMAGE_SIZE.height) / 1_000_000);
 const fix = "Check FAL_KEY and your connection, then run it again.";
 
 const ended = (message: string) =>
