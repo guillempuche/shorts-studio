@@ -131,7 +131,7 @@ const planSpan = (
 	const out: Array<BeatSpan> = [];
 	const push = (from: number, to: number, text: string) =>
 		out.push({ index: out.length, start: round(from), end: round(to), text });
-	const silence = (from: number, to: number) => {
+	const pushSilentBeats = (from: number, to: number) => {
 		const count = beatCount(to - from, rules);
 		const step = (to - from) / count;
 		for (let part = 0; part < count; part++)
@@ -141,19 +141,19 @@ const planSpan = (
 	// Silence before the first word: beats of its own, or the first phrase's beat starts early.
 	const first = spans[0] as (typeof spans)[number];
 	const lead = first.start - start;
-	if (ownBeats(lead, lead, first.end - start, rules)) silence(start, first.start);
+	if (ownBeats(lead, lead, first.end - start, rules)) pushSilentBeats(start, first.start);
 	else first.start = start;
 
 	// Silence after a phrase: the phrase keeps at least a minimum-length beat, so a short one
 	// isn't a flash, and the rest of a long silence gets beats of its own.
 	for (const span of spans) {
-		const held = Math.min(span.end, Math.max(span.spokenEnd, span.start + rules.minSec));
-		if (!ownBeats(span.end - span.spokenEnd, span.end - held, span.end - span.start, rules)) {
+		const heldUntil = Math.min(span.end, Math.max(span.spokenEnd, span.start + rules.minSec));
+		if (!ownBeats(span.end - span.spokenEnd, span.end - heldUntil, span.end - span.start, rules)) {
 			push(span.start, span.end, span.text);
 			continue;
 		}
-		push(span.start, held, span.text);
-		silence(held, span.end);
+		push(span.start, heldUntil, span.text);
+		pushSilentBeats(heldUntil, span.end);
 	}
 	return out;
 };

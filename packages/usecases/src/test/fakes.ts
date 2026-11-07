@@ -32,8 +32,8 @@ export type FakeImageMaker = ImageMaker["Service"] & {
 	/**
 	 * How the fake answers, read on every call. `collect` answers with the image; never, so a run
 	 * can be interrupted while it waits; or by ending the request, as a provider that gave up
-	 * would. `submit` fails when refused (an HTTP 4xx) or dropped (no answer, outcome unknown),
-	 * and is held, so a run can be interrupted mid-send, until `letGo()`.
+	 * would. `submit` fails when refused (an HTTP 4xx) or dropped (no answer, outcome unknown).
+	 * When held, it waits for `letGo()`, so a run can be interrupted mid-send.
 	 */
 	answer: "image" | "never" | "ended" | "refused" | "dropped" | "held";
 	/** How many `collect` calls were left waiting because `answer` was "never". */

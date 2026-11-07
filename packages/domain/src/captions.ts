@@ -82,7 +82,8 @@ export const groupCaptions = (words: ReadonlyArray<Word>): ReadonlyArray<Caption
 				previous.push(...group);
 				return;
 			}
-			// A full caption gives up its last word instead, if that doesn't end a phrase.
+			// A full caption gives up its last word instead, if it keeps two and that word doesn't
+			// end a phrase.
 			const lent = previous?.at(-1);
 			if (
 				previous !== undefined &&
@@ -95,6 +96,7 @@ export const groupCaptions = (words: ReadonlyArray<Word>): ReadonlyArray<Caption
 				merged.push([lent, ...group]);
 				return;
 			}
+			// Or it opens the caption after it.
 			if (fits(group, next)) {
 				carried = group;
 				return;

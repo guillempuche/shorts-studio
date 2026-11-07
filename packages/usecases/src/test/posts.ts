@@ -20,6 +20,7 @@ export const seedPost = (ctx: Context, slug: string, fields: PostFields = {}): P
 
 /** These fields with the script approved as they stand, as `script approve` records it. */
 export const approvedAsIs = (fields: PostFields): PostFields => {
+	// Blank required fields, since `approvalOf` reads only the script, audio and beats.
 	const post: Post = { manifestVersion: 1, slug: "", createdAt: "", revision: 1, ...fields };
 	return post.script === undefined
 		? fields

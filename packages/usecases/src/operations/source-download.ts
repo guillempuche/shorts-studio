@@ -231,7 +231,8 @@ export const sourceTranscribe = defineOperation({
 
 			// Every file is tried. A failed one is listed, and the next run tries it again. Past a
 			// spending cap every later file would fail the same way, so the run stops there instead.
-			// The transcripts already written stay.
+			// The transcripts already written stay. Each outcome is a file's cost in dollars, or the
+			// line saying why it failed.
 			const outcomes = yield* Effect.forEach(todo, (file) =>
 				transcribeOne(file).pipe(
 					Effect.catch((error) =>

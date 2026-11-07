@@ -205,14 +205,14 @@ export const changesSinceApproval = (post: Post): ReadonlyArray<string> => {
 	if (approved.length !== current.length) {
 		changes.push("the beats");
 	} else {
-		const changed = (post.beats?.items ?? []).flatMap((b, i) =>
+		const reprompted = (post.beats?.items ?? []).flatMap((b, i) =>
 			current[i] === approved[i] ? [] : [b.index],
 		);
-		if (changed.length > 0) {
+		if (reprompted.length > 0) {
 			changes.push(
-				changed.length === 1
-					? `the prompt of beat ${changed[0]}`
-					: `the prompts of beats ${changed.join(", ")}`,
+				reprompted.length === 1
+					? `the prompt of beat ${reprompted[0]}`
+					: `the prompts of beats ${reprompted.join(", ")}`,
 			);
 		}
 	}
