@@ -37,6 +37,12 @@ const BRIDGE_SEC = 0.5;
 
 const textOf = (words: ReadonlyArray<Word>): string => words.map((w) => w.text).join(" ");
 
+/** Whether `after` can follow `before` in one caption: within the limits, with no pause between. */
+const fits = (before: ReadonlyArray<Word>, after: ReadonlyArray<Word>): boolean =>
+	before.length + after.length <= CAPTION_LIMITS.maxWords &&
+	textOf([...before, ...after]).length <= CAPTION_LIMITS.maxChars &&
+	(after[0] as Word).start - (before.at(-1) as Word).end < CAPTION_LIMITS.pauseSec;
+
 /** Groups words into captions within the reading limits. */
 export const groupCaptions = (words: ReadonlyArray<Word>): ReadonlyArray<CaptionGroup> => {
 	const raw: Array<Array<Word>> = [];
@@ -62,18 +68,39 @@ export const groupCaptions = (words: ReadonlyArray<Word>): ReadonlyArray<Caption
 		}
 	});
 
-	// A word on its own is hard to follow: join it to the caption before, unless it ends the audio.
+	// A word on its own is hard to follow, unless it ends the audio. It joins a neighbouring
+	// caption only within the limits and without a pause between them, so no caption spans one.
 	const merged: Array<Array<Word>> = [];
-	raw.forEach((group, i) => {
+	let carried: Array<Word> = [];
+	raw.forEach((rawGroup, i) => {
+		const group = [...carried, ...rawGroup];
+		carried = [];
 		const previous = merged.at(-1);
-		const isLast = i === raw.length - 1;
-		if (group.length === 1 && previous !== undefined && !isLast) {
-			if (textOf([...previous, ...group]).length <= CAPTION_LIMITS.maxChars) {
+		const next = raw[i + 1];
+		if (group.length === 1 && next !== undefined) {
+			if (previous !== undefined && fits(previous, group)) {
 				previous.push(...group);
 				return;
 			}
+			// A full caption gives up its last word instead, if that doesn't end a phrase.
+			const lent = previous?.at(-1);
+			if (
+				previous !== undefined &&
+				lent !== undefined &&
+				previous.length > 2 &&
+				!PUNCTUATION_END.test(lent.text) &&
+				fits([lent], group)
+			) {
+				previous.pop();
+				merged.push([lent, ...group]);
+				return;
+			}
+			if (fits(group, next)) {
+				carried = group;
+				return;
+			}
 		}
-		merged.push([...group]);
+		merged.push(group);
 	});
 
 	return merged.map((group, i) => {

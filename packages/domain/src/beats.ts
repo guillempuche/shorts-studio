@@ -14,7 +14,7 @@ import { BEAT_LENGTH, DEFAULT_BEAT_LENGTH, type Moment } from "./direction.ts";
 import type { Word } from "./post.ts";
 
 /** Part of every beat plan's input hash: a change here makes existing plans stale. */
-export const PLANNER_VERSION = 1;
+export const PLANNER_VERSION = 2;
 
 export interface BeatSpan {
 	readonly index: number;
@@ -50,6 +50,22 @@ const grid = (start: number, end: number, rules: BeatRules): ReadonlyArray<BeatS
 	}));
 };
 
+/** How many equal beats fill `length` seconds: near the middle of the range, inside it if possible. */
+const beatCount = (length: number, rules: BeatRules): number => {
+	const fewest = Math.max(1, Math.ceil(length / rules.maxSec));
+	const most = Math.max(fewest, Math.floor(length / rules.minSec));
+	const middle = Math.round(length / ((rules.minSec + rules.maxSec) / 2));
+	return Math.min(most, Math.max(fewest, middle));
+};
+
+/**
+ * Whether a silence gets beats of its own instead of holding the image next to it: when it is
+ * longer than a beat or stretches that beat well past the maximum, and `spare` (the part a
+ * phrase's beat doesn't need) is long enough to be a beat.
+ */
+const ownBeats = (silence: number, spare: number, beatLength: number, rules: BeatRules): boolean =>
+	spare >= rules.minSec && (silence > rules.maxSec || beatLength > rules.maxSec * 1.5);
+
 export const planBeats = (
 	words: ReadonlyArray<Word>,
 	durationSec: number,
@@ -66,7 +82,8 @@ const planSpan = (
 ): ReadonlyArray<BeatSpan> => {
 	if (words.length === 0) return grid(start, end, rules);
 
-	// Group consecutive words into phrases.
+	// Group consecutive words into phrases. A pause long enough to be a beat ends a phrase however
+	// short it is, so the image changes when speech starts again.
 	const groups: Array<Array<Word>> = [];
 	let current: Array<Word> = [];
 	words.forEach((word, i) => {
@@ -76,25 +93,33 @@ const planSpan = (
 		const next = words[i + 1];
 		const pause = next === undefined ? Number.POSITIVE_INFINITY : next.start - word.end;
 		const goodCut = pause >= rules.pauseSec || SENTENCE_END.test(word.text);
-		if (next === undefined || length >= rules.maxSec || (length >= rules.minSec && goodCut)) {
+		if (
+			next === undefined ||
+			length >= rules.maxSec ||
+			pause >= rules.minSec ||
+			(length >= rules.minSec && goodCut)
+		) {
 			groups.push(current);
 			current = [];
 		}
 	});
 
-	// A last phrase much shorter than a beat joins the one before it.
+	// A last phrase much shorter than a beat joins the one before it, unless a pause long enough
+	// to be a beat comes between them.
 	const last = groups.at(-1);
-	if (groups.length > 1 && last !== undefined) {
+	const beforeLast = groups.at(-2);
+	if (last !== undefined && beforeLast !== undefined) {
 		const lastLength = (last.at(-1) as Word).end - (last[0] as Word).start;
-		if (lastLength < rules.minSec / 2) {
+		const pauseBefore = (last[0] as Word).start - (beforeLast.at(-1) as Word).end;
+		if (lastLength < rules.minSec / 2 && pauseBefore < rules.minSec) {
 			groups.pop();
-			groups.at(-1)?.push(...last);
+			beforeLast.push(...last);
 		}
 	}
 
 	// Back-to-back spans: each beat runs until the next phrase starts.
-	const spans = groups.map((group, index) => ({
-		start: index === 0 ? start : (group[0] as Word).start,
+	const spans = groups.map((group) => ({
+		start: (group[0] as Word).start,
 		end: 0,
 		spokenEnd: (group.at(-1) as Word).end,
 		text: group.map((w) => w.text).join(" "),
@@ -103,27 +128,32 @@ const planSpan = (
 		span.end = spans[index + 1]?.start ?? end;
 	});
 
-	// Phrases are already cut at about maxSec, so only a long silence after one can make a span
-	// much longer than maxSec. Give that silence its own beats instead of one long hold.
 	const out: Array<BeatSpan> = [];
 	const push = (from: number, to: number, text: string) =>
 		out.push({ index: out.length, start: round(from), end: round(to), text });
+	const silence = (from: number, to: number) => {
+		const count = beatCount(to - from, rules);
+		const step = (to - from) / count;
+		for (let part = 0; part < count; part++)
+			push(from + part * step, part === count - 1 ? to : from + (part + 1) * step, "");
+	};
+
+	// Silence before the first word: beats of its own, or the first phrase's beat starts early.
+	const first = spans[0] as (typeof spans)[number];
+	const lead = first.start - start;
+	if (ownBeats(lead, lead, first.end - start, rules)) silence(start, first.start);
+	else first.start = start;
+
+	// Silence after a phrase: the phrase keeps at least a minimum-length beat, so a short one
+	// isn't a flash, and the rest of a long silence gets beats of its own.
 	for (const span of spans) {
-		const silence = span.end - span.spokenEnd;
-		if (span.end - span.start <= rules.maxSec * 1.5 || silence < rules.minSec) {
+		const held = Math.min(span.end, Math.max(span.spokenEnd, span.start + rules.minSec));
+		if (!ownBeats(span.end - span.spokenEnd, span.end - held, span.end - span.start, rules)) {
 			push(span.start, span.end, span.text);
 			continue;
 		}
-		push(span.start, span.spokenEnd, span.text);
-		const parts = Math.max(1, Math.round(silence / rules.maxSec));
-		const step = silence / parts;
-		for (let part = 0; part < parts; part++) {
-			push(
-				span.spokenEnd + part * step,
-				part === parts - 1 ? span.end : span.spokenEnd + (part + 1) * step,
-				"",
-			);
-		}
+		push(span.start, held, span.text);
+		silence(held, span.end);
 	}
 	return out;
 };

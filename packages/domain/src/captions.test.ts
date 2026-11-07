@@ -72,6 +72,42 @@ describe("groupCaptions", () => {
 		for (const group of groups.slice(0, -1)) expect(group.words.length).toBeGreaterThan(1);
 	});
 
+	it("should not let a lone word make a caption of more than four words", () => {
+		// GIVEN four quick words, a fifth that ends a clause, then two more
+		const words: Array<Word> = [
+			...["a", "b", "c", "d"].map((text, i) => ({ text, start: i * 0.2, end: i * 0.2 + 0.15 })),
+			{ text: "e,", start: 0.8, end: 0.95 },
+			{ text: "f", start: 1.0, end: 1.15 },
+			{ text: "g", start: 1.2, end: 1.35 },
+		];
+
+		// WHEN they are grouped into captions
+		const groups = groupCaptions(words);
+
+		// THEN the clause's last word shares a caption with the word before it, within four words
+		expect(groups.map((g) => g.text)).toEqual(["a b c", "d e,", "f g"]);
+	});
+
+	it("should not join a lone word to a caption across a pause", () => {
+		// GIVEN a sentence ending at 0.9 s, 5 seconds of silence, then three words from 6 s
+		const words: Array<Word> = [
+			{ text: "Hello", start: 0, end: 0.4 },
+			{ text: "there.", start: 0.45, end: 0.9 },
+			{ text: "So,", start: 6, end: 6.3 },
+			{ text: "what", start: 6.5, end: 6.7 },
+			{ text: "now", start: 6.75, end: 7 },
+		];
+
+		// WHEN they are grouped into captions
+		const groups = groupCaptions(words);
+
+		// THEN the word after the silence joins the words after it
+		expect(groups.map((g) => g.text)).toEqual(["Hello there.", "So, what now"]);
+		// AND no caption stays on screen through the silence
+		expect(groups[0]?.end).toBeLessThan(6);
+		expect(groups[1]?.start).toBe(6);
+	});
+
 	it("should keep a caption up long enough to read it", () => {
 		// GIVEN a long caption spoken fast, then a pause
 		const words: Array<Word> = [
