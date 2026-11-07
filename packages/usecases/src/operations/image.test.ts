@@ -145,6 +145,28 @@ describe("image generate", () => {
 		expect((await ledgerOf(ctx)).filter((e) => e.type === "reserve")).toHaveLength(1);
 	});
 
+	it("should save a request the provider was still answering when the run was interrupted", async () => {
+		// GIVEN a post ready for images, and a provider slow to answer a submit
+		const { ctx, maker, ports } = await ready();
+		maker.answer = "held";
+
+		// WHEN the run is interrupted while beat 0's request is being sent
+		const fiber = Effect.runFork(generate(ctx, { beat: "0" }).pipe(Effect.provide(ports)));
+		await vi.waitUntil(() => maker.held === 1);
+		const stopped = Effect.runPromise(Fiber.interrupt(fiber));
+		// AND the provider answers after all
+		maker.letGo();
+		await stopped;
+		// AND it runs again once the provider has the image
+		maker.answer = "image";
+		await run(generate(ctx, { beat: "0" }), ports);
+
+		// THEN the request was resumed, not sent again
+		expect(maker.submits).toHaveLength(1);
+		expect((await postOf(ctx)).beats?.items[0]?.image).toBeDefined();
+		expect((await ledgerOf(ctx)).filter((e) => e.type === "reserve")).toHaveLength(1);
+	});
+
 	it("should settle a resumed request at the price it was reserved at, after a price change", async () => {
 		// GIVEN beat 0's request sent at fake-fast's $0.01, and cut short while it waited
 		const { ctx, maker, ports } = await ready();

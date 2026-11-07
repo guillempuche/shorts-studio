@@ -32,11 +32,16 @@ export type FakeImageMaker = ImageMaker["Service"] & {
 	/**
 	 * How the fake answers, read on every call. `collect` answers with the image; never, so a run
 	 * can be interrupted while it waits; or by ending the request, as a provider that gave up
-	 * would. `submit` fails when refused (an HTTP 4xx) or dropped (no answer, outcome unknown).
+	 * would. `submit` fails when refused (an HTTP 4xx) or dropped (no answer, outcome unknown),
+	 * and is held, so a run can be interrupted mid-send, until `letGo()`.
 	 */
-	answer: "image" | "never" | "ended" | "refused" | "dropped";
+	answer: "image" | "never" | "ended" | "refused" | "dropped" | "held";
 	/** How many `collect` calls were left waiting because `answer` was "never". */
 	waits: number;
+	/** How many `submit` calls are waiting for `letGo()` because `answer` was "held". */
+	held: number;
+	/** Lets held submits answer, as a provider does after a slow reply. */
+	letGo: () => void;
 };
 
 /** How a fake fails a paid request: refused (a 4xx, nothing billed) or dropped (unknown). */
@@ -73,6 +78,10 @@ export const FAKE_IMAGE_MODELS = {
 export const fakeImageMaker = (
 	options: { readonly keys?: ReadonlyArray<KeySpec> } = {},
 ): FakeImageMaker => {
+	let open = () => {};
+	const gate = new Promise<void>((resolve) => {
+		open = resolve;
+	});
 	const maker: FakeImageMaker = {
 		provider: "fake-images",
 		keys: options.keys ?? [],
@@ -82,6 +91,8 @@ export const fakeImageMaker = (
 		submits: [],
 		answer: "image",
 		waits: 0,
+		held: 0,
+		letGo: () => open(),
 		submit: (model, prompt, seed) =>
 			Effect.suspend(() => {
 				maker.submits.push({ endpoint: model.endpoint, prompt, seed });
@@ -89,11 +100,16 @@ export const fakeImageMaker = (
 					return Effect.fail(paidCallFailure(maker.answer));
 				}
 				const requestId = `req-${maker.submits.length}`;
-				return Effect.succeed<ImageRequest>({
+				const request: ImageRequest = {
 					requestId,
 					statusUrl: `memory://${requestId}/status`,
 					responseUrl: `memory://${requestId}`,
-				});
+				};
+				if (maker.answer === "held") {
+					maker.held++;
+					return Effect.promise(() => gate).pipe(Effect.as(request));
+				}
+				return Effect.succeed(request);
 			}),
 		collect: (request) =>
 			Effect.suspend(() => {

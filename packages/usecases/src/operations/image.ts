@@ -30,6 +30,9 @@ type Maker = ImageMaker["Service"];
 /** How many beats are generated at once. */
 const CONCURRENCY = 3;
 
+/** How long sending one request may take. A Ctrl-C waits up to this for the answer to save. */
+const SUBMIT_DEADLINE = "60 seconds";
+
 const SEED_LIMIT = 2_147_483_647;
 
 /** A fixed default seed for each beat, so running again without --reroll gives the same image. */
@@ -77,24 +80,43 @@ const generateOne = Effect.fn("generateOne")(function* (
 		ctx.log(`beat ${beat.index}: resuming request ${beat.pending.requestId}`);
 		request = beat.pending;
 	} else {
-		const ledgerId = yield* reserve(ctx, {
-			...imageCost(model),
-			post: slug,
-			note: `beat ${beat.index}`,
-		});
-		const submitted = yield* maker
-			.submit(model, fullPrompt(ctx, beat.prompt ?? ""), seed)
-			.pipe(Effect.tapError((error) => releaseIfNothingBilled(ctx, ledgerId, error)));
-		request = { ...submitted, ledgerId };
-		yield* updatePost(ctx, slug, "image generate", (post) =>
-			Effect.succeed(
-				withBeat(post, beat.index, (b) => ({
-					...b,
-					pending: { provider: maker.provider, model: model.name, inputHash, seed, ...request },
-				})),
-			),
+		// Reserving, sending and saving the request finish together. Interrupted mid-send, the run
+		// waits for the provider's answer and saves it, so the next run resumes the request instead
+		// of paying for it again. The deadline keeps that wait short if the provider never answers.
+		request = yield* Effect.uninterruptible(
+			Effect.gen(function* () {
+				const ledgerId = yield* reserve(ctx, {
+					...imageCost(model),
+					post: slug,
+					note: `beat ${beat.index}`,
+				});
+				const submitted = yield* maker.submit(model, fullPrompt(ctx, beat.prompt ?? ""), seed).pipe(
+					Effect.timeoutOrElse({
+						duration: SUBMIT_DEADLINE,
+						orElse: () =>
+							Effect.fail(
+								fail(
+									"provider",
+									`The image provider didn't answer beat ${beat.index}'s request within ${SUBMIT_DEADLINE}.`,
+									`Run image generate --post ${slug} --yes again later. The request may have been taken, so its cost stays counted.`,
+								),
+							),
+					}),
+					Effect.tapError((error) => releaseIfNothingBilled(ctx, ledgerId, error)),
+				);
+				const sent = { ...submitted, ledgerId };
+				yield* updatePost(ctx, slug, "image generate", (post) =>
+					Effect.succeed(
+						withBeat(post, beat.index, (b) => ({
+							...b,
+							pending: { provider: maker.provider, model: model.name, inputHash, seed, ...sent },
+						})),
+					),
+				);
+				ctx.log(`beat ${beat.index}: submitted (${submitted.requestId})`);
+				return sent;
+			}),
 		);
-		ctx.log(`beat ${beat.index}: submitted (${submitted.requestId})`);
 	}
 
 	const forgetRequest = release(ctx, request.ledgerId).pipe(
