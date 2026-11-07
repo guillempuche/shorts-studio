@@ -12,6 +12,13 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        # Nix's pnpm runs on a Node of its own, while the CLI runs on nodejs_26 and the build runs
+        # no package scripts. So pnpm checks engines against nodejs_26, and package.json's
+        # devEngines runtime check (meant for contributors' machines) is skipped.
+        pnpmSettings = {
+          pnpm_config_node_version = pkgs.nodejs_26.version;
+          pnpm_config_runtime_on_fail = "ignore";
+        };
       in
       {
         # `nix run github:guillempuche/shorts-studio -- doctor`, or `nix profile install`.
@@ -43,15 +50,18 @@
 
           pnpmDeps = pkgs.fetchPnpmDeps {
             inherit (finalAttrs) pname version src;
+            inherit (pnpmSettings) pnpm_config_node_version pnpm_config_runtime_on_fail;
             pnpm = pkgs.pnpm_12;
             fetcherVersion = 5;
-            hash = "sha256-Rpst164ddx21ScatOubp5hcfz+cgoYvkNLR+nNkg/So=";
+            hash = "sha256-JAcAc2Z/K4+q3+gFH7inlHoi++qG6LFYVzvyD52bXLo=";
           };
 
           # The build sandbox has no network, and pnpm's supply-chain check (pnpm-workspace.yaml)
           # needs the registry. CI's `pnpm install --frozen-lockfile` already enforces that check
           # on every push, so this offline install trusts the lockfile it receives.
-          env.pnpm_config_trust_lockfile = "true";
+          env = pnpmSettings // {
+            pnpm_config_trust_lockfile = "true";
+          };
 
           dontBuild = true;
 

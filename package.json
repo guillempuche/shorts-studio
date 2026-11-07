@@ -33,8 +33,8 @@
   "devEngines": {
     "runtime": {
       "name": "node",
-      "version": ">=26",
-      "onFail": "download"
+      "version": "^26.13.0",
+      "onFail": "error"
     }
   },
   "packageManager": "pnpm@12.15.0"
