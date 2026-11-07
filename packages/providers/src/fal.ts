@@ -99,14 +99,16 @@ export const falLayer = Layer.effect(
 			const queued = yield* HttpClientRequest.post(`${base}/${model.endpoint}`).pipe(
 				signed(key),
 				HttpClientRequest.bodyJsonUnsafe({
+					output_format: "jpeg",
+					enable_safety_checker: true,
+					// A model added in config.json can change the fields above…
+					...model.options,
+					// …but not these: the estimate and the reservation were made for one image of this
+					// size, and the seed and prompt are what a resumed or rerolled beat is matched by.
 					prompt,
 					image_size: IMAGE_SIZE,
 					seed,
 					num_images: 1,
-					output_format: "jpeg",
-					enable_safety_checker: true,
-					// Last, so a model added in config.json can change any of the fields above.
-					...model.options,
 				}),
 				http.execute,
 				Effect.flatMap(HttpClientResponse.schemaBodyJson(Submitted)),

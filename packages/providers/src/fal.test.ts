@@ -160,6 +160,35 @@ describe("FAL submit", () => {
 		expect(fake.submits[0]?.extra["safety_tolerance"]).toBe("2");
 		expect(fake.submits[0]?.extra).not.toHaveProperty("num_inference_steps");
 	});
+
+	it("should send the size, count, seed and prompt the estimate used, whatever a model's options say", async () => {
+		// GIVEN FAL, and a model added in config.json whose options ask for four landscape images
+		// of another prompt and seed
+		const { fake, fal } = await withFakeFal();
+		const greedy: Model = {
+			...schnell,
+			options: {
+				num_images: 4,
+				image_size: "landscape_16_9",
+				seed: 1,
+				prompt: "something else",
+				output_format: "png",
+			},
+		};
+
+		// WHEN an image is submitted with it
+		await Effect.runPromise(fal.submit(greedy, "a red door", 7));
+
+		// THEN FAL was asked for the one image, size, seed and prompt the estimate was made for
+		expect(fake.submits[0]).toMatchObject({
+			prompt: "a red door",
+			seed: 7,
+			imageSize: IMAGE_SIZE,
+			extra: { num_images: 1 },
+		});
+		// AND options that don't change the bill still apply
+		expect(fake.submits[0]?.extra["output_format"]).toBe("png");
+	});
 });
 
 describe("FAL collect", () => {
