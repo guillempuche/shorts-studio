@@ -15,6 +15,7 @@ import { fail, type Reason, type ShortsError } from "@shorts-studio/domain/error
 import { Unit } from "@shorts-studio/domain/models";
 import { Effect, Schema } from "effect";
 import { type Context, DEFAULT_CAPS } from "./context.ts";
+import { startOfThisMonth, startOfToday, thisMonth } from "./days.ts";
 import { withLock } from "./lock.ts";
 
 export const LedgerEntry = Schema.Struct({
@@ -76,16 +77,17 @@ const amounts = (entries: ReadonlyArray<LedgerEntry>) => {
 };
 
 /**
- * Dollars spent on one day (a UTC date, YYYY-MM-DD), on one post, or both. A reservation that
- * isn't settled yet counts in full.
+ * Dollars spent on one post, since an instant (the start of a local day or month, from
+ * `days.ts`), or both. A reservation counts from when it was made; one not settled yet counts in
+ * full. A line dated after now, from a clock set ahead, counts too: that errs toward spending less.
  */
 export const spent = (
 	entries: ReadonlyArray<LedgerEntry>,
-	{ day, post }: { readonly day?: string; readonly post?: string },
+	{ post, since }: { readonly post?: string; readonly since?: string },
 ): number =>
 	amounts(entries)
-		.filter(({ reserve }) => day === undefined || reserve.at.startsWith(day))
 		.filter(({ reserve }) => post === undefined || reserve.post === post)
+		.filter(({ reserve }) => since === undefined || reserve.at >= since)
 		.reduce((sum, { usd }) => sum + usd, 0);
 
 const append = (ctx: Context, entry: LedgerEntry): void => {
@@ -128,8 +130,10 @@ export const reserve = (ctx: Context, call: PaidCall): Effect.Effect<string, Sho
 		ctx,
 		Effect.gen(function* () {
 			const entries = yield* readLedger(ctx);
-			const { dailyUsd, postUsd } = caps(ctx);
-			const spentToday = spent(entries, { day: ctx.now().toISOString().slice(0, 10) });
+			const { dailyUsd, monthlyUsd, postUsd } = caps(ctx);
+			const month = thisMonth(ctx);
+			const spentToday = spent(entries, { since: startOfToday(ctx) });
+			const spentThisMonth = spent(entries, { since: startOfThisMonth(ctx) });
 			const spentOnPost = spent(entries, { post: call.post });
 			const configFile = join(ctx.paths.data, "config.json");
 
@@ -138,6 +142,13 @@ export const reserve = (ctx: Context, call: PaidCall): Effect.Effect<string, Sho
 					"over-budget",
 					`This call (~$${call.usd.toFixed(3)}) would pass today's cap: $${spentToday.toFixed(2)} of $${dailyUsd} spent.`,
 					`Wait until tomorrow, or raise caps.dailyUsd in ${configFile}.`,
+				);
+			}
+			if (spentThisMonth + call.usd > monthlyUsd) {
+				return yield* fail(
+					"over-budget",
+					`This call (~$${call.usd.toFixed(3)}) would pass this month's cap: $${spentThisMonth.toFixed(2)} of $${monthlyUsd} spent in ${month}.`,
+					`Wait until next month, or raise caps.monthlyUsd in ${configFile}.`,
 				);
 			}
 			if (spentOnPost + call.usd > postUsd) {

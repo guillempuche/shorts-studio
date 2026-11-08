@@ -69,7 +69,7 @@ describe("config check (doctor)", () => {
 
 describe("config show", () => {
 	it("should show the folders, the caps and the providers in use", async () => {
-		// GIVEN a $3 daily cap and the default per-post cap
+		// GIVEN a $3 daily cap, and the default monthly and per-post caps
 		const ctx = testContext({ config: { caps: { dailyUsd: 3 } } });
 
 		// WHEN the settings are shown
@@ -77,7 +77,7 @@ describe("config show", () => {
 
 		// THEN they show where things live, the caps and each provider with its model
 		expect(result.paths).toEqual(ctx.paths);
-		expect(result.caps).toEqual({ dailyUsd: 3, postUsd: 2 });
+		expect(result.caps).toEqual({ dailyUsd: 3, monthlyUsd: 100, postUsd: 2 });
 		expect(result.transcriber).toBe("fake-transcriber fake-whisper");
 		expect(result.imageProvider).toBe("fake-images");
 		// AND the image model stays where scripts already read it

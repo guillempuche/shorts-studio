@@ -12,7 +12,7 @@ import {
 	stageOf,
 } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
-import type { Context } from "../context.ts";
+import { today } from "../days.ts";
 import { defineOperation, p } from "../operation.ts";
 import { createPost, listSlugs, postDir, readPost } from "../post-store.ts";
 
@@ -71,8 +71,6 @@ const summary = (post: Post): typeof PostSummary.Type => ({
 	stage: stageOf(post),
 	...(post.brief?.title !== undefined ? { title: post.brief.title } : {}),
 });
-
-const today = (ctx: Context): string => ctx.now().toISOString().slice(0, 10);
 
 export const postCreate = defineOperation({
 	name: "post_create",

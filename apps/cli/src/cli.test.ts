@@ -10,7 +10,7 @@ import type { Ports } from "@shorts-studio/usecases/ports";
 import { testContext } from "@shorts-studio/usecases/test/context";
 import { fakeImageMaker, fakePorts } from "@shorts-studio/usecases/test/fakes";
 import { readyForImages, seedPost } from "@shorts-studio/usecases/test/posts";
-import { Effect, Exit, Layer } from "effect";
+import { DateTime, Effect, Exit, Layer } from "effect";
 import { Command } from "effect/cli";
 import { TestConsole } from "effect/testing";
 import { describe, expect, it } from "vitest";
@@ -226,6 +226,21 @@ describe("batching posts on the CLI", () => {
 
 		// THEN the two from 2026-11-04 are chosen
 		expect(slugsOf(run.out)).toEqual(["2026-11-04-a", "2026-11-04-b"]);
+	});
+
+	it("should take today as the local day with --day today", async () => {
+		// GIVEN three posts, and a machine in Madrid at 00:30 on 5 November (still 4 November in UTC)
+		const ctx = {
+			...(await threePosts()),
+			timeZone: DateTime.zoneMakeNamedUnsafe("Europe/Madrid"),
+			now: () => new Date("2026-11-04T23:30:00Z"),
+		};
+
+		// WHEN today's posts are shown
+		const run = await runCli(ctx, ["post", "show", "--day", "today", "--json"]);
+
+		// THEN only the post from 5 November is chosen, so it runs as a single post
+		expect((JSON.parse(run.out) as { result: { slug: string } }).result.slug).toBe("2026-11-05-c");
 	});
 
 	it("should say how many posts failed after printing each error", async () => {

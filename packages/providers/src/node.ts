@@ -13,7 +13,7 @@ import {
 	type Paths,
 	Config as Settings,
 } from "@shorts-studio/usecases/context";
-import { Config, ConfigProvider, Effect, Redacted, Result, Schema } from "effect";
+import { Config, ConfigProvider, DateTime, Effect, Redacted, Result, Schema } from "effect";
 import { type RunResult, runProcess } from "./process.ts";
 
 /** Base URLs of the paid services, by provider. Tests and local fakes override them. */
@@ -147,6 +147,7 @@ export const makeContext = (env: NodeJS.ProcessEnv = process.env): ProviderConte
 		},
 		run: runProcess,
 		now: () => new Date(),
+		timeZone: DateTime.zoneMakeLocal(),
 		interactive: process.stdin.isTTY === true,
 		log: (line) => process.stderr.write(`${line}\n`),
 	};

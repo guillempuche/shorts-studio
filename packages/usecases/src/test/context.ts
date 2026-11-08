@@ -6,7 +6,7 @@
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Redacted } from "effect";
+import { DateTime, Redacted } from "effect";
 import { onTestFinished } from "vitest";
 import type { Context } from "../context.ts";
 
@@ -37,6 +37,7 @@ export const testContext = (
 			return value === undefined ? undefined : Redacted.make(value);
 		},
 		now: () => NOW,
+		timeZone: DateTime.zoneMakeNamedUnsafe("UTC"),
 		interactive: true,
 		log: () => {},
 		...rest,

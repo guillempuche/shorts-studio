@@ -13,13 +13,17 @@
           "type": "number",
           "description": "Most spent on paid calls in one day, in US dollars. Default 5."
         },
+        "monthlyUsd": {
+          "type": "number",
+          "description": "Most spent on paid calls in one calendar month, in US dollars. Default 100."
+        },
         "postUsd": {
           "type": "number",
           "description": "Most spent on one post, in US dollars. Default 2."
         }
       },
       "additionalProperties": true,
-      "description": "Spending limits, checked before every paid call."
+      "description": "Spending limits, checked before every paid call. Days and months follow the machine's time zone."
     },
     "transcribe": {
       "type": "object",

@@ -71,3 +71,9 @@ A paid call SHALL fail with `over-budget` when it would pass `caps.monthlyUsd`, 
 
 - **WHEN** a call is made at 00:30 local time
 - **THEN** it counts toward the new day, even while UTC is still on the day before
+
+#### Scenario: A post made just after midnight
+
+- **WHEN** a post is created at 00:30 local time
+- **THEN** its slug starts with the new day's date
+- **AND** `--day today` picks it

@@ -5,7 +5,7 @@
  */
 
 import { ModelSettings } from "@shorts-studio/domain/models";
-import { type Redacted, Schema } from "effect";
+import { type DateTime, type Redacted, Schema } from "effect";
 
 export interface Paths {
 	/** brand.json, config.json and the spend ledger. */
@@ -30,6 +30,8 @@ const SchemaLink = setting(
 	"Where the JSON Schema for this file is, so an editor can complete and check it.",
 );
 
+export const DEFAULT_CAPS = { dailyUsd: 5, monthlyUsd: 100, postUsd: 2 } as const;
+
 /** config.json: providers, limits and tools. Every value can be overridden by `SHORTS_<PATH>`. */
 export const Config = Schema.Struct({
 	$schema: SchemaLink,
@@ -37,11 +39,18 @@ export const Config = Schema.Struct({
 		Schema.Struct({
 			dailyUsd: setting(
 				Schema.Finite,
-				"Most spent on paid calls in one day, in US dollars. Default 5.",
+				`Most spent on paid calls in one day, in US dollars. Default ${DEFAULT_CAPS.dailyUsd}.`,
 			),
-			postUsd: setting(Schema.Finite, "Most spent on one post, in US dollars. Default 2."),
+			monthlyUsd: setting(
+				Schema.Finite,
+				`Most spent on paid calls in one calendar month, in US dollars. Default ${DEFAULT_CAPS.monthlyUsd}.`,
+			),
+			postUsd: setting(
+				Schema.Finite,
+				`Most spent on one post, in US dollars. Default ${DEFAULT_CAPS.postUsd}.`,
+			),
 		}),
-		"Spending limits, checked before every paid call.",
+		"Spending limits, checked before every paid call. Days and months follow the machine's time zone.",
 	),
 	transcribe: setting(ProviderChoice("transcribes audio"), "Transcription with word timings."),
 	image: setting(ProviderChoice("makes the images"), "One image per beat."),
@@ -88,8 +97,6 @@ export const Brand = Schema.Struct({
 });
 export type Brand = typeof Brand.Type;
 
-export const DEFAULT_CAPS = { dailyUsd: 5, postUsd: 2 } as const;
-
 /** Where an API key is looked up: an environment variable, then a macOS Keychain entry. */
 export interface KeySpec {
 	readonly env: string;
@@ -105,6 +112,8 @@ export interface Context {
 	/** An API key, or undefined when it isn't set. Redacted, so printing it shows `<redacted>`. */
 	readonly secret: (key: KeySpec) => Promise<Redacted.Redacted<string> | undefined>;
 	readonly now: () => Date;
+	/** The machine's time zone, which sets where a day and a month start for the caps. */
+	readonly timeZone: DateTime.TimeZone;
 	/**
 	 * A person is at the terminal: stdin is one. An agent's shell and an MCP server have none,
 	 * so the user's own decisions check it.

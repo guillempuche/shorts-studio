@@ -1,3 +1,4 @@
+import { DateTime } from "effect";
 import { describe, expect, it } from "vitest";
 import { testContext } from "../test/context.ts";
 import { run } from "../test/fakes.ts";
@@ -19,6 +20,22 @@ describe("post create", () => {
 
 		// THEN its slug starts with today's date
 		expect(created.slug).toBe("2026-11-04-morning-routine");
+	});
+
+	it("should date a post made just after midnight by the local day", async () => {
+		// GIVEN a machine in Madrid at 00:30 on 5 November, while UTC is still on 4 November
+		const ctx = testContext({
+			timeZone: DateTime.zoneMakeNamedUnsafe("Europe/Madrid"),
+			now: () => new Date("2026-11-04T23:30:00Z"),
+		});
+
+		// WHEN a post is created as "morning-routine"
+		const created = await run(
+			postCreate.run({ post: "morning-routine", title: undefined, notes: undefined }, ctx, MODE),
+		);
+
+		// THEN its slug starts with the local day
+		expect(created.slug).toBe("2026-11-05-morning-routine");
 	});
 
 	it("should keep a slug that already starts with a date", async () => {

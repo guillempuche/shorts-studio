@@ -88,7 +88,11 @@ export const configShow = defineOperation({
 	params: {},
 	output: Schema.Struct({
 		paths: Schema.Struct({ data: Schema.String, posts: Schema.String }),
-		caps: Schema.Struct({ dailyUsd: Schema.Finite, postUsd: Schema.Finite }),
+		caps: Schema.Struct({
+			dailyUsd: Schema.Finite,
+			monthlyUsd: Schema.Finite,
+			postUsd: Schema.Finite,
+		}),
 		imageModel: Schema.String,
 		imageProvider: Schema.String,
 		transcriber: Schema.String,
@@ -115,7 +119,7 @@ export const configShow = defineOperation({
 		return [
 			`data:  ${o.paths.data}`,
 			`posts: ${o.paths.posts}`,
-			`caps:  $${o.caps.dailyUsd}/day, $${o.caps.postUsd}/post`,
+			`caps:  $${o.caps.dailyUsd}/day, $${o.caps.monthlyUsd}/month, $${o.caps.postUsd}/post`,
 			`transcription: ${o.transcriber}   images: ${o.imageProvider} ${o.imageModel}`,
 			"",
 			...renderChecks(o.checks),
