@@ -12,12 +12,22 @@ Notable changes, newest first. The release workflow publishes each version's sec
 - Choose the transcription and image provider in config.json (`transcribe.provider`, `image.provider`). `doctor` checks only the keys of the providers in use.
 - Any setting can come from a `SHORTS_*` environment variable, which wins over config.json and brand.json, such as `SHORTS_IMAGE_MODEL=flux-dev`.
 - JSON Schemas for config.json and brand.json in `schemas/`, with a description for every setting, so editors complete and check them. `schema show --name config` prints one.
+- Models are data: each provider ships its models with the price per unit and the day it was checked. `models` in config.json adds a model or changes a price, with no code. `models list` shows them all and the one each job uses.
+- A monthly spending cap, `caps.monthlyUsd` ($100 by default), next to the daily and per-post caps. `budget show` reports the month.
+- `doctor` warns when the price in use was checked more than 90 days ago, or when a model in config.json belongs to no provider in use, and fails when a job's model can't be used.
+- CI builds the Linux, macOS and Windows binaries and runs them through `scripts/smoke-binary.ts`, and the release runs it before publishing, since the binaries run on Bun while the tests run on Node.
 
 ### Changed
 
 - `script approve` covers the audio and every image prompt, not just the script: changing any of them needs approving again, and `next` says what changed. Posts approved before need approving again.
 - `script approve` and `post review` run only from a terminal, so no agent can record your decision. The Claude Code and Codex rules also catch them with flags placed first.
 - `audio transcribe` and `source transcribe` take `--dry-run` and show their cost. They still run without `--yes`, and the agent settings ask before them.
+- Every paid call is priced by its units (megapixels or images, minutes of audio) times its model's price, and each ledger line records both, so a later price change doesn't move past totals. Transcription counts toward the caps.
+- Days and months follow the machine's time zone, not UTC, for the caps, new post dates and `--day today`. `TZ` sets another zone, in any of its forms; one that names no zone falls back to UTC, and `doctor` warns.
+- A spending reservation is freed only when nothing was billed: a refusal (HTTP 4xx), a job the provider reported failed, or a call stopped before sending. After a 5xx or a dropped connection it stays counted.
+- When a call would pass several caps, the error names the per-post cap first, then the month's, then the day's, and says to wait only where waiting helps.
+- `transcribe.model` names a model from `models list`. Another Together model needs an entry under `models` first.
+- A ledger line whose time isn't written as commands write it, or whose amount is negative, makes the ledger read fail, naming the line.
 - Beats: a silence before the first word, inside a short phrase or before the last word gets beats of its own. Plans made before are stale.
 - Captions: a lone word joins its neighbour only within 4 words and never across a pause.
 - The code is a workspace: `apps/cli`, `apps/mcp`, and packages for the domain, the use cases and the providers, built with Turbo and kept in step by syncpack.
@@ -32,6 +42,12 @@ Notable changes, newest first. The release workflow publishes each version's sec
 
 ### Fixed
 
+- A total that lands exactly on a cap is no longer refused because of floating-point sums: the 50th $0.04 image under the $2 post cap goes through.
+- A paid image or transcript is kept even when its ledger line can't be written.
+- A ledger whose last line lost its newline, or that starts with a byte-order mark, stays readable.
+- Negative caps, and calls priced below zero, are refused.
+- `source transcribe` refuses a language code that isn't two letters, before sending the audio.
+- `image generate --reroll` keeps the seeds when it stops on a missing key.
 - Interrupting `image generate` while a request is being sent saves the request, so the next run resumes it instead of paying again.
 - `capcut export` refuses a draft whose beats, images or captions changed after it was approved.
 - A model's `options` in config.json can't change the image size, count, seed or prompt FAL is asked for, so the reservation always matches the bill.

@@ -60,9 +60,9 @@ shorts-studio draft render --post 2026-11-06-morning-routine
 - Audio to draft, with word-timed captions, a hook title and motion picked for each story moment ([the research behind it](docs/research/README.md)).
 - An evening review, a frame-exact CapCut export, and a record of the final video and where you published it.
 - Download and transcribe saved reels and TikToks.
-- Spending caps, paid requests that can resume, and no images until you approve the script and its prompts.
+- Daily, monthly and per-post spending caps, with every paid call priced from a list of models you can extend; paid requests that can resume; and no images until you approve the script and its prompts.
 
-[openspec/specs](openspec/specs) describes exactly how it behaves. Planned work is in [openspec/changes](openspec/changes): models and prices kept as data, trying models side by side and keeping what works, AI voice and music, AI video for chosen beats, and carousels.
+[openspec/specs](openspec/specs) describes exactly how it behaves. Planned work is in [openspec/changes](openspec/changes): trying models side by side and keeping what works, AI voice and music, AI video for chosen beats, and carousels.
 
 ## How it compares
 

@@ -33,6 +33,8 @@ Every command is an `Operation` in `packages/usecases/src/operations/`, listed i
 
 An operation takes plain values in a `Context` (folders, settings, `secret()`, `now`, `log`) and asks for outside work through ports (`packages/usecases/src/ports.ts`): `Transcriber`, `ImageMaker`, `MediaTools` and `Downloader`. Each port is an Effect service. Each provider in `packages/providers` is a layer that implements one or more ports, and says which API keys it needs and how `doctor` checks it.
 
+Each paid provider ships its models as data (`FAL_MODELS`, `TOGETHER_MODELS`): the endpoint, the unit it's billed by, the price of one, the day that price was checked, and fields sent with every request. `modelsFor` (`packages/usecases/src/models.ts`) merges them with `config.json`'s `models`, and `chooseModel` picks one. The use case hands the whole model to the provider, so a model added in `config.json` needs no code. `costOf` prices a call from its model and its units.
+
 `providersLayer` (`packages/providers/src/index.ts`) picks the provider for each job from `config.json` (`transcribe.provider`, `image.provider`). A fork adds a provider by writing its module and adding one line to the list for each job it does. No use case changes. Every provider, and every in-memory fake the use-case tests use, runs the same contract suite for its port, so they can't drift apart.
 
 Settings come in layers, read through Effect's `ConfigProvider`: built-in defaults, then `config.json` and `brand.json`, then `SHORTS_*` environment variables, then flags. Each value comes from the highest layer that sets it, and the result is checked against the same Schema that publishes `schemas/config.schema.json` and `schemas/brand.schema.json`. API keys come only from the environment or the macOS Keychain, as `Redacted` values, so a key printed by mistake shows `<redacted>`.
@@ -41,7 +43,7 @@ Tests sit next to the module they test (`beats.ts` and `beats.test.ts`). Use-cas
 
 ### Errors
 
-Every command fails with one `ShortsError` (`packages/domain/src/errors.ts`). It always says what went wrong (`message`) and what to do next (`fix`). Its `reason` is a tagged error (`NotFound`, `Usage`, `OverBudget`, `MissingKey`, `ProviderFailed`, `RequestEnded`…), so code handles one kind with `Effect.catchReason`. The reason sets the stable `code` that scripts and agents match on, and the exit code.
+Every command fails with one `ShortsError` (`packages/domain/src/errors.ts`). It always says what went wrong (`message`) and what to do next (`fix`). Its `reason` is a tagged error (`NotFound`, `Usage`, `OverBudget`, `MissingKey`, `ProviderFailed`, `Refused`, `RequestEnded`…), so code handles one kind with `Effect.catchReason`. The reason sets the stable `code` that scripts and agents match on, and the exit code.
 
 ## Data flow
 
@@ -51,7 +53,7 @@ Every command fails with one `ShortsError` (`packages/domain/src/errors.ts`). It
 
 ### Transcribe
 
-`audio transcribe` sends the audio to the transcription provider (Together's Whisper large-v3 by default). It writes `transcript.json` with every word's start and end.
+`audio transcribe` sends the audio to the transcription provider (Together's Whisper large-v3 by default). It writes `transcript.json` with every word's start and end. Like every paid call, it reserves its price first, for the audio's minutes, but it needs no `--yes`.
 
 ### Beats and prompts
 
@@ -110,7 +112,9 @@ Every generated output stores an `inputHash`. It covers the output's inputs, the
 
 ### Ledger
 
-`<data>/ledger.jsonl` (`packages/usecases/src/ledger.ts`) is only ever added to. Each paid call adds a `reserve` entry before it starts, then a `settle` or `release` entry. Reservations are checked against `caps.dailyUsd` and `caps.postUsd` under one lock that every process shares.
+`<data>/ledger.jsonl` (`packages/usecases/src/ledger.ts`) is only ever added to. Each paid call adds a `reserve` entry before it starts, then a `settle` entry at the reserved amount or a `release` entry. Each entry records the units and the price of one. Reservations are checked against `caps.dailyUsd`, `caps.monthlyUsd` and `caps.postUsd` under one lock that every process shares, with days and months in the machine's time zone (`packages/usecases/src/days.ts`). Times are written in one form (`toISOString`), so they compare as strings; a line in another form, or with a negative amount, makes the read fail.
+
+A reservation is freed only when the failure proves nothing was billed (`nothingBilled`): a refusal (`Refused`, an HTTP 4xx), a job the provider reported failed (`RequestEnded`), or a call that stopped before sending. Anything else stays counted.
 
 ## Agent interface
 
@@ -140,6 +144,10 @@ Spending commands take `--dry-run` and need `--yes` on the CLI, except transcrip
 **Why a workspace of packages, not folders in one package:** package dependencies make the layers a rule, not a habit. The domain can't import a provider, because pnpm doesn't link one into it.
 
 **Why `spawn` with `stopWhenAborted`, not Effect's process spawner:** on macOS and Linux, Effect's spawner detaches the programs it starts, so an interrupted render could leave ffmpeg running.
+
+**Why models as data, not code:** models change often, and the same job is worth trying with several. A new model from a family a provider already handles is a `config.json` entry, and old ledger lines keep the price they were made with.
+
+**Why keep a reservation when the outcome is unknown:** a gateway can answer 5xx after the provider took the job on, and a dropped connection says nothing either way. Freeing those would let the caps count less than was billed.
 
 **Why reserve before sending, not record after:** if five posts generate at once, each would pass a check made after the fact. Reserving under one lock makes the cap hold.
 

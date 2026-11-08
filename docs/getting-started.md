@@ -23,7 +23,7 @@ Two optional files in the data folder hold your settings: `config.json` (provide
 ```json
 {
   "$schema": "https://raw.githubusercontent.com/guillempuche/shorts-studio/main/schemas/config.schema.json",
-  "caps": { "dailyUsd": 5, "postUsd": 2 },
+  "caps": { "dailyUsd": 5, "monthlyUsd": 100, "postUsd": 2 },
   "image": { "provider": "fal", "model": "flux-schnell" }
 }
 ```
