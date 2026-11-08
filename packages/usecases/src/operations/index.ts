@@ -13,6 +13,7 @@ import { draftRender } from "./draft.ts";
 import { imageGenerate } from "./image.ts";
 import { imageImport } from "./image-import.ts";
 import { postArchive, postFinalize, postPublish, postReview } from "./lifecycle.ts";
+import { modelsList } from "./models.ts";
 import { postCreate, postList, postShow } from "./post.ts";
 import { makeSchemaShow } from "./schema.ts";
 import { scriptApprove, scriptSet } from "./script.ts";
@@ -22,6 +23,7 @@ import { sourceDownload, sourceTranscribe } from "./source-download.ts";
 const all: Array<Operation> = [
 	configShow,
 	configCheck,
+	modelsList,
 	postCreate,
 	postList,
 	postShow,

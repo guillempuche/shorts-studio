@@ -113,6 +113,14 @@ check(
 	schema,
 );
 
+const models = run(["models", "list", "--json"]);
+check(
+	"models list names each job's models with their prices",
+	models.status === 0 &&
+		JSON.stringify(field(jsonOf(models), ["result", "models"])).includes("usdPerUnit"),
+	models,
+);
+
 const config = run(["config", "show", "--json"]);
 check(
 	`config show follows TZ (${ZONE})`,

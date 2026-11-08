@@ -3,7 +3,7 @@
  * new day's cap, and a post made then is dated that day.
  */
 
-import { DateTime } from "effect";
+import { DateTime, Duration } from "effect";
 import type { Context } from "./context.ts";
 
 /**
@@ -40,6 +40,17 @@ export const localDays = (timeZone: DateTime.TimeZone, now: Date): LocalDays => 
 		startOfMonth: instant(DateTime.startOf(zoned, "month")),
 	};
 };
+
+/** Whole days from one YYYY-MM-DD date to a later one. */
+export const daysBetween = (from: string, to: string): number =>
+	Math.round(
+		Duration.toDays(
+			DateTime.distance(
+				DateTime.makeUnsafe(`${from}T00:00:00Z`),
+				DateTime.makeUnsafe(`${to}T00:00:00Z`),
+			),
+		),
+	);
 
 /** The local calendar now, from one reading of the clock. */
 export const daysNow = (ctx: Context): LocalDays => localDays(ctx.timeZone, ctx.now());

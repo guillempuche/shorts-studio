@@ -99,6 +99,16 @@ describe("Model", () => {
 		}
 	});
 
+	it.each([
+		["30 February", "2026-02-30"],
+		["a month 13", "2026-13-01"],
+	])("should refuse a price checked on a day that doesn't exist (%s)", (_, day) => {
+		// GIVEN a model whose price was checked on a day with the right shape but no such date
+		// WHEN it is read
+		// THEN it is refused, rather than counted from a wrong day
+		expect(Result.isFailure(decode({ ...flux, priceChecked: day }))).toBe(true);
+	});
+
 	it("should refuse a negative price and a date that isn't YYYY-MM-DD", () => {
 		// GIVEN a model with a negative price, and one checked on "last week"
 		// WHEN each is read

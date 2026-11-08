@@ -44,7 +44,17 @@ const ModelFields = Schema.Struct({
 			description: "Billed in whole units, rounded up: FAL bills 3.2 megapixels as 4.",
 		}),
 	),
-	priceChecked: Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/u)).annotate({
+	priceChecked: Schema.String.check(
+		// The shape alone lets 2026-02-30 through, and doctor counts days from this date.
+		Schema.makeFilter((day) => {
+			const time = Date.parse(`${day}T00:00:00Z`);
+			return !Number.isNaN(time) && new Date(time).toISOString().startsWith(day)
+				? undefined
+				: "a real date";
+		}),
+		// Last, so the description below lands on a check the JSON Schema can show.
+		Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/u),
+	).annotate({
 		description: "The day the price was last checked on the provider's site, as YYYY-MM-DD.",
 	}),
 	options: Schema.optionalKey(

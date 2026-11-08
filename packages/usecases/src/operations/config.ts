@@ -7,6 +7,7 @@ import { fail } from "@shorts-studio/domain/errors";
 import { DateTime, Effect, Schema } from "effect";
 import type { Context, KeySpec } from "../context.ts";
 import { caps } from "../ledger.ts";
+import { modelChecks } from "../models.ts";
 import { defineOperation } from "../operation.ts";
 import {
 	type Check,
@@ -56,15 +57,21 @@ const settingsChecks = (ctx: Context): ReadonlyArray<Check> => [
 	})),
 ];
 
-/** The settings, then the tools of every provider in use, then the keys they need. */
+/** The settings and models, then the tools of every provider in use, then the keys they need. */
 const runChecks = (ctx: Context) =>
 	Effect.gen(function* () {
+		const transcriber = yield* Transcriber;
+		const maker = yield* ImageMaker;
 		const providers: ReadonlyArray<ProviderInfo> = [
 			yield* MediaTools,
 			yield* Downloader,
-			yield* Transcriber,
-			yield* ImageMaker,
+			transcriber,
+			maker,
 		];
+		const modelRows = yield* modelChecks(ctx, [
+			{ job: "image", offer: maker },
+			{ job: "transcribe", offer: transcriber },
+		]);
 		const toolRows = yield* Effect.forEach(providers, (provider) => provider.checks, {
 			concurrency: "unbounded",
 		});
@@ -77,7 +84,7 @@ const runChecks = (ctx: Context) =>
 				[...keys.values()].map(({ provider, key }) => keyCheck(ctx, provider.provider, key)),
 			),
 		);
-		return [...settingsChecks(ctx), ...toolRows.flat(), ...keyRows];
+		return [...settingsChecks(ctx), ...modelRows, ...toolRows.flat(), ...keyRows];
 	});
 
 const MARK = { ok: "✓", warn: "!", fail: "✗" } as const;

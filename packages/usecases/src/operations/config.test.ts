@@ -86,6 +86,68 @@ describe("config check (doctor)", () => {
 	});
 });
 
+describe("config check (doctor), about models", () => {
+	/** config.json changing only the day fake-fast's price was checked. */
+	const checkedOn = (day: string) =>
+		testContext({ config: { models: { "fake-fast": { priceChecked: day } } } });
+
+	it("should warn, and still pass, when the price in use was checked more than 90 days ago", async () => {
+		// GIVEN the image model in use, priced 120 days before today (2026-11-04)
+		const ctx = checkedOn("2026-07-07");
+
+		// WHEN the check runs
+		const result = await run(configCheck.run({}, ctx, MODE));
+
+		// THEN it warns, saying where to update the price
+		const row = result.checks.find((c) => c.name === "image model");
+		expect(row).toMatchObject({ status: "warn" });
+		expect(row?.detail).toContain("checked 120 days ago");
+		expect(row?.fix).toContain("models.fake-fast.usdPerUnit and priceChecked");
+		// AND it still ends with Ready.
+		expect(configCheck.render?.(result).endsWith("Ready.")).toBe(true);
+	});
+
+	it("should not warn about a price checked exactly 90 days ago", async () => {
+		// GIVEN the image model in use, priced 90 days before today
+		const ctx = checkedOn("2026-08-06");
+
+		// WHEN the check runs
+		const result = await run(configCheck.run({}, ctx, MODE));
+
+		// THEN there is nothing to say about it
+		expect(result.checks.find((c) => c.name === "image model")).toBeUndefined();
+	});
+
+	it("should warn about a model in config.json that no provider in use claims", async () => {
+		// GIVEN config.json repricing "fake-fsat", a misspelt fake-fast
+		const ctx = testContext({ config: { models: { "fake-fsat": { usdPerUnit: 0.02 } } } });
+
+		// WHEN the check runs
+		const result = await run(configCheck.run({}, ctx, MODE));
+
+		// THEN it warns, naming the entry and how to check it
+		expect(result.checks).toContainEqual(
+			expect.objectContaining({
+				name: "models",
+				status: "warn",
+				detail: expect.stringContaining("models.fake-fsat"),
+			}),
+		);
+	});
+
+	it("should fail when the image model config.json chooses doesn't exist", async () => {
+		// GIVEN config.json choosing an image model the provider doesn't have
+		const ctx = testContext({ config: { image: { model: "nope" } } });
+
+		// WHEN the check runs
+		const error = await runFailure(configCheck.run({}, ctx, MODE));
+
+		// THEN it fails, since every image would fail, naming the model and the ones to use
+		expect(error.message).toContain('no model "nope"');
+		expect(error.message).toContain("fake-fast, fake-fine");
+	});
+});
+
 describe("config show", () => {
 	it("should show the folders, the caps and the providers in use", async () => {
 		// GIVEN a $3 daily cap, and the default monthly and per-post caps
