@@ -4,7 +4,7 @@
  */
 
 import { fail } from "@shorts-studio/domain/errors";
-import { Effect, Schema } from "effect";
+import { DateTime, Effect, Schema } from "effect";
 import type { Context, KeySpec } from "../context.ts";
 import { caps } from "../ledger.ts";
 import { defineOperation } from "../operation.ts";
@@ -38,16 +38,23 @@ const keyCheck = async (ctx: Context, provider: string, key: KeySpec): Promise<C
 			};
 
 /**
- * A config.json or brand.json that isn't valid. The defaults are used instead, which may not
- * be what the user wanted.
+ * Settings that aren't valid. Their defaults are used instead, which may not be what the user
+ * wanted: a bad file or variable is a problem to fix, a fallback like TZ's only a warning.
  */
-const settingsChecks = (ctx: Context): ReadonlyArray<Check> =>
-	ctx.settingsIssues.map((issue) => ({
+const settingsChecks = (ctx: Context): ReadonlyArray<Check> => [
+	...ctx.settingsIssues.map((issue) => ({
 		name: "settings",
-		status: "fail",
+		status: "fail" as const,
 		detail: issue,
-		fix: "Fix that file, or remove it to use the defaults.",
-	}));
+		fix: "Fix that setting, or remove it to use the default.",
+	})),
+	...ctx.settingsWarnings.map((warning) => ({
+		name: "settings",
+		status: "warn" as const,
+		detail: warning,
+		fix: "Fix that setting, or unset it to use the default.",
+	})),
+];
 
 /** The settings, then the tools of every provider in use, then the keys they need. */
 const runChecks = (ctx: Context) =>
@@ -93,6 +100,7 @@ export const configShow = defineOperation({
 			monthlyUsd: Schema.Finite,
 			postUsd: Schema.Finite,
 		}),
+		timeZone: Schema.String,
 		imageModel: Schema.String,
 		imageProvider: Schema.String,
 		transcriber: Schema.String,
@@ -108,6 +116,7 @@ export const configShow = defineOperation({
 			return {
 				paths: ctx.paths,
 				caps: caps(ctx),
+				timeZone: DateTime.zoneToString(ctx.timeZone),
 				imageModel: ctx.config.image?.model ?? maker.defaultModel,
 				imageProvider: maker.provider,
 				transcriber: `${transcriber.provider} ${ctx.config.transcribe?.model ?? transcriber.defaultModel}`,
@@ -119,7 +128,7 @@ export const configShow = defineOperation({
 		return [
 			`data:  ${o.paths.data}`,
 			`posts: ${o.paths.posts}`,
-			`caps:  $${o.caps.dailyUsd}/day, $${o.caps.monthlyUsd}/month, $${o.caps.postUsd}/post`,
+			`caps:  $${o.caps.dailyUsd}/day, $${o.caps.monthlyUsd}/month, $${o.caps.postUsd}/post (days and months in ${o.timeZone})`,
 			`transcription: ${o.transcriber}   images: ${o.imageProvider} ${o.imageModel}`,
 			"",
 			...renderChecks(o.checks),

@@ -12,7 +12,7 @@ import {
 	stageOf,
 } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
-import { today } from "../days.ts";
+import { daysNow } from "../days.ts";
 import { defineOperation, p } from "../operation.ts";
 import { createPost, listSlugs, postDir, readPost } from "../post-store.ts";
 
@@ -87,14 +87,16 @@ export const postCreate = defineOperation({
 	hints: { readonly: false, destructive: false, idempotent: false, openWorld: false },
 	run: (input, ctx) =>
 		Effect.gen(function* () {
-			const slug = DATED.test(input.post) ? input.post : `${today(ctx)}-${input.post}`;
+			// One clock read, so the slug's date and createdAt agree even at midnight.
+			const { at, today } = daysNow(ctx);
+			const slug = DATED.test(input.post) ? input.post : `${today}-${input.post}`;
 			const brief = {
 				...(input.title !== undefined ? { title: input.title } : {}),
 				...(input.notes !== undefined ? { notes: input.notes } : {}),
 			};
 			const post = yield* createPost(ctx, {
 				slug,
-				createdAt: ctx.now().toISOString(),
+				createdAt: at,
 				...(Object.keys(brief).length > 0 ? { brief } : {}),
 				aiGenerated: true,
 			});

@@ -49,7 +49,26 @@ describe("config check (doctor)", () => {
 		// THEN it names the file and says how to fix it
 		expect(error.code).toBe("missing-tool");
 		expect(error.message).toContain("/data/config.json");
-		expect(error.message).toContain("Fix that file, or remove it to use the defaults.");
+		expect(error.message).toContain("Fix that setting, or remove it to use the default.");
+	});
+
+	it("should warn about a setting that fell back to its default, without failing", async () => {
+		// GIVEN a TZ that names no zone, so days follow UTC
+		const ctx = testContext({
+			settingsWarnings: ['TZ is "Mars/Base", which isn\'t a time zone name'],
+		});
+
+		// WHEN the check runs
+		const result = await run(configCheck.run({}, ctx, MODE));
+
+		// THEN it passes, with a warning that names TZ and says how to fix it
+		expect(result.checks).toContainEqual(
+			expect.objectContaining({
+				name: "settings",
+				status: "warn",
+				detail: expect.stringContaining("TZ"),
+			}),
+		);
 	});
 
 	it("should pass when every tool works and every key is set", async () => {
@@ -78,6 +97,8 @@ describe("config show", () => {
 		// THEN they show where things live, the caps and each provider with its model
 		expect(result.paths).toEqual(ctx.paths);
 		expect(result.caps).toEqual({ dailyUsd: 3, monthlyUsd: 100, postUsd: 2 });
+		// AND the time zone the caps' days and months follow
+		expect(result.timeZone).toBe("UTC");
 		expect(result.transcriber).toBe("fake-transcriber fake-whisper");
 		expect(result.imageProvider).toBe("fake-images");
 		// AND the image model stays where scripts already read it

@@ -1,6 +1,6 @@
 import { Result, Schema } from "effect";
 import { describe, expect, it } from "vitest";
-import { imageAmount, Model, ModelSettings, price } from "./models.ts";
+import { audioAmount, imageAmount, Model, ModelSettings, price } from "./models.ts";
 
 const flux: Model = {
 	provider: "fal",
@@ -44,6 +44,23 @@ describe("price", () => {
 		expect(cost.usd).toBeCloseTo(0.00225);
 	});
 
+	it("should bill a whole number blurred by float maths as that number, not the next", () => {
+		// GIVEN a model billed in whole units, rounded up
+		// WHEN 3.0000000000000004 units are priced, as float maths can turn 3 into
+		const cost = price(flux, 3.0000000000000004);
+
+		// THEN it is 3 units, not 4
+		expect(cost.units).toBe(3);
+	});
+
+	it("should bill any amount above zero as at least one whole unit", () => {
+		// GIVEN a model billed in whole units, rounded up
+		// WHEN a tiny amount is priced, and nothing at all
+		// THEN the tiny amount is one unit, and nothing is none
+		expect(price(flux, 1e-12).units).toBe(1);
+		expect(price(flux, 0).units).toBe(0);
+	});
+
 	it("should count one unit per image when a model is billed by the image", () => {
 		// GIVEN a model billed by the image
 		const perImage: Model = { ...flux, billedBy: "image", usdPerUnit: 0.04 };
@@ -56,6 +73,19 @@ describe("price", () => {
 	});
 });
 
+describe("audioAmount", () => {
+	it("should turn seconds into minutes for a model billed by the minute, and keep them per second", () => {
+		// GIVEN models billed by the minute and by the second
+		const perMinute: Model = { ...flux, job: "transcribe", billedBy: "minute", roundUp: false };
+		const perSecond: Model = { ...perMinute, billedBy: "second" };
+
+		// WHEN 90 seconds of audio are measured for each
+		// THEN it is 1.5 minutes, and 90 seconds
+		expect(audioAmount(perMinute, 90)).toBe(1.5);
+		expect(audioAmount(perSecond, 90)).toBe(90);
+	});
+});
+
 describe("Model", () => {
 	it("should refuse a unit its job can't be billed by", () => {
 		// GIVEN an image model billed by the minute
@@ -65,7 +95,7 @@ describe("Model", () => {
 		// THEN it is refused, saying what an image model is billed by
 		expect(Result.isFailure(result)).toBe(true);
 		if (Result.isFailure(result)) {
-			expect(result.failure.message).toContain("megapixel or image");
+			expect(result.failure.message).toContain("an image model is billed by megapixel or image");
 		}
 	});
 

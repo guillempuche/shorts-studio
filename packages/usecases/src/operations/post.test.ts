@@ -1,5 +1,6 @@
-import { DateTime } from "effect";
+import { DateTime, Effect } from "effect";
 import { describe, expect, it } from "vitest";
+import { readPost } from "../post-store.ts";
 import { testContext } from "../test/context.ts";
 import { run } from "../test/fakes.ts";
 import { seedPost } from "../test/posts.ts";
@@ -36,6 +37,23 @@ describe("post create", () => {
 
 		// THEN its slug starts with the local day
 		expect(created.slug).toBe("2026-11-05-morning-routine");
+	});
+
+	it("should take the slug's date and createdAt from one reading of the clock", async () => {
+		// GIVEN a clock that passes midnight while the post is made
+		let reads = 0;
+		const instants = ["2026-11-04T23:59:59.999Z", "2026-11-05T00:00:00.000Z"];
+		const ctx = testContext({ now: () => new Date(instants[Math.min(reads++, 1)] ?? "") });
+
+		// WHEN a post is created as "late"
+		const created = await run(
+			postCreate.run({ post: "late", title: undefined, notes: undefined }, ctx, MODE),
+		);
+
+		// THEN its slug's date is the day of its createdAt
+		const post = await Effect.runPromise(readPost(ctx, created.slug));
+		expect(created.slug).toBe("2026-11-04-late");
+		expect(post.createdAt).toBe("2026-11-04T23:59:59.999Z");
 	});
 
 	it("should keep a slug that already starts with a date", async () => {

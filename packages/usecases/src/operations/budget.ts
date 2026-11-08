@@ -4,7 +4,7 @@
  */
 
 import { Effect, Schema } from "effect";
-import { startOfThisMonth, startOfToday, thisMonth, today } from "../days.ts";
+import { daysNow } from "../days.ts";
 import { caps, readLedger, spent } from "../ledger.ts";
 import { defineOperation, p } from "../operation.ts";
 
@@ -28,18 +28,17 @@ export const budgetShow = defineOperation({
 	hints: { readonly: true, destructive: false, idempotent: true, openWorld: false },
 	run: (input, ctx) =>
 		Effect.map(readLedger(ctx), (entries) => {
-			const day = today(ctx);
-			const month = thisMonth(ctx);
+			const days = daysNow(ctx);
 			const names = [...new Set(entries.map((e) => e.post))].filter(
 				(name) => input.post === undefined || name === input.post,
 			);
 			const { dailyUsd, monthlyUsd, postUsd } = caps(ctx);
 			return {
-				day,
-				todayUsd: spent(entries, { since: startOfToday(ctx) }),
+				day: days.today,
+				todayUsd: spent(entries, { since: days.startOfToday }),
 				dailyCapUsd: dailyUsd,
-				month,
-				monthUsd: spent(entries, { since: startOfThisMonth(ctx) }),
+				month: days.month,
+				monthUsd: spent(entries, { since: days.startOfMonth }),
 				monthlyCapUsd: monthlyUsd,
 				postCapUsd: postUsd,
 				posts: names

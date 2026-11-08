@@ -13,7 +13,7 @@
 import { fail, reportOf, type ShortsError } from "@shorts-studio/domain/errors";
 import { Stage, stageOf } from "@shorts-studio/domain/post";
 import type { Context } from "@shorts-studio/usecases/context";
-import { today } from "@shorts-studio/usecases/days";
+import { daysNow } from "@shorts-studio/usecases/days";
 import {
 	commandPath,
 	flagName,
@@ -106,7 +106,7 @@ const selectPosts = Effect.fn("selectPosts")(function* (ctx: Context, input: Sel
 			"Pass --post <slug> (or several, comma-separated), --day or --in-stage.",
 		);
 	}
-	const day = input.day === "today" ? today(ctx) : input.day;
+	const day = input.day === "today" ? daysNow(ctx).today : input.day;
 	if (day !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
 		return yield* fail("usage", `"${input.day}" isn't a day.`, "Use today or YYYY-MM-DD.");
 	}

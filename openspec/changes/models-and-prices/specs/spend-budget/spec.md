@@ -77,3 +77,42 @@ A paid call SHALL fail with `over-budget` when it would pass `caps.monthlyUsd`, 
 - **WHEN** a post is created at 00:30 local time
 - **THEN** its slug starts with the new day's date
 - **AND** `--day today` picks it
+
+### Requirement: A total that lands on a cap SHALL fit it
+
+A total exactly on a cap SHALL fit it, whatever floating-point sums make of it. A call priced below zero SHALL be refused, with nothing written.
+
+#### Scenario: The 50th image on a $2 post
+
+- **WHEN** 49 images at $0.04 were reserved for a post with a $2 cap
+- **AND** a 50th is reserved
+- **THEN** it goes through
+
+### Requirement: The error SHALL name the cap that waiting fixes last
+
+When a call would pass several caps, the error SHALL name the post's cap first, then the month's, then the day's. It SHALL tell the user to wait only for a day's or a month's cap above $0.
+
+#### Scenario: Every cap would be passed
+
+- **WHEN** a call would pass the daily, monthly and per-post caps
+- **THEN** it fails with `over-budget`
+- **AND** the fix names `caps.postUsd` and doesn't say to wait
+
+### Requirement: The ledger SHALL be read strictly
+
+A ledger line whose time isn't written as commands write it, or whose amount is below zero, SHALL make the read fail, naming the line and the form to use.
+
+#### Scenario: A hand-edited time
+
+- **WHEN** a ledger line's time is written as `2026-11-03T20:00:00-05:00`
+- **THEN** reading the ledger fails, naming that line
+
+### Requirement: Days SHALL come from one clock reading in a known zone
+
+A command SHALL read the clock once, so a day and its total come from the same instant. TZ SHALL be read in its POSIX forms too (`:Europe/Madrid`, `:/etc/localtime`). When it names no time zone, days and months SHALL follow UTC, and `doctor` SHALL warn about TZ without failing.
+
+#### Scenario: TZ names no zone
+
+- **WHEN** TZ is `Mars/Base`
+- **THEN** days and months follow UTC
+- **AND** `doctor` warns, naming TZ and what it was set to, and still passes

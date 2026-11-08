@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { Effect, Fiber } from "effect";
 import { describe, expect, it, vi } from "vitest";
 import type { Context } from "../context.ts";
-import { startOfToday } from "../days.ts";
+import { daysNow } from "../days.ts";
 import { readLedger, spent } from "../ledger.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
 import { testContext } from "../test/context.ts";
@@ -380,7 +380,7 @@ describe("image generate", () => {
 		expect(error.code).toBe("provider");
 		expect(error.fix).toBe(`Run image generate --post ${SLUG} --yes to send a new request.`);
 		// AND nothing counts as spent and no request is left to resume
-		expect(spent(await ledgerOf(ctx), { since: startOfToday(ctx) })).toBe(0);
+		expect(spent(await ledgerOf(ctx), { since: daysNow(ctx).startOfToday })).toBe(0);
 		expect((await postOf(ctx)).beats?.items[0]?.pending).toBeUndefined();
 	});
 

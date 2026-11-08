@@ -13,7 +13,7 @@ import {
 	type Paths,
 	Config as Settings,
 } from "@shorts-studio/usecases/context";
-import { Config, ConfigProvider, DateTime, Effect, Redacted, Result, Schema } from "effect";
+import { Config, ConfigProvider, DateTime, Effect, Option, Redacted, Result, Schema } from "effect";
 import { type RunResult, runProcess } from "./process.ts";
 
 /** Base URLs of the paid services, by provider. Tests and local fakes override them. */
@@ -123,9 +123,30 @@ const keychain = (service: string): Promise<string | undefined> =>
 				);
 			});
 
+/**
+ * The zone days and months follow: the one TZ names, else the machine's. TZ may start with a
+ * colon (`:Europe/Madrid`), and Linux often points it at a file: `:/etc/localtime` is the
+ * machine's own zone, and a path under `zoneinfo/` names one. A TZ that names no zone (a typo, or
+ * a POSIX rule like UTC+3) falls back to UTC, and doctor warns.
+ */
+const timeZoneFrom = (env: NodeJS.ProcessEnv, warnings: Array<string>): DateTime.TimeZone => {
+	const tz = env["TZ"];
+	if (tz === undefined) return DateTime.zoneMakeLocal();
+	const value = tz.startsWith(":") ? tz.slice(1) : tz;
+	const name = value.startsWith("/") ? value.split("/zoneinfo/")[1] : value;
+	if (name === undefined) return DateTime.zoneMakeLocal();
+	const named = DateTime.zoneMakeNamed(name);
+	if (Option.isSome(named)) return named.value;
+	warnings.push(
+		`TZ is "${tz}", which isn't a time zone name such as Europe/Madrid, so days and months follow UTC.`,
+	);
+	return DateTime.zoneMakeNamedUnsafe("UTC");
+};
+
 export const makeContext = (env: NodeJS.ProcessEnv = process.env): ProviderContext => {
 	const paths = resolvePaths(env);
 	const settingsIssues: Array<string> = [];
+	const settingsWarnings: Array<string> = [];
 	return {
 		paths,
 		endpoints: endpointsFrom(env),
@@ -147,7 +168,8 @@ export const makeContext = (env: NodeJS.ProcessEnv = process.env): ProviderConte
 		},
 		run: runProcess,
 		now: () => new Date(),
-		timeZone: DateTime.zoneMakeLocal(),
+		timeZone: timeZoneFrom(env, settingsWarnings),
+		settingsWarnings,
 		interactive: process.stdin.isTTY === true,
 		log: (line) => process.stderr.write(`${line}\n`),
 	};

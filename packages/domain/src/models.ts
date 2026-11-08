@@ -20,6 +20,11 @@ export const UNITS_BY_JOB: Readonly<Record<Job, ReadonlyArray<Unit>>> = {
 	transcribe: ["minute", "second"],
 };
 
+const JOB_NAMES: Readonly<Record<Job, string>> = {
+	image: "an image model",
+	transcribe: "a transcription model",
+};
+
 /** A value sent with every request to a model, such as FAL's `num_inference_steps`. */
 const OptionValue = Schema.Union([Schema.String, Schema.Finite, Schema.Boolean]);
 
@@ -56,7 +61,7 @@ export const Model = ModelFields.check(
 			? undefined
 			: {
 					path: ["billedBy"],
-					issue: `a ${model.job} model is billed by ${allowedUnits.join(" or ")}`,
+					issue: `${JOB_NAMES[model.job]} is billed by ${allowedUnits.join(" or ")}`,
 				};
 	}),
 );
@@ -72,7 +77,11 @@ export type ModelSettings = typeof ModelSettings.Type;
 
 /** What a call costs: its amount in the model's unit, rounded up if billed whole, times the price. */
 export const price = (model: Model, amount: number) => {
-	const units = model.roundUp === true ? Math.ceil(amount) : amount;
+	// A whole number blurred by float maths (3.0000000000000004) is billed as that number. Not
+	// near 0: any amount above it is billed as at least one unit.
+	const nearest = Math.round(amount);
+	const whole = nearest > 0 && Math.abs(amount - nearest) < 1e-9 ? nearest : Math.ceil(amount);
+	const units = model.roundUp === true ? whole : amount;
 	return { units, usd: units * model.usdPerUnit };
 };
 

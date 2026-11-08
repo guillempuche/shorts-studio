@@ -32,21 +32,24 @@ const SchemaLink = setting(
 
 export const DEFAULT_CAPS = { dailyUsd: 5, monthlyUsd: 100, postUsd: 2 } as const;
 
+/** A spending cap: $0 or more. */
+const Cap = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0));
+
 /** config.json: providers, limits and tools. Every value can be overridden by `SHORTS_<PATH>`. */
 export const Config = Schema.Struct({
 	$schema: SchemaLink,
 	caps: setting(
 		Schema.Struct({
 			dailyUsd: setting(
-				Schema.Finite,
+				Cap,
 				`Most spent on paid calls in one day, in US dollars. Default ${DEFAULT_CAPS.dailyUsd}.`,
 			),
 			monthlyUsd: setting(
-				Schema.Finite,
+				Cap,
 				`Most spent on paid calls in one calendar month, in US dollars. Default ${DEFAULT_CAPS.monthlyUsd}.`,
 			),
 			postUsd: setting(
-				Schema.Finite,
+				Cap,
 				`Most spent on one post, in US dollars. Default ${DEFAULT_CAPS.postUsd}.`,
 			),
 		}),
@@ -107,8 +110,13 @@ export interface Context {
 	readonly paths: Paths;
 	readonly config: Config;
 	readonly brand: Brand;
-	/** Why config.json or brand.json couldn't be read. Defaults apply, and doctor reports it. */
+	/**
+	 * Why a setting couldn't be used: config.json, brand.json or a SHORTS_* variable. Its default
+	 * applies, and doctor reports it as a problem to fix.
+	 */
 	readonly settingsIssues: ReadonlyArray<string>;
+	/** Settings that fell back to a default without stopping anything, such as TZ. Doctor warns. */
+	readonly settingsWarnings: ReadonlyArray<string>;
 	/** An API key, or undefined when it isn't set. Redacted, so printing it shows `<redacted>`. */
 	readonly secret: (key: KeySpec) => Promise<Redacted.Redacted<string> | undefined>;
 	readonly now: () => Date;

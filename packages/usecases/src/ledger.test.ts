@@ -2,10 +2,29 @@ import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DateTime, Effect, Exit } from "effect";
 import { describe, expect, it } from "vitest";
-import { startOfToday } from "./days.ts";
+import { daysNow } from "./days.ts";
 import { acquireLock } from "./files.ts";
 import { type PaidCall, readLedger, release, reserve, settle, spent } from "./ledger.ts";
 import { testContext } from "./test/context.ts";
+
+/** A ledger line as commands write it, at `at`, for `usd`. */
+const line = (at: string, usd: number, extra: Record<string, unknown> = {}) =>
+	JSON.stringify({
+		id: at,
+		at,
+		type: "reserve",
+		provider: "fal",
+		model: "m",
+		post: "p",
+		usd,
+		...extra,
+	});
+
+/** Writes the ledger file as given, as a hand edit might leave it. */
+const writeLedger = (ctx: ReturnType<typeof testContext>, text: string) => {
+	mkdirSync(ctx.paths.data, { recursive: true });
+	writeFileSync(join(ctx.paths.data, "ledger.jsonl"), text);
+};
 
 /** One call of `usd`, billed as one image. */
 const call = (post: string, usd: number): PaidCall => ({
@@ -92,6 +111,56 @@ describe("reserve", () => {
 		expect(Exit.isSuccess(result)).toBe(true);
 	});
 
+	it("should let the 50th $0.04 image through under a $2 post cap", async () => {
+		// GIVEN 49 images at $0.04 reserved for one post, $1.96, whose float sum isn't exact
+		const ctx = testContext({ config: { caps: { dailyUsd: 10, postUsd: 2 } } });
+		for (let i = 0; i < 49; i++) await Effect.runPromise(reserve(ctx, call("a", 0.04)));
+
+		// WHEN the 50th is reserved, which lands exactly on the cap
+		const result = await Effect.runPromiseExit(reserve(ctx, call("a", 0.04)));
+
+		// THEN it goes through
+		expect(Exit.isSuccess(result)).toBe(true);
+	});
+
+	it("should refuse a call priced below zero, writing nothing", async () => {
+		// GIVEN a call priced at −$5, as a hand-edited negative audio length would make it
+		const ctx = testContext();
+
+		// WHEN it is reserved
+		const error = await Effect.runPromise(Effect.flip(reserve(ctx, call("a", -5))));
+
+		// THEN it is refused, and the ledger is untouched, so it can't lower later totals
+		expect(error.code).toBe("failed");
+		expect(error.message).toContain("$-5");
+		expect(await Effect.runPromise(readLedger(ctx))).toHaveLength(0);
+	});
+
+	it("should name the post's cap when every cap would be passed, since waiting won't fix it", async () => {
+		// GIVEN daily, monthly and per-post caps that a $2 call would all pass
+		const ctx = testContext({ config: { caps: { dailyUsd: 1, monthlyUsd: 0.5, postUsd: 0.4 } } });
+
+		// WHEN it is reserved
+		const error = await Effect.runPromise(Effect.flip(reserve(ctx, call("a", 2))));
+
+		// THEN the per-post cap is named, with no advice to wait
+		expect(error.message).toContain("per-post cap");
+		expect(error.fix).toContain("caps.postUsd");
+		expect(error.fix).not.toContain("Wait");
+	});
+
+	it("should say nothing can be spent when a cap is 0, rather than to wait", async () => {
+		// GIVEN a daily cap of $0
+		const ctx = testContext({ config: { caps: { dailyUsd: 0 } } });
+
+		// WHEN a $0.01 call is reserved
+		const error = await Effect.runPromise(Effect.flip(reserve(ctx, call("a", 0.01))));
+
+		// THEN it is over budget, and the fix says the cap is 0
+		expect(error.code).toBe("over-budget");
+		expect(error.fix).toContain("caps.dailyUsd is 0, so nothing can be spent");
+	});
+
 	it("should let only one of two calls at the same time through when the cap fits one", async () => {
 		// GIVEN a $1 cap
 		const ctx = testContext({ config: { caps: { dailyUsd: 1, postUsd: 10 } } });
@@ -146,7 +215,7 @@ describe("settle and release", () => {
 
 		// THEN today's spend is $0.30
 		const entries = await Effect.runPromise(readLedger(ctx));
-		expect(spent(entries, { since: startOfToday(ctx) })).toBeCloseTo(0.3);
+		expect(spent(entries, { since: daysNow(ctx).startOfToday })).toBeCloseTo(0.3);
 		// AND the settled line keeps the units and the price of one
 		expect(entries.find((entry) => entry.type === "settle")).toMatchObject({
 			usd: 0.3,
@@ -158,7 +227,84 @@ describe("settle and release", () => {
 	});
 });
 
+describe("spent", () => {
+	it("should count a line from local midnight toward the new day, and not one a millisecond before", async () => {
+		// GIVEN a machine in Madrid, and two lines either side of its midnight on 3–4 November
+		const ctx = testContext({
+			timeZone: DateTime.zoneMakeNamedUnsafe("Europe/Madrid"),
+			now: () => new Date("2026-11-04T09:00:00Z"),
+		});
+		writeLedger(
+			ctx,
+			`${line("2026-11-03T22:59:59.999Z", 0.1)}\n${line("2026-11-03T23:00:00.000Z", 0.2)}\n`,
+		);
+
+		// WHEN today's spending is added up
+		const entries = await Effect.runPromise(readLedger(ctx));
+
+		// THEN only the line from midnight on counts
+		expect(spent(entries, { since: daysNow(ctx).startOfToday })).toBeCloseTo(0.2);
+	});
+});
+
 describe("readLedger", () => {
+	it.each([
+		["an offset", "2026-11-03T20:00:00-05:00"],
+		["no milliseconds", "2026-11-04T09:00:00Z"],
+		["words", "yesterday"],
+	])(
+		"should refuse a line whose time is written with %s, naming the form to use",
+		async (_, at) => {
+			// GIVEN a hand-edited line whose time isn't written the way commands write it
+			const ctx = testContext();
+			writeLedger(ctx, `${line(at, 0.1)}\n`);
+
+			// WHEN the ledger is read
+			const error = await Effect.runPromise(Effect.flip(readLedger(ctx)));
+
+			// THEN it fails on that line, saying how a time must look
+			expect(error.message).toContain("line 1 is corrupt");
+			expect(error.message).toContain("2026-11-04T09:00:00.000Z");
+		},
+	);
+
+	it("should refuse a line with a negative amount, which would lower the totals", async () => {
+		// GIVEN a hand-edited line for −$1
+		const ctx = testContext();
+		writeLedger(ctx, `${line("2026-11-04T08:00:00.000Z", -1)}\n`);
+
+		// WHEN the ledger is read
+		const error = await Effect.runPromise(Effect.flip(readLedger(ctx)));
+
+		// THEN it fails on that line
+		expect(error.message).toContain("line 1 is corrupt");
+	});
+
+	it("should stay readable after a reservation, when a hand edit dropped the last newline", async () => {
+		// GIVEN a ledger whose only line has no newline at the end
+		const ctx = testContext();
+		writeLedger(ctx, line("2026-11-04T08:00:00.000Z", 0.1));
+
+		// WHEN a call is reserved, then the ledger is read
+		await Effect.runPromise(reserve(ctx, call("a", 0.2)));
+		const entries = await Effect.runPromise(readLedger(ctx));
+
+		// THEN both lines are there
+		expect(entries.map((e) => e.usd)).toEqual([0.1, 0.2]);
+	});
+
+	it("should read a ledger an editor saved with a byte-order mark", async () => {
+		// GIVEN a ledger that starts with a byte-order mark
+		const ctx = testContext();
+		writeLedger(ctx, `\uFEFF${line("2026-11-04T08:00:00.000Z", 0.1)}\n`);
+
+		// WHEN it is read
+		const entries = await Effect.runPromise(readLedger(ctx));
+
+		// THEN its line reads as usual
+		expect(entries.map((e) => e.usd)).toEqual([0.1]);
+	});
+
 	it("should count a line written before lines had units, by its amount", async () => {
 		// GIVEN a ledger with a $0.25 reservation from before lines recorded units
 		const ctx = testContext();
@@ -173,7 +319,7 @@ describe("readLedger", () => {
 		const entries = await Effect.runPromise(readLedger(ctx));
 
 		// THEN both count toward the day
-		expect(spent(entries, { since: startOfToday(ctx) })).toBeCloseTo(0.35);
+		expect(spent(entries, { since: daysNow(ctx).startOfToday })).toBeCloseTo(0.35);
 	});
 
 	it("should refuse a ledger with a corrupt line, naming the line", async () => {

@@ -15,22 +15,37 @@ import { fail, type Reason, type ShortsError } from "@shorts-studio/domain/error
 import { Unit } from "@shorts-studio/domain/models";
 import { Effect, Schema } from "effect";
 import { type Context, DEFAULT_CAPS } from "./context.ts";
-import { startOfThisMonth, startOfToday, thisMonth } from "./days.ts";
+import { daysNow } from "./days.ts";
 import { withLock } from "./lock.ts";
+
+/**
+ * An instant written exactly as `toISOString` writes it (2026-11-04T09:00:00.000Z). `spent`
+ * compares these as strings, which only works in this one form, so a hand-edited line written
+ * any other way is refused as corrupt instead of counted on the wrong day.
+ */
+const Instant = Schema.String.check(
+	Schema.makeFilter((at) =>
+		/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(at) && !Number.isNaN(Date.parse(at))
+			? undefined
+			: "an instant written like 2026-11-04T09:00:00.000Z",
+	),
+);
+
+const Amount = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0));
 
 export const LedgerEntry = Schema.Struct({
 	id: Schema.String,
-	at: Schema.String,
+	at: Instant,
 	type: Schema.Literals(["reserve", "settle", "release"]),
 	provider: Schema.String,
 	model: Schema.String,
 	post: Schema.String,
-	usd: Schema.Finite,
+	usd: Amount,
 	// What the call was billed by, how many, and the price of one. Lines written before prices
 	// were data don't have them, and count by `usd` alone.
 	unit: Schema.optionalKey(Unit),
-	units: Schema.optionalKey(Schema.Finite),
-	usdPerUnit: Schema.optionalKey(Schema.Finite),
+	units: Schema.optionalKey(Amount),
+	usdPerUnit: Schema.optionalKey(Amount),
 	requestId: Schema.optionalKey(Schema.String),
 	note: Schema.optionalKey(Schema.String),
 });
@@ -40,13 +55,20 @@ const ledgerFile = (ctx: Context): string => join(ctx.paths.data, "ledger.jsonl"
 const EntryLine = Schema.fromJsonString(LedgerEntry);
 const decodeEntry = Schema.decodeUnknownEffect(EntryLine);
 
-/** Every entry. A corrupt line fails the read, since the caps can't be trusted past it. */
-export const readLedger = (
-	ctx: Context,
-): Effect.Effect<ReadonlyArray<LedgerEntry>, ShortsError> => {
+/** The ledger as read: its entries, and whether a hand edit left its last line unended. */
+interface LedgerFile {
+	readonly entries: ReadonlyArray<LedgerEntry>;
+	readonly endsMidLine: boolean;
+}
+
+/** A corrupt line fails the read, since the caps can't be trusted past it. */
+const readLedgerFile = (ctx: Context): Effect.Effect<LedgerFile, ShortsError> => {
 	const file = ledgerFile(ctx);
-	if (!existsSync(file)) return Effect.succeed([]);
-	const lines = readFileSync(file, "utf8")
+	if (!existsSync(file)) return Effect.succeed({ entries: [], endsMidLine: false });
+	const text = readFileSync(file, "utf8");
+	// Some editors save a byte-order mark first; it isn't part of the first line's JSON.
+	const lines = text
+		.replace(/^\uFEFF/, "")
 		.split("\n")
 		.filter((line) => line.trim() !== "");
 	return Effect.forEach(lines, (line, i) =>
@@ -59,8 +81,12 @@ export const readLedger = (
 				),
 			),
 		),
-	);
+	).pipe(Effect.map((entries) => ({ entries, endsMidLine: text !== "" && !text.endsWith("\n") })));
 };
+
+/** Every entry. A corrupt line fails the read, since the caps can't be trusted past it. */
+export const readLedger = (ctx: Context): Effect.Effect<ReadonlyArray<LedgerEntry>, ShortsError> =>
+	Effect.map(readLedgerFile(ctx), ({ entries }) => entries);
 
 /** Current amount per reservation: its settlement if settled, 0 if released. */
 const amounts = (entries: ReadonlyArray<LedgerEntry>) => {
@@ -81,17 +107,25 @@ const amounts = (entries: ReadonlyArray<LedgerEntry>) => {
  * `days.ts`), or both. A reservation counts from when it was made; one not settled yet counts in
  * full. A line dated after now, from a clock set ahead, counts too: that errs toward spending less.
  */
-export const spent = (
-	entries: ReadonlyArray<LedgerEntry>,
-	{ post, since }: { readonly post?: string; readonly since?: string },
-): number =>
-	amounts(entries)
+export const spent = (entries: ReadonlyArray<LedgerEntry>, filter: SpendFilter): number =>
+	total(amounts(entries), filter);
+
+interface SpendFilter {
+	readonly post?: string;
+	readonly since?: string;
+}
+
+const total = (live: ReturnType<typeof amounts>, { post, since }: SpendFilter): number =>
+	live
 		.filter(({ reserve }) => post === undefined || reserve.post === post)
 		.filter(({ reserve }) => since === undefined || reserve.at >= since)
 		.reduce((sum, { usd }) => sum + usd, 0);
 
-const append = (ctx: Context, entry: LedgerEntry): void => {
-	appendFileSync(ledgerFile(ctx), `${Schema.encodeSync(EntryLine)(entry)}\n`);
+/** Adds `entry` as a line, ending the last one first if a hand edit left it unended. */
+const append = (ctx: Context, ledger: LedgerFile, entry: LedgerEntry): void => {
+	// Without it, the new line would join the last one, and the ledger would read as corrupt.
+	const lead = ledger.endsMidLine ? "\n" : "";
+	appendFileSync(ledgerFile(ctx), `${lead}${Schema.encodeSync(EntryLine)(entry)}\n`);
 };
 
 const withLedgerLock = <A>(ctx: Context, use: Effect.Effect<A, ShortsError>) =>
@@ -124,43 +158,72 @@ export interface PaidCall {
 	readonly note?: string;
 }
 
-/** Reserves `call.usd`, or fails with `over-budget` when a cap would be passed. */
+/**
+ * Whether adding `usd` to `spentUsd` passes `capUsd`. Compared in millionths of a dollar, so
+ * float noise ($0.10 + $0.20 is 0.30000000000000004) can't refuse a total that lands on the cap.
+ */
+const passes = (spentUsd: number, usd: number, capUsd: number): boolean =>
+	Math.round((spentUsd + usd) * 1e6) > Math.round(capUsd * 1e6);
+
+/** What to do about a cap: waiting helps for a day or a month, never for a post, nor at $0. */
+const capFix = (setting: string, capUsd: number, wait: string | undefined, configFile: string) =>
+	capUsd === 0
+		? `${setting} is 0, so nothing can be spent. Raise it in ${configFile}.`
+		: wait === undefined
+			? `Raise ${setting} in ${configFile} if this post is worth more.`
+			: `${wait}, or raise ${setting} in ${configFile}.`;
+
+/**
+ * Reserves `call.usd`, or fails with `over-budget` when a cap would be passed. When several
+ * would be, it names the one waiting fixes last: the post's, then the month's, then the day's.
+ */
 export const reserve = (ctx: Context, call: PaidCall): Effect.Effect<string, ShortsError> =>
 	withLedgerLock(
 		ctx,
 		Effect.gen(function* () {
-			const entries = yield* readLedger(ctx);
-			const { dailyUsd, monthlyUsd, postUsd } = caps(ctx);
-			const month = thisMonth(ctx);
-			const spentToday = spent(entries, { since: startOfToday(ctx) });
-			const spentThisMonth = spent(entries, { since: startOfThisMonth(ctx) });
-			const spentOnPost = spent(entries, { post: call.post });
-			const configFile = join(ctx.paths.data, "config.json");
+			// A negative cost would lower the totals and let later calls through.
+			if (!Number.isFinite(call.usd) || call.usd < 0) {
+				return yield* fail(
+					"failed",
+					`This call was priced at $${call.usd}, which can't be right, so nothing was reserved.`,
+					"Check what it's priced from, such as the audio's length (post show), then run it again.",
+				);
+			}
 
-			if (spentToday + call.usd > dailyUsd) {
+			const ledger = yield* readLedgerFile(ctx);
+			const live = amounts(ledger.entries);
+			const { dailyUsd, monthlyUsd, postUsd } = caps(ctx);
+			const days = daysNow(ctx);
+			const spentToday = total(live, { since: days.startOfToday });
+			const spentThisMonth = total(live, { since: days.startOfMonth });
+			const spentOnPost = total(live, { post: call.post });
+			const configFile = join(ctx.paths.data, "config.json");
+			const cost = `This call (~$${call.usd.toFixed(3)})`;
+
+			if (passes(spentOnPost, call.usd, postUsd)) {
 				return yield* fail(
 					"over-budget",
-					`This call (~$${call.usd.toFixed(3)}) would pass today's cap: $${spentToday.toFixed(2)} of $${dailyUsd} spent.`,
-					`Wait until tomorrow, or raise caps.dailyUsd in ${configFile}.`,
+					`${cost} would pass the per-post cap: $${spentOnPost.toFixed(2)} of $${postUsd.toFixed(2)} spent on ${call.post}.`,
+					capFix("caps.postUsd", postUsd, undefined, configFile),
 				);
 			}
-			if (spentThisMonth + call.usd > monthlyUsd) {
+			if (passes(spentThisMonth, call.usd, monthlyUsd)) {
 				return yield* fail(
 					"over-budget",
-					`This call (~$${call.usd.toFixed(3)}) would pass this month's cap: $${spentThisMonth.toFixed(2)} of $${monthlyUsd} spent in ${month}.`,
-					`Wait until next month, or raise caps.monthlyUsd in ${configFile}.`,
+					`${cost} would pass this month's cap: $${spentThisMonth.toFixed(2)} of $${monthlyUsd.toFixed(2)} spent in ${days.month}.`,
+					capFix("caps.monthlyUsd", monthlyUsd, "Wait until next month", configFile),
 				);
 			}
-			if (spentOnPost + call.usd > postUsd) {
+			if (passes(spentToday, call.usd, dailyUsd)) {
 				return yield* fail(
 					"over-budget",
-					`This call (~$${call.usd.toFixed(3)}) would pass the per-post cap: $${spentOnPost.toFixed(2)} of $${postUsd} spent on ${call.post}.`,
-					`Raise caps.postUsd in ${configFile} if this post is worth more.`,
+					`${cost} would pass today's cap: $${spentToday.toFixed(2)} of $${dailyUsd.toFixed(2)} spent.`,
+					capFix("caps.dailyUsd", dailyUsd, "Wait until tomorrow", configFile),
 				);
 			}
 
 			const id = randomUUID();
-			append(ctx, { id, at: ctx.now().toISOString(), type: "reserve", ...call });
+			append(ctx, ledger, { id, at: days.at, type: "reserve", ...call });
 			return id;
 		}),
 	);
@@ -174,11 +237,10 @@ const close = (
 	withLedgerLock(
 		ctx,
 		Effect.gen(function* () {
-			const reserved = (yield* readLedger(ctx)).find(
-				(entry) => entry.id === id && entry.type === "reserve",
-			);
+			const ledger = yield* readLedgerFile(ctx);
+			const reserved = ledger.entries.find((entry) => entry.id === id && entry.type === "reserve");
 			if (reserved === undefined) return;
-			append(ctx, { ...reserved, at: ctx.now().toISOString(), ...change });
+			append(ctx, ledger, { ...reserved, at: ctx.now().toISOString(), ...change });
 		}),
 	);
 

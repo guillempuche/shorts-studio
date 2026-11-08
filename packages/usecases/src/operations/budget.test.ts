@@ -23,7 +23,37 @@ const call = (post: string, usd: number): PaidCall => ({
 const spendAt = (ctx: Context, at: string, post: string, usd: number) =>
 	Effect.runPromise(reserve({ ...ctx, now: () => new Date(at) }, call(post, usd)));
 
+/** A clock that reads each instant once, in turn, then keeps the last. */
+const ticking = (...instants: ReadonlyArray<string>) => {
+	let reads = 0;
+	return () => new Date(instants[Math.min(reads++, instants.length - 1)] ?? "");
+};
+
 describe("budget show", () => {
+	it("should report $0 today and this month, and no posts, before anything was spent", async () => {
+		// GIVEN no ledger yet
+		const ctx = testContext();
+
+		// WHEN the budget is shown
+		const result = await run(budgetShow.run({ post: undefined }, ctx, MODE));
+
+		// THEN nothing is spent
+		expect(result).toMatchObject({ todayUsd: 0, monthUsd: 0, posts: [] });
+	});
+
+	it("should take the day and its total from one reading of the clock", async () => {
+		// GIVEN $1 spent on 4 November, and a clock that passes midnight while the command runs
+		const ctx = testContext();
+		await spendAt(ctx, "2026-11-04T12:00:00Z", "a", 1);
+		const clock = { ...ctx, now: ticking("2026-11-04T23:59:59.999Z", "2026-11-05T00:00:00.000Z") };
+
+		// WHEN the budget is shown
+		const result = await run(budgetShow.run({ post: undefined }, clock, MODE));
+
+		// THEN the day and its total agree: 4 November, with its $1
+		expect(result).toMatchObject({ day: "2026-11-04", todayUsd: 1 });
+	});
+
 	it("should report today's, this month's and each post's spending against the caps", async () => {
 		// GIVEN $0.10 spent last month, $0.20 earlier this month and $0.30 today, on two posts
 		const ctx = testContext();

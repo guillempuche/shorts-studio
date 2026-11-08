@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir } from "@shorts-studio/usecases/test/context";
-import { Redacted } from "effect";
+import { DateTime, Redacted } from "effect";
 import { describe, expect, it } from "vitest";
 import { makeContext } from "./node.ts";
 
@@ -20,6 +20,72 @@ describe("makeContext", () => {
 		// AND the problem names the file, for doctor to report
 		expect(ctx.settingsIssues).toHaveLength(1);
 		expect(ctx.settingsIssues[0]).toContain(join(data, "config.json"));
+	});
+
+	it("should refuse a negative cap, naming it, and keep the default", () => {
+		// GIVEN a config.json with a daily cap of −1
+		const data = join(tempDir(), "data");
+		mkdirSync(data, { recursive: true });
+		writeFileSync(join(data, "config.json"), '{ "caps": { "dailyUsd": -1 } }');
+
+		// WHEN the settings are loaded
+		const ctx = makeContext({ SHORTS_DATA_DIR: data });
+
+		// THEN the defaults apply, and the problem names the cap
+		expect(ctx.config).toEqual({});
+		expect(ctx.settingsIssues[0]).toContain("dailyUsd");
+	});
+
+	it("should follow the time zone TZ names", () => {
+		// GIVEN TZ set to Tokyo
+		// WHEN the context is made
+		const ctx = makeContext({ SHORTS_DATA_DIR: "/d", TZ: "Asia/Tokyo" });
+
+		// THEN days and months follow Tokyo, with nothing to report
+		expect(DateTime.zoneToString(ctx.timeZone)).toBe("Asia/Tokyo");
+		expect(ctx.settingsIssues).toEqual([]);
+	});
+
+	it.each([
+		["a leading colon", ":Asia/Tokyo"],
+		["a path under zoneinfo", ":/usr/share/zoneinfo/Asia/Tokyo"],
+	])("should read a TZ written with %s as the zone it names", (_, tz) => {
+		// GIVEN TZ in one of its POSIX forms
+		// WHEN the context is made
+		const ctx = makeContext({ SHORTS_DATA_DIR: "/d", TZ: tz });
+
+		// THEN days and months follow Tokyo, with nothing to warn about
+		expect(DateTime.zoneToString(ctx.timeZone)).toBe("Asia/Tokyo");
+		expect(ctx.settingsWarnings).toEqual([]);
+	});
+
+	it("should read TZ=:/etc/localtime as the machine's own zone", () => {
+		// GIVEN TZ pointing at the machine's zone file, as Linux containers often set it
+		// WHEN the context is made
+		const ctx = makeContext({ SHORTS_DATA_DIR: "/d", TZ: ":/etc/localtime" });
+
+		// THEN days and months follow the machine's zone, with nothing to warn about
+		expect(DateTime.zoneToString(ctx.timeZone)).toBe(
+			DateTime.zoneToString(DateTime.zoneMakeLocal()),
+		);
+		expect(ctx.settingsWarnings).toEqual([]);
+	});
+
+	it.each([
+		["a typo", "Mars/Base"],
+		["a POSIX rule", "UTC+3"],
+		["nothing", ""],
+	])("should fall back to UTC, and warn, when TZ names %s", (_, tz) => {
+		// GIVEN TZ set to something that isn't a time zone name
+		// WHEN the context is made
+		const ctx = makeContext({ SHORTS_DATA_DIR: "/d", TZ: tz });
+
+		// THEN days and months follow UTC
+		expect(DateTime.zoneToString(ctx.timeZone)).toBe("UTC");
+		// AND doctor will warn, naming TZ and what it was set to, without a blocking problem
+		expect(ctx.settingsWarnings).toHaveLength(1);
+		expect(ctx.settingsWarnings[0]).toContain(`TZ is "${tz}"`);
+		expect(ctx.settingsIssues).toEqual([]);
 	});
 
 	it("should read valid settings files", () => {

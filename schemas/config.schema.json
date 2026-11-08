@@ -11,14 +11,17 @@
       "properties": {
         "dailyUsd": {
           "type": "number",
+          "minimum": 0,
           "description": "Most spent on paid calls in one day, in US dollars. Default 5."
         },
         "monthlyUsd": {
           "type": "number",
+          "minimum": 0,
           "description": "Most spent on paid calls in one calendar month, in US dollars. Default 100."
         },
         "postUsd": {
           "type": "number",
+          "minimum": 0,
           "description": "Most spent on one post, in US dollars. Default 2."
         }
       },

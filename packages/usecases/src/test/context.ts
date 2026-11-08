@@ -32,6 +32,7 @@ export const testContext = (
 		config: {},
 		brand: {},
 		settingsIssues: [],
+		settingsWarnings: [],
 		secret: async (key) => {
 			const value = secrets[key.env];
 			return value === undefined ? undefined : Redacted.make(value);
