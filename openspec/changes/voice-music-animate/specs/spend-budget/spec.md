@@ -2,12 +2,22 @@
 
 ### Requirement: Animation SHALL be limited to beats chosen in review
 
-`clip animate` SHALL only animate beats the user marked in `post review`. It SHALL reserve, resume and settle its cost the same way image generation does.
+`clip animate` SHALL only animate beats the user marked in `post review`. A mark SHALL record its beat's first and last frame and count while the beat keeps them, across later renders. It SHALL reserve the cost of the length it asks the model for, then resume and settle it the same way image generation does.
 
 #### Scenario: An unmarked beat
 
 - **WHEN** `clip animate` is asked for a beat not marked in review
 - **THEN** it refuses with code `needs-confirmation`
+
+#### Scenario: Marks after a new render
+
+- **WHEN** beats 0 and 7 were marked, beat 0 was animated and the draft rendered again
+- **THEN** `clip animate --beat 7` still runs
+
+#### Scenario: A beat cut differently
+
+- **WHEN** beat 7 was marked and a re-cut changes beat 7's frames
+- **THEN** `clip animate --beat 7` refuses with code `needs-confirmation`
 
 ### Requirement: Voice and music SHALL reserve their cost
 
