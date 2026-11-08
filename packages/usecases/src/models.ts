@@ -41,7 +41,23 @@ export const modelsFor = (
 	ctx: Context,
 	offer: Offer,
 	job: Job,
-): Effect.Effect<Readonly<Record<string, Model>>, ShortsError> => {
+): Effect.Effect<Readonly<Record<string, Model>>, ShortsError> =>
+	Effect.flatMap(readModels(ctx, offer, job), ({ models, problems }) =>
+		problems[0] === undefined ? Effect.succeed(models) : Effect.fail(problems[0]),
+	);
+
+/**
+ * Like `modelsFor`, but keeps going past an entry that isn't a whole model, so `models list` can
+ * show everything else and name what to fix.
+ */
+export const readModels = (
+	ctx: Context,
+	offer: Offer,
+	job: Job,
+): Effect.Effect<{
+	readonly models: Readonly<Record<string, Model>>;
+	readonly problems: ReadonlyArray<ShortsError>;
+}> => {
 	const configured = ctx.config.models ?? {};
 	const names = new Set([
 		...Object.keys(offer.models),
@@ -49,24 +65,34 @@ export const modelsFor = (
 	]);
 
 	return Effect.forEach([...names], (name) =>
-		decodeModel({ ...offer.models[name], ...configured[name] }).pipe(
-			Effect.map((model) => [name, model] as const),
-			Effect.mapError((error) =>
-				fail(
-					"usage",
-					`models.${name} in config.json isn't a whole model: ${error.message.replace(/\s*\n\s*/g, " ")}`,
-					`Fix it in ${join(ctx.paths.data, "config.json")}. A new model needs provider, job, endpoint, billedBy, usdPerUnit and priceChecked.`,
+		Effect.result(
+			decodeModel({ ...ownEntry(offer.models, name), ...ownEntry(configured, name) }).pipe(
+				Effect.map((model) => [name, model] as const),
+				Effect.mapError((error) =>
+					fail(
+						"usage",
+						`models.${name} in config.json isn't a whole model: ${error.message.replace(/\s*\n\s*/g, " ")}`,
+						`Fix it in ${join(ctx.paths.data, "config.json")}. A new model needs provider, job, endpoint, billedBy, usdPerUnit and priceChecked.`,
+					),
 				),
 			),
 		),
 	).pipe(
-		Effect.map((entries) =>
-			Object.fromEntries(
-				entries.filter(([, model]) => model.provider === offer.provider && model.job === job),
+		Effect.map((results) => ({
+			models: Object.fromEntries(
+				results
+					.filter(Result.isSuccess)
+					.map((result) => result.success)
+					.filter(([, model]) => model.provider === offer.provider && model.job === job),
 			),
-		),
+			problems: results.filter(Result.isFailure).map((result) => result.failure),
+		})),
 	);
 };
+
+/** `record[name]` only when the record itself has it: "constructor" isn't a model name. */
+const ownEntry = <A>(record: Readonly<Record<string, A>>, name: string): A | undefined =>
+	Object.hasOwn(record, name) ? record[name] : undefined;
 
 /** The model to use for `job`: the one asked for, else config.json's, else the provider's default. */
 export const chooseModel = Effect.fn("chooseModel")(function* (
@@ -86,7 +112,7 @@ export const chooseModel = Effect.fn("chooseModel")(function* (
 	}
 
 	const name = wanted ?? modelNameFor(ctx, offer, job);
-	const model = models[name];
+	const model = ownEntry(models, name);
 	if (model === undefined) {
 		return yield* fail(
 			"usage",
@@ -112,8 +138,8 @@ export const costOf = (model: NamedModel, amount: number): Omit<PaidCall, "post"
 
 /**
  * Doctor's rows about models: a job whose model can't be used fails, since every paid call for it
- * would; a price in use checked more than `STALE_PRICE_DAYS` ago warns; so does a model in
- * config.json that no provider in use claims, which is often a misspelt name.
+ * would; a price in use checked more than `STALE_PRICE_DAYS` ago, or dated after today, warns; so
+ * does a model in config.json that no provider in use claims, which is often a misspelt name.
  */
 export const modelChecks = (
 	ctx: Context,
@@ -136,6 +162,14 @@ export const modelChecks = (
 			}
 			const model = chosen.success;
 			const age = daysBetween(model.priceChecked, today);
+			if (age < 0) {
+				rows.push({
+					name: `${job} model`,
+					status: "warn",
+					detail: `${model.name}'s price says it was checked on ${model.priceChecked}, which is after today.`,
+					fix: `Set models.${model.name}.priceChecked in ${configFile} to the day you checked it.`,
+				});
+			}
 			if (age > STALE_PRICE_DAYS) {
 				rows.push({
 					name: `${job} model`,
@@ -146,10 +180,17 @@ export const modelChecks = (
 			}
 		}
 
-		const claimed = (name: string, provider: string | undefined) =>
-			offers.some(({ offer }) => name in offer.models || provider === offer.provider);
+		// A provider in use claims an entry when it is one of its own models, or when the entry
+		// names that provider and the job it does. One with no job is incomplete, which the job's
+		// own row already reports.
+		const claimed = (name: string, settings: { readonly provider?: string; readonly job?: Job }) =>
+			offers.some(
+				({ job, offer }) =>
+					Object.hasOwn(offer.models, name) ||
+					(settings.provider === offer.provider && (settings.job ?? job) === job),
+			);
 		for (const [name, settings] of Object.entries(ctx.config.models ?? {})) {
-			if (claimed(name, settings.provider)) continue;
+			if (claimed(name, settings)) continue;
 			rows.push({
 				name: "models",
 				status: "warn",

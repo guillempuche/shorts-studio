@@ -132,8 +132,8 @@ const keychain = (service: string): Promise<string | undefined> =>
 const timeZoneFrom = (env: NodeJS.ProcessEnv, warnings: Array<string>): DateTime.TimeZone => {
 	const tz = env["TZ"];
 	if (tz === undefined) return DateTime.zoneMakeLocal();
-	const value = tz.startsWith(":") ? tz.slice(1) : tz;
-	const name = value.startsWith("/") ? value.split("/zoneinfo/")[1] : value;
+	const zoneOrPath = tz.startsWith(":") ? tz.slice(1) : tz;
+	const name = zoneOrPath.startsWith("/") ? zoneOrPath.split("/zoneinfo/")[1] : zoneOrPath;
 	if (name === undefined) return DateTime.zoneMakeLocal();
 	const named = DateTime.zoneMakeNamed(name);
 	if (Option.isSome(named)) return named.value;

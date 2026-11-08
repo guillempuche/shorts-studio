@@ -7,7 +7,7 @@
 import { Job, Unit } from "@shorts-studio/domain/models";
 import { Effect, Schema } from "effect";
 import { daysBetween, daysNow } from "../days.ts";
-import { jobOffers, modelNameFor, modelsFor, STALE_PRICE_DAYS } from "../models.ts";
+import { jobOffers, modelNameFor, readModels, STALE_PRICE_DAYS } from "../models.ts";
 import { defineOperation } from "../operation.ts";
 
 const ModelRow = Schema.Struct({
@@ -28,7 +28,12 @@ export const modelsList = defineOperation({
 	description:
 		"List each job's models: the provider in use's own and those config.json adds or changes, with the price per unit, the day each price was checked, and which model is in use.",
 	params: {},
-	output: Schema.Struct({ models: Schema.Array(ModelRow), staleAfterDays: Schema.Int }),
+	output: Schema.Struct({
+		models: Schema.Array(ModelRow),
+		staleAfterDays: Schema.Int,
+		/** Entries in config.json that aren't whole models, each with what to fix. */
+		problems: Schema.Array(Schema.Struct({ message: Schema.String, fix: Schema.String })),
+	}),
 	surface: "cli-and-mcp",
 	spends: false,
 	hints: { readonly: true, destructive: false, idempotent: true, openWorld: false },
@@ -36,9 +41,10 @@ export const modelsList = defineOperation({
 		Effect.gen(function* () {
 			const { today } = daysNow(ctx);
 			const offers = yield* jobOffers;
-			const rows = yield* Effect.forEach(offers, ({ job, offer }) =>
-				Effect.map(modelsFor(ctx, offer, job), (models) =>
-					Object.entries(models).map(([name, model]) => ({
+			const jobs = yield* Effect.forEach(offers, ({ job, offer }) =>
+				Effect.map(readModels(ctx, offer, job), ({ models, problems }) => ({
+					problems,
+					rows: Object.entries(models).map(([name, model]) => ({
 						job,
 						provider: model.provider,
 						name,
@@ -50,9 +56,19 @@ export const modelsList = defineOperation({
 						daysSinceChecked: daysBetween(model.priceChecked, today),
 						inUse: name === modelNameFor(ctx, offer, job),
 					})),
+				})),
+			);
+			// The same bad entry can show up for each job; report it once.
+			const problems = new Map(
+				jobs.flatMap(({ problems }) =>
+					problems.map(({ message, fix }) => [message, { message, fix }]),
 				),
 			);
-			return { models: rows.flat(), staleAfterDays: STALE_PRICE_DAYS };
+			return {
+				models: jobs.flatMap(({ rows }) => rows),
+				staleAfterDays: STALE_PRICE_DAYS,
+				problems: [...problems.values()],
+			};
 		}),
 	render: (o) => {
 		const jobs = [...new Set(o.models.map((m) => m.job))];
@@ -64,7 +80,10 @@ export const modelsList = defineOperation({
 					`${job}, by ${rows[0]?.provider}:`,
 					...rows.map((m) => {
 						const unit = `$${m.usdPerUnit} per ${m.billedBy}${m.roundUp ? ", rounded up" : ""}`;
-						const age = `${m.daysSinceChecked} day${m.daysSinceChecked === 1 ? "" : "s"} ago`;
+						const age =
+							m.daysSinceChecked < 0
+								? "in the future, check the date"
+								: `${m.daysSinceChecked} day${m.daysSinceChecked === 1 ? "" : "s"} ago`;
 						const stale = m.daysSinceChecked > o.staleAfterDays ? ", check it again" : "";
 						return `  ${m.inUse ? "●" : " "} ${m.name.padEnd(width)}  ${unit}, checked ${m.priceChecked} (${age}${stale})`;
 					}),
@@ -72,6 +91,7 @@ export const modelsList = defineOperation({
 			}),
 			"",
 			"● in use. Change a price, or add a model, under models in config.json.",
+			...o.problems.flatMap(({ message, fix }) => ["", `✗ ${message}`, `  → ${fix}`]),
 		].join("\n");
 	},
 });

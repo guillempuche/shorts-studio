@@ -7,7 +7,7 @@ import { fail } from "@shorts-studio/domain/errors";
 import { DateTime, Effect, Schema } from "effect";
 import type { Context, KeySpec } from "../context.ts";
 import { caps } from "../ledger.ts";
-import { modelChecks } from "../models.ts";
+import { jobOffers, modelChecks, modelNameFor } from "../models.ts";
 import { defineOperation } from "../operation.ts";
 import {
 	type Check,
@@ -60,18 +60,13 @@ const settingsChecks = (ctx: Context): ReadonlyArray<Check> => [
 /** The settings and models, then the tools of every provider in use, then the keys they need. */
 const runChecks = (ctx: Context) =>
 	Effect.gen(function* () {
-		const transcriber = yield* Transcriber;
-		const maker = yield* ImageMaker;
+		const offers = yield* jobOffers;
 		const providers: ReadonlyArray<ProviderInfo> = [
 			yield* MediaTools,
 			yield* Downloader,
-			transcriber,
-			maker,
+			...offers.map(({ offer }) => offer),
 		];
-		const modelRows = yield* modelChecks(ctx, [
-			{ job: "image", offer: maker },
-			{ job: "transcribe", offer: transcriber },
-		]);
+		const modelRows = yield* modelChecks(ctx, offers);
 		const toolRows = yield* Effect.forEach(providers, (provider) => provider.checks, {
 			concurrency: "unbounded",
 		});
@@ -124,9 +119,9 @@ export const configShow = defineOperation({
 				paths: ctx.paths,
 				caps: caps(ctx),
 				timeZone: DateTime.zoneToString(ctx.timeZone),
-				imageModel: ctx.config.image?.model ?? maker.defaultModel,
+				imageModel: modelNameFor(ctx, maker, "image"),
 				imageProvider: maker.provider,
-				transcriber: `${transcriber.provider} ${ctx.config.transcribe?.model ?? transcriber.defaultModel}`,
+				transcriber: `${transcriber.provider} ${modelNameFor(ctx, transcriber, "transcribe")}`,
 				checks: yield* runChecks(ctx),
 			};
 		}),

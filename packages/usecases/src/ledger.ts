@@ -67,16 +67,18 @@ const readLedgerFile = (ctx: Context): Effect.Effect<LedgerFile, ShortsError> =>
 	if (!existsSync(file)) return Effect.succeed({ entries: [], endsMidLine: false });
 	const text = readFileSync(file, "utf8");
 	// Some editors save a byte-order mark first; it isn't part of the first line's JSON.
+	// Numbered before blank lines are dropped, so an error names the line an editor shows.
 	const lines = text
 		.replace(/^\uFEFF/, "")
 		.split("\n")
-		.filter((line) => line.trim() !== "");
-	return Effect.forEach(lines, (line, i) =>
+		.map((line, i) => ({ line, number: i + 1 }))
+		.filter(({ line }) => line.trim() !== "");
+	return Effect.forEach(lines, ({ line, number }) =>
 		decodeEntry(line).pipe(
 			Effect.mapError((error) =>
 				fail(
 					"failed",
-					`${file} line ${i + 1} is corrupt:\n${error.message}`,
+					`${file} line ${number} is corrupt:\n${error.message}`,
 					"Fix or remove that line; commands only append to this file.",
 				),
 			),
@@ -175,7 +177,8 @@ const capFix = (setting: string, capUsd: number, wait: string | undefined, confi
 
 /**
  * Reserves `call.usd`, or fails with `over-budget` when a cap would be passed. When several
- * would be, it names the one waiting fixes last: the post's, then the month's, then the day's.
+ * would be, it names the one that waiting would fix last: the post's, then the month's, then the
+ * day's.
  */
 export const reserve = (ctx: Context, call: PaidCall): Effect.Effect<string, ShortsError> =>
 	withLedgerLock(

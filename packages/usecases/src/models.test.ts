@@ -80,6 +80,18 @@ describe("chooseModel", () => {
 		expect(fallback.name).toBe("fake-fast");
 	});
 
+	it("should refuse a name an object has of its own, such as constructor", async () => {
+		// GIVEN no model called "constructor", though every object has a key by that name
+		// WHEN it is asked for
+		const error = await Effect.runPromise(
+			Effect.flip(chooseModel(withConfig({}), fakeImageMaker(), "image", "constructor")),
+		);
+
+		// THEN it is the usual usage error, not a model
+		expect(error.code).toBe("usage");
+		expect(error.message).toContain('no model "constructor"');
+	});
+
 	it("should refuse a name the provider doesn't have, listing its models", async () => {
 		// GIVEN no model called "nope"
 		// WHEN it is asked for

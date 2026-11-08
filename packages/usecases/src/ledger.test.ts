@@ -268,6 +268,18 @@ describe("readLedger", () => {
 		},
 	);
 
+	it("should name the line an editor shows, even below a blank line", async () => {
+		// GIVEN a good line, a blank line, then a damaged line: line 3 in an editor
+		const ctx = testContext();
+		writeLedger(ctx, `${line("2026-11-04T08:00:00.000Z", 0.1)}\n\nnot json\n`);
+
+		// WHEN the ledger is read
+		const error = await Effect.runPromise(Effect.flip(readLedger(ctx)));
+
+		// THEN the error names line 3
+		expect(error.message).toContain("line 3 is corrupt");
+	});
+
 	it("should refuse a line with a negative amount, which would lower the totals", async () => {
 		// GIVEN a hand-edited line for −$1
 		const ctx = testContext();

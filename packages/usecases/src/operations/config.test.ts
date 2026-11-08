@@ -118,6 +118,49 @@ describe("config check (doctor), about models", () => {
 		expect(result.checks.find((c) => c.name === "image model")).toBeUndefined();
 	});
 
+	it("should warn about a price checked on a day after today", async () => {
+		// GIVEN the image model in use, said to be priced on 2026-12-01, after today (2026-11-04)
+		const ctx = checkedOn("2026-12-01");
+
+		// WHEN the check runs
+		const result = await run(configCheck.run({}, ctx, MODE));
+
+		// THEN it warns that the date is after today, and says which setting to fix
+		const row = result.checks.find((c) => c.name === "image model");
+		expect(row).toMatchObject({ status: "warn" });
+		expect(row?.detail).toContain("after today");
+		expect(row?.fix).toContain("models.fake-fast.priceChecked");
+	});
+
+	it("should warn about a model for a provider in use, but for a job it doesn't do", async () => {
+		// GIVEN config.json adding a transcription model to the image provider
+		const ctx = testContext({
+			config: {
+				models: {
+					"fake-ears": {
+						provider: "fake-images",
+						job: "transcribe",
+						endpoint: "fake/ears",
+						billedBy: "minute",
+						usdPerUnit: 0.01,
+						priceChecked: "2026-11-04",
+					},
+				},
+			},
+		});
+
+		// WHEN the check runs
+		const result = await run(configCheck.run({}, ctx, MODE));
+
+		// THEN it warns that nothing uses it
+		expect(result.checks).toContainEqual(
+			expect.objectContaining({
+				name: "models",
+				detail: expect.stringContaining("models.fake-ears"),
+			}),
+		);
+	});
+
 	it("should warn about a model in config.json that no provider in use claims", async () => {
 		// GIVEN config.json repricing "fake-fsat", a misspelt fake-fast
 		const ctx = testContext({ config: { models: { "fake-fsat": { usdPerUnit: 0.02 } } } });

@@ -21,8 +21,8 @@ const ZONE = "Europe/Madrid";
 const root = mkdtempSync(join(tmpdir(), "shorts-smoke-"));
 const data = join(root, "data");
 
-// The caller's environment without its keys or shorts-studio settings, so the run can't use
-// either. Paid services point at a port where nothing answers.
+// The caller's environment without its keys or shorts-studio settings. Paid services point at a
+// port where nothing answers, so a key still found in the macOS Keychain can't spend anything.
 const env: NodeJS.ProcessEnv = {
 	...Object.fromEntries(
 		Object.entries(process.env).filter(([name]) => !/KEY$|^SHORTS_/.test(name)),
@@ -128,7 +128,7 @@ check(
 	config,
 );
 
-// doctor passes on a machine with every key and tool, and otherwise fails the documented way.
+// On a machine with every key and tool doctor passes; anywhere else it fails the documented way.
 const doctor = run(["config", "check", "--json"]);
 const doctorCode = field(jsonOf(doctor), ["error", "code"]);
 check(

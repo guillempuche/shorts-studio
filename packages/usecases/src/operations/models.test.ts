@@ -6,6 +6,33 @@ import { modelsList } from "./models.ts";
 const MODE = { dryRun: false, confirmed: true } as const;
 
 describe("models list", () => {
+	it("should list the rest, and name the entry to fix, when one in config.json isn't whole", async () => {
+		// GIVEN config.json adding an image model without its endpoint
+		const ctx = testContext({
+			config: {
+				models: {
+					"fake-pro": {
+						provider: "fake-images",
+						job: "image",
+						billedBy: "image",
+						usdPerUnit: 0.1,
+						priceChecked: "2026-11-02",
+					},
+				},
+			},
+		});
+
+		// WHEN the models are listed
+		const result = await run(modelsList.run({}, ctx, MODE));
+
+		// THEN every whole model is still listed
+		expect(result.models.map((m) => m.name)).toEqual(["fake-fast", "fake-fine", "fake-whisper"]);
+		// AND the bad entry is named once, with its missing field and the fix
+		expect(result.problems).toHaveLength(1);
+		expect(result.problems[0]?.message).toContain("models.fake-pro");
+		expect(result.problems[0]?.message).toContain("endpoint");
+	});
+
 	it("should list each job's models with its price, when it was checked and the one in use", async () => {
 		// GIVEN the fake providers' own models, priced on 2026-11-01, and today 2026-11-04
 		const ctx = testContext();
