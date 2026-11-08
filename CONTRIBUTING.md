@@ -19,6 +19,6 @@ Thanks for helping. People and AI agents follow the same rules, and they live in
 
 If `pnpm-lock.yaml` changed, first update the `pnpmDeps` hash in `flake.nix` (`nix build` prints it). Move the `[Unreleased]` entries to a new version section in CHANGELOG.md. Set the same version in `apps/cli/package.json` and commit. Then push a tag `v<version>`.
 
-The release workflow compiles the binaries with Bun, straight from the TypeScript. It publishes the GitHub Release, with that CHANGELOG.md section as its notes.
+The release workflow compiles the binaries with Bun, straight from the TypeScript. Bun is a different engine from the Node the tests run on, so CI builds the Linux, macOS and Windows binaries on every push and runs them through `scripts/smoke-binary.ts`, and the release runs it on the Linux binary before publishing. Then the release workflow publishes the GitHub Release, with that CHANGELOG.md section as its notes.
 
 By contributing, you agree that your work is licensed under the [Apache-2.0](LICENSE) licence.

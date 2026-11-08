@@ -32,6 +32,9 @@ jobs:
             bun build apps/cli/src/main.ts --compile --minify --target="bun-${target%%:*}" --outfile "dist-bin/shorts-studio-${target#*:}"
           done
           cd dist-bin && sha256sum shorts-studio-* > checksums.txt
+      # The one binary this runner can run; CI checks the macOS and Windows ones on every push.
+      - name: Smoke-test the Linux binary
+        run: node scripts/smoke-binary.ts dist-bin/shorts-studio-linux-x64
       - name: Release notes from CHANGELOG.md
         run: |
           version="${GITHUB_REF_NAME#v}"
