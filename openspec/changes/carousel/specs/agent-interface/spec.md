@@ -1,16 +1,22 @@
 ## ADDED Requirements
 
-### Requirement: Carousels SHALL be approved by the user
+### Requirement: Carousels SHALL be reviewed by the user
 
-`carousel approve` SHALL be CLI-only, and SHALL refuse with code `needs-confirmation`, recording nothing, when stdin isn't an interactive terminal. It SHALL record the slides' text, images and layout. Any later change to them SHALL make the carousel need approving again.
+`carousel review --platform <p> --decision approve|fix|reject` SHALL be CLI-only, and SHALL refuse with code `needs-confirmation`, recording nothing, when stdin isn't an interactive terminal. It SHALL need rendered slides for that platform, SHALL record each PNG's hash, and SHALL take in notes per slide and the slide notes waiting from the review page.
 
 #### Scenario: An agent tries to approve
 
-- **WHEN** `carousel approve` runs with stdin that isn't a terminal
+- **WHEN** `carousel review --decision approve` runs with stdin that isn't a terminal
 - **THEN** the carousel stays unapproved
 - **AND** the command exits 3
 
-#### Scenario: A slide changed after approval
+#### Scenario: Asking for fixes
 
-- **WHEN** slide 2's title changes after the carousel was approved
-- **THEN** the carousel's status is back to `written`
+- **WHEN** the user runs `carousel review --platform tiktok --decision fix --slide-notes "3:too long"`
+- **THEN** the TikTok carousel's status is `needs-fix`
+- **AND** `post show` gives the agent slide 3's note
+
+#### Scenario: Nothing rendered yet
+
+- **WHEN** `carousel review --platform tiktok` runs before any TikTok render
+- **THEN** it exits 2 and names `carousel render --platform tiktok`
