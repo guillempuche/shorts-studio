@@ -39,6 +39,23 @@ Requests in flight to one provider SHALL stay within its `parallel` limit (3 by 
 - **WHEN** one post makes images and another animates clips, both with FAL
 - **THEN** no more than 3 FAL requests are in flight at any moment
 
+### Requirement: A failed request SHALL stop new ones for its post
+
+When one of a post's beats fails in `image generate`, no other beat of that post SHALL start. Beats already started SHALL finish, and their images SHALL be saved. The run SHALL then fail with that first failure's error, unchanged.
+
+#### Scenario: The provider is down
+
+- **WHEN** the provider answers a post's first requests with a 502
+- **THEN** no other beat of that post is sent
+- **AND** only the requests already in flight stay reserved
+
+#### Scenario: A cap reached halfway through a post
+
+- **WHEN** beats 0 and 1 are in flight and beat 2 would pass the per-post cap
+- **THEN** the images of beats 0 and 1 are saved
+- **AND** no request is sent for beat 2 or any later beat
+- **AND** the run fails with code `over-budget`
+
 ### Requirement: Batch commands SHALL run in parallel only when asked
 
 A command that never asks the user anything, run on several posts, SHALL handle one post at a time unless `--parallel N` is given, and then at most N at once. It SHALL report each post's result in the order the posts were selected, and start each log line with the post's slug. Ctrl-C SHALL stop every running post and report the finished ones.

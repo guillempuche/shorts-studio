@@ -13,6 +13,7 @@ What's missing:
 - **Memory.** A draft render's ffmpeg peaks at about 4–6 GB (measured on the 66 s post, 23 beats), because every image is enlarged to 2496×4448 before the zoom and all of them sit in one ffmpeg run. Four renders at once can run a 16 GB machine out of memory.
 - **Requests.** Image generation runs 3 requests at a time per post, so five posts make 15 at once against the same provider.
 - **Batches.** Batch commands (`--day today`) run posts one after another, even when the machine could do more.
+- **A failed request.** When one beat's image fails, `image generate` interrupts the other beats while they wait for their images. Nothing is paid twice, since the next run resumes their saved requests, but images already paid for aren't saved until then. The rule for what keeps running after a failure belongs with the request limit below, so it's set in one place.
 - **One post rendering twice.** `draft render` takes the post's lock only to save its result at the end. Two runs on one post can therefore write the same temporary files at once, for example when an agent retries a call that timed out.
 
 ## What Changes
@@ -26,6 +27,7 @@ What's missing:
 
   `carousel render` and `preview` use Takumi, which needs about 150 MB, so they take no slot.
 - **One request limit per provider.** Each provider has one limit on requests in flight across every post and process on the machine: `parallel` under that provider in `config.json`, 3 by default. All its jobs share it, so FAL images and FAL clips count together. A request slot also records its process and host, and is taken over the same way.
+- **A failed request stops new ones for its post.** Once one of a post's beats fails, `image generate` starts no other beat of that post. Beats already started finish and their images are saved, then the run fails with that first error, as today. It doesn't keep sending after a failure: during a provider outage, every new request would reserve money with an unknown outcome, and each would stay counted.
 - **`--parallel N` for batch commands.** Commands that never ask the user anything can run on up to N posts at once (default 1). Each still takes its own locks and slots.
   - Results are reported in post order, and `--json` keeps today's shape.
   - Log lines start with the post's slug.

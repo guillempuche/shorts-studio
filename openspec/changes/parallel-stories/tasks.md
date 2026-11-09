@@ -7,6 +7,7 @@
 - [ ] 1.3 Render slots in the machine's cache folder, recording process and host; `render.slots` defaulting from memory (the container's limit when there is one)
 - [ ] 1.4 Wait for a free slot, saying who holds them; Ctrl-C while waiting; take over a slot whose process is gone on this host
 - [ ] 1.5 One request limit per provider (`parallel`, default 3), shared by all its jobs, recording process and host
+- [ ] 1.6 After one of a post's beats fails, `image generate` starts no other beat of it; beats already started finish and save their images; the run fails with that first error. Test: a provider answering 502 (only the in-flight reservations stay) and a cap reached mid-post (the in-flight images are saved)
 
 ## 2. Batch commands
 
