@@ -20,7 +20,8 @@ export const attempt = <A>(
 	Effect.callback<A, ShortsError>((resume, signal) => {
 		const settled = work(signal).then(
 			(value) => resume(Effect.succeed(value)),
-			(error: unknown) => resume(Effect.fail(onError(error))),
+			// Suspended, so an `onError` that throws becomes a defect instead of a run that never ends.
+			(error: unknown) => resume(Effect.suspend(() => Effect.fail(onError(error)))),
 		);
 		return Effect.promise(() => settled).pipe(Effect.timeout(STOP_WAIT_MS), Effect.ignore);
 	});

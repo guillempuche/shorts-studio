@@ -117,14 +117,18 @@ export const postList = defineOperation({
 	spends: false,
 	hints: { readonly: true, destructive: false, idempotent: true, openWorld: false },
 	run: (input, ctx) =>
-		Effect.forEach(listSlugs(ctx), (slug) => readPost(ctx, slug)).pipe(
+		listSlugs(ctx).pipe(
+			// Named by folder, the name every command takes, even when post.json was copied from another.
+			Effect.flatMap((slugs) =>
+				Effect.forEach(slugs, (slug) =>
+					Effect.map(readPost(ctx, slug), (post) => ({ ...summary(post), slug })),
+				),
+			),
 			Effect.map((posts) => ({
 				// Archived posts show only when asked for by stage.
-				posts: posts
-					.map(summary)
-					.filter((post) =>
-						input.stage === undefined ? post.stage !== "archived" : post.stage === input.stage,
-					),
+				posts: posts.filter((post) =>
+					input.stage === undefined ? post.stage !== "archived" : post.stage === input.stage,
+				),
 			})),
 		),
 	render: (o) =>

@@ -8,13 +8,12 @@
  * which marks them out of date.
  */
 
-import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
+import { existsSync, renameSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fail } from "@shorts-studio/domain/errors";
 import { Kind, Origin } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
-import { failWith } from "../attempt.ts";
-import { fileHash } from "../files.ts";
+import { ensureDir, fileHash, fileStep } from "../files.ts";
 import { defineOperation, p } from "../operation.ts";
 import { MediaTools } from "../ports.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
@@ -47,17 +46,17 @@ export const sourceImport = defineOperation({
 			}
 			yield* readPost(ctx, input.post);
 			const dir = postDir(ctx, input.post);
-			mkdirSync(join(dir, "audio"), { recursive: true });
+			yield* ensureDir(join(dir, "audio"));
 			const target = join(dir, AUDIO_FILE);
 			const tmp = join(dir, "audio", "audio.tmp.m4a");
 			const media = yield* MediaTools;
 			const durationSec = yield* Effect.gen(function* () {
 				yield* media.extractAudio(source, tmp);
 				const seconds = yield* media.duration(tmp);
-				yield* Effect.try({
-					try: () => renameSync(tmp, target),
-					catch: failWith("failed", `Check that ${dir} is writable, then run it again.`),
-				});
+				yield* fileStep(
+					() => renameSync(tmp, target),
+					`Check that ${dir} is writable, then run it again.`,
+				);
 				return seconds;
 			}).pipe(Effect.ensuring(Effect.sync(() => rmSync(tmp, { force: true }))));
 			const hash = yield* fileHash(target);

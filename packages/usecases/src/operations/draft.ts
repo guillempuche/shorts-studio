@@ -14,9 +14,8 @@ import { motionOf } from "@shorts-studio/domain/direction";
 import { fail } from "@shorts-studio/domain/errors";
 import type { Post, Word } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
-import { failWith } from "../attempt.ts";
 import type { Context } from "../context.ts";
-import { fileHash, hashOf, writeFileAtomic } from "../files.ts";
+import { fileHash, fileStep, hashOf, writeFileAtomic } from "../files.ts";
 import { defineOperation, p } from "../operation.ts";
 import { MediaTools } from "../ports.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
@@ -95,11 +94,11 @@ export const draftRender = defineOperation({
 					? (yield* readTranscript(ctx, input.post)).words
 					: [];
 			const groups = groupCaptions(words);
-			writeFileAtomic(
+			yield* writeFileAtomic(
 				join(dir, "captions.ass"),
 				toAss(groups, captionStyle(ctx), post.script?.hook),
 			);
-			writeFileAtomic(join(dir, "captions.srt"), toSrt(groups));
+			yield* writeFileAtomic(join(dir, "captions.srt"), toSrt(groups));
 
 			const tmp = "draft.rendering.mp4";
 			ctx.log(`Rendering ${beats.length} beats, ${post.audio.durationSec.toFixed(1)} s…`);
@@ -116,10 +115,10 @@ export const draftRender = defineOperation({
 					captions: "captions.ass",
 					output: tmp,
 				});
-				yield* Effect.try({
-					try: () => renameSync(join(dir, tmp), join(dir, DRAFT_FILE)),
-					catch: failWith("failed", `Check that ${dir} is writable, then run it again.`),
-				});
+				yield* fileStep(
+					() => renameSync(join(dir, tmp), join(dir, DRAFT_FILE)),
+					`Check that ${dir} is writable, then run it again.`,
+				);
 				return yield* media.duration(join(dir, DRAFT_FILE));
 			}).pipe(Effect.ensuring(Effect.sync(() => rmSync(join(dir, tmp), { force: true }))));
 

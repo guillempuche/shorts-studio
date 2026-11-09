@@ -1,10 +1,10 @@
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DateTime, Effect, Exit } from "effect";
 import { describe, expect, it } from "vitest";
 import { daysNow } from "./days.ts";
-import { acquireLock } from "./files.ts";
-import { type PaidCall, readLedger, release, reserve, settle, spent } from "./ledger.ts";
+import { takeLock } from "./files.ts";
+import { type PaidCall, paidCall, readLedger, release, reserve, settle, spent } from "./ledger.ts";
 import { testContext } from "./test/context.ts";
 
 /** A ledger line as commands write it, at `at`, for `usd`. */
@@ -179,13 +179,15 @@ describe("reserve", () => {
 		// GIVEN another command holding the ledger's lock, shared by every process
 		const ctx = testContext();
 		mkdirSync(ctx.paths.data, { recursive: true });
-		const held = await acquireLock(join(ctx.paths.data, "ledger.lock"), "other command");
+		const held = await Effect.runPromise(
+			takeLock(join(ctx.paths.data, "ledger.lock"), "other command"),
+		);
 
 		// WHEN a call is reserved, and the other command lets go 300 ms later
 		const reserving = Effect.runPromise(reserve(ctx, call("a", 0.1)));
 		await new Promise((resolve) => setTimeout(resolve, 300));
 		const whileHeld = await Effect.runPromise(readLedger(ctx));
-		if ("release" in held) held.release();
+		held.release();
 		await reserving;
 
 		// THEN nothing was written while the lock was held
@@ -346,5 +348,33 @@ describe("readLedger", () => {
 		// THEN the read fails, since the caps can't be trusted past that line
 		expect(error.code).toBe("failed");
 		expect(error.message).toContain("line 2 is corrupt");
+	});
+});
+
+describe("paidCall", () => {
+	it("should keep a paid result when the ledger can't be written to close it", async () => {
+		// GIVEN a paid call during which the ledger can't be written, as a full disk would act. A
+		// folder in its place does that for every user, root included, unlike a read-only file.
+		const ctx = testContext();
+		const file = join(ctx.paths.data, "ledger.jsonl");
+		const aside = `${file}.aside`;
+		const work = Effect.sync(() => {
+			renameSync(file, aside);
+			mkdirSync(file);
+			return "paid image";
+		});
+
+		// WHEN it runs
+		const result = await Effect.runPromise(paidCall(ctx, call("a", 0.1), work)).finally(() => {
+			rmSync(file, { recursive: true });
+			renameSync(aside, file);
+		});
+
+		// THEN the result is kept
+		expect(result).toBe("paid image");
+		// AND the reservation, never closed, still counts it
+		const entries = await Effect.runPromise(readLedger(ctx));
+		expect(entries.map((entry) => entry.type)).toEqual(["reserve"]);
+		expect(spent(entries, { post: "a" })).toBeCloseTo(0.1);
 	});
 });

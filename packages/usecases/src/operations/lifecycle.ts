@@ -10,8 +10,7 @@ import { extname, join, resolve } from "node:path";
 import { fail, type ShortsError } from "@shorts-studio/domain/errors";
 import { Decision, Platform, Stage, stageOf } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
-import { failWith } from "../attempt.ts";
-import { fileHash } from "../files.ts";
+import { fileHash, fileStep } from "../files.ts";
 import { parseBeatList, requireUser } from "../inputs.ts";
 import { defineOperation, p } from "../operation.ts";
 import { MediaTools } from "../ports.ts";
@@ -131,10 +130,10 @@ export const postFinalize = defineOperation({
 			const target = join(postDir(ctx, input.post), file);
 			const media = yield* MediaTools;
 			const durationSec = yield* media.duration(source);
-			yield* Effect.try({
-				try: () => copyFileSync(source, target),
-				catch: failWith("failed", `Check that ${target} can be written, then run it again.`),
-			});
+			yield* fileStep(
+				() => copyFileSync(source, target),
+				`Check that ${target} can be written, then run it again.`,
+			);
 			const hash = yield* fileHash(target);
 			const post = yield* updatePost(ctx, input.post, "post finalize", (current) =>
 				Effect.succeed({ ...current, final: { file, hash, at: ctx.now().toISOString() } }),

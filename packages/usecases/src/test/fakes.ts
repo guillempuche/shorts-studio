@@ -260,8 +260,21 @@ export const run = <A, E>(
 	ports: Layer.Layer<Ports> = fakePorts(),
 ): Promise<A> => Effect.runPromise(effect.pipe(Effect.provide(ports)));
 
-/** Runs a use case that should fail and returns its error; rejects if it succeeds. */
+/**
+ * Runs a use case that should fail and returns its error. If it succeeds instead, the test fails
+ * showing what it gave, rather than a bare `[object Object]`.
+ */
 export const runFailure = <A, E>(
 	effect: Effect.Effect<A, E, Ports>,
 	ports: Layer.Layer<Ports> = fakePorts(),
-): Promise<E> => Effect.runPromise(Effect.flip(effect).pipe(Effect.provide(ports)));
+): Promise<E> =>
+	Effect.runPromise(
+		effect.pipe(
+			Effect.matchEffect({
+				onFailure: Effect.succeed,
+				onSuccess: (value) =>
+					Effect.die(new Error(`Expected a failure, got ${JSON.stringify(value)}`)),
+			}),
+			Effect.provide(ports),
+		),
+	);

@@ -8,7 +8,6 @@
  * already up to date are skipped. `--reroll` gives the chosen beats a new seed.
  */
 
-import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { IMAGE_SIZE } from "@shorts-studio/domain/direction";
 import { fail, failBecause, RequestEnded } from "@shorts-studio/domain/errors";
@@ -21,7 +20,7 @@ import {
 } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import type { Context } from "../context.ts";
-import { hashBytes, hashOf, writeFileAtomic } from "../files.ts";
+import { ensureDir, hashBytes, hashOf, writeFileAtomic } from "../files.ts";
 import { parseBeatList, requireKey } from "../inputs.ts";
 import { release, releaseIfNothingBilled, reserve, settle } from "../ledger.ts";
 import { chooseModel, costOf, type NamedModel } from "../models.ts";
@@ -156,10 +155,20 @@ const generateOne = Effect.fn("generateOne")(function* (
 		),
 	);
 
-	const imagesDir = join(postDir(ctx, slug), "images");
-	mkdirSync(imagesDir, { recursive: true });
 	const file = join("images", `beat-${String(beat.index).padStart(2, "0")}.jpg`);
-	writeFileAtomic(join(postDir(ctx, slug), file), bytes);
+	yield* Effect.andThen(
+		ensureDir(join(postDir(ctx, slug), "images")),
+		writeFileAtomic(join(postDir(ctx, slug), file), bytes),
+	).pipe(
+		// The image is paid for and its request is still saved, so the next run fetches it free.
+		Effect.mapError((error) =>
+			fail(
+				"failed",
+				error.message,
+				`Free some disk space or fix the folder's permissions, then run image generate --post ${slug} --yes: it fetches the paid image again without paying.`,
+			),
+		),
+	);
 
 	yield* updatePost(ctx, slug, "image generate", (post) =>
 		Effect.succeed(

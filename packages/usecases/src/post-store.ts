@@ -7,24 +7,23 @@
  * piece with a short `updatePost`, so the agent and the user can work on the same post at once.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fail, type ShortsError } from "@shorts-studio/domain/errors";
-import { MANIFEST_VERSION, Post, SCHEMA_URL } from "@shorts-studio/domain/post";
+import { MANIFEST_VERSION, Post, SCHEMA_URL, Slug } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
-import { failWith } from "./attempt.ts";
 import type { Context } from "./context.ts";
-import { writeFileAtomic } from "./files.ts";
+import { ensureDir, fileStep, readText, writeFileAtomic } from "./files.ts";
 import { busyPost, withLock } from "./lock.ts";
 
-const SLUG = /^[a-z0-9][a-z0-9-]{0,99}$/;
+const isSlug = Schema.is(Slug);
 
 export const minePath = (ctx: Context): string => join(ctx.paths.posts, "mine");
 export const postDir = (ctx: Context, slug: string): string => join(minePath(ctx), slug);
 const manifestPath = (ctx: Context, slug: string): string => join(postDir(ctx, slug), "post.json");
 
 export const checkSlug = (slug: string): Effect.Effect<string, ShortsError> =>
-	SLUG.test(slug)
+	isSlug(slug)
 		? Effect.succeed(slug)
 		: Effect.fail(
 				fail(
@@ -49,7 +48,8 @@ const encodePost = Schema.encodeEffect(Schema.fromJsonString(Post, { space: 2 })
 
 export const readPost = Effect.fn("readPost")(function* (ctx: Context, slug: string) {
 	const file = manifestPath(ctx, yield* existingPost(ctx, slug));
-	return yield* decodePost(readFileSync(file, "utf8")).pipe(
+	const text = yield* readText(file, "List posts with: post list");
+	return yield* decodePost(text).pipe(
 		Effect.mapError((error) =>
 			fail(
 				"failed",
@@ -60,21 +60,16 @@ export const readPost = Effect.fn("readPost")(function* (ctx: Context, slug: str
 	);
 });
 
-const writePost = (ctx: Context, post: Post): Effect.Effect<void, ShortsError> =>
+const writePost = (ctx: Context, slug: string, post: Post): Effect.Effect<void, ShortsError> =>
 	encodePost({ ...post, $schema: SCHEMA_URL }).pipe(
 		Effect.mapError((error) =>
 			fail(
 				"failed",
 				`Can't turn the post into JSON: ${error.message}`,
-				"This is a bug; please report it.",
+				"This is a bug: please report it.",
 			),
 		),
-		Effect.flatMap((json) =>
-			Effect.try({
-				try: () => writeFileAtomic(manifestPath(ctx, post.slug), `${json}\n`),
-				catch: failWith("failed", "Check the posts folder is writable."),
-			}),
-		),
+		Effect.flatMap((json) => writeFileAtomic(manifestPath(ctx, slug), `${json}\n`)),
 	);
 
 export const createPost = Effect.fn("createPost")(function* (
@@ -90,9 +85,9 @@ export const createPost = Effect.fn("createPost")(function* (
 			`Show it with: post show --post ${post.slug}`,
 		);
 	}
-	mkdirSync(dir, { recursive: true });
+	yield* ensureDir(dir);
 	const created: Post = { ...post, manifestVersion: MANIFEST_VERSION, revision: 1 };
-	yield* writePost(ctx, created);
+	yield* writePost(ctx, post.slug, created);
 	return created;
 });
 
@@ -114,9 +109,19 @@ export const updatePost = <E>(
 				busyPost(slug),
 				Effect.gen(function* () {
 					const current = yield* readPost(ctx, slug);
+					// Writes go to the folder the post was read from, and only while the file names that
+					// folder: a copied folder must not change the original's post.
+					if (current.slug !== slug) {
+						const file = manifestPath(ctx, slug);
+						return yield* fail(
+							"failed",
+							`${file} names the post "${current.slug}", but its folder is "${slug}".`,
+							`Set "slug" to "${slug}" in ${file}, or rename the folder back.`,
+						);
+					}
 					const next = yield* change(current);
 					const written: Post = { ...next, revision: current.revision + 1 };
-					yield* writePost(ctx, written);
+					yield* writePost(ctx, slug, written);
 					return written;
 				}),
 			),
@@ -124,11 +129,16 @@ export const updatePost = <E>(
 	);
 
 /** Every post folder that holds a post.json, newest first (folder names start with a date). */
-export const listSlugs = (ctx: Context): ReadonlyArray<string> => {
+export const listSlugs = (ctx: Context): Effect.Effect<ReadonlyArray<string>, ShortsError> => {
 	const dir = minePath(ctx);
-	if (!existsSync(dir)) return [];
-	return readdirSync(dir)
-		.filter((name) => SLUG.test(name) && existsSync(join(dir, name, "post.json")))
-		.sort()
-		.reverse();
+	return fileStep(
+		() =>
+			existsSync(dir)
+				? readdirSync(dir)
+						.filter((name) => isSlug(name) && existsSync(join(dir, name, "post.json")))
+						.sort()
+						.reverse()
+				: [],
+		`Check that ${dir} is a folder you can read.`,
+	);
 };

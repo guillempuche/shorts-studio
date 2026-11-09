@@ -78,10 +78,13 @@ export const Beat = Schema.Struct({
 });
 export type Beat = typeof Beat.Type;
 
+/** A post's folder name, which is also its slug: lowercase letters, digits and dashes. */
+export const Slug = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]{0,99}$/u));
+
 export const Post = Schema.Struct({
 	$schema: Schema.optionalKey(Schema.String),
 	manifestVersion: Schema.Literal(MANIFEST_VERSION),
-	slug: Schema.String,
+	slug: Slug,
 	createdAt: Schema.String,
 	/** Goes up by one on every write. Each write re-reads the file under the post's lock first. */
 	revision: Schema.Int,

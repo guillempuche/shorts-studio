@@ -10,7 +10,8 @@
       "enum": [1]
     },
     "slug": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,99}$"
     },
     "createdAt": {
       "type": "string"

@@ -6,7 +6,7 @@
  * once from a JSON file. The file is checked before anything is saved.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { PLANNER_VERSION, planBeats, planByMoment, sectionsOf } from "@shorts-studio/domain/beats";
 import { Moment, MotionType } from "@shorts-studio/domain/direction";
@@ -14,7 +14,7 @@ import { fail, type ShortsError } from "@shorts-studio/domain/errors";
 import type { Beat, Post, Word } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import type { Context } from "../context.ts";
-import { hashOf } from "../files.ts";
+import { hashOf, readText } from "../files.ts";
 import { defineOperation, p } from "../operation.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
 import { readTranscript, TRANSCRIPT_FILE } from "./audio.ts";
@@ -155,17 +155,21 @@ const BeatPatches = Schema.Union([
 
 const readPatches = (file: string): Effect.Effect<ReadonlyArray<BeatPatch>, ShortsError> =>
 	existsSync(file)
-		? Schema.decodeUnknownEffect(Schema.fromJsonString(BeatPatches), { errors: "all" })(
-				readFileSync(file, "utf8"),
-			).pipe(
-				Effect.map((parsed) => ("beats" in parsed ? parsed.beats : parsed)),
-				Effect.mapError((error) =>
-					fail(
-						"usage",
-						`${file} isn't a list of beat settings:\n${error.message}`,
-						'Use [{"beat": 0, "moment": "hook", "prompt": "…"}, …] or {"beats": [...]}.',
+		? readText(file, "Write the prompts to a JSON file first.").pipe(
+				Effect.flatMap((text) =>
+					Schema.decodeUnknownEffect(Schema.fromJsonString(BeatPatches), { errors: "all" })(
+						text,
+					).pipe(
+						Effect.mapError((error) =>
+							fail(
+								"usage",
+								`${file} isn't a list of beat settings:\n${error.message}`,
+								'Use [{"beat": 0, "moment": "hook", "prompt": "…"}, …] or {"beats": [...]}.',
+							),
+						),
 					),
 				),
+				Effect.map((parsed) => ("beats" in parsed ? parsed.beats : parsed)),
 			)
 		: Effect.fail(
 				fail("not-found", `No file at ${file}.`, "Write the prompts to a JSON file first."),

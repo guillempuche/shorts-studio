@@ -3,13 +3,12 @@
  * leaves imported images alone unless the beat is rerolled.
  */
 
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
 import { fail } from "@shorts-studio/domain/errors";
 import type { Beat } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
-import { failWith } from "../attempt.ts";
-import { fileHash, hashOf } from "../files.ts";
+import { ensureDir, fileHash, fileStep, hashOf } from "../files.ts";
 import { defineOperation, p } from "../operation.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
 import { nextStep } from "./post.ts";
@@ -51,15 +50,15 @@ export const imageImport = defineOperation({
 				);
 			}
 			const dir = postDir(ctx, input.post);
-			mkdirSync(join(dir, "images"), { recursive: true });
+			yield* ensureDir(join(dir, "images"));
 			const file = join(
 				"images",
 				`beat-${String(input.beat).padStart(2, "0")}-imported${extname(source).toLowerCase()}`,
 			);
-			yield* Effect.try({
-				try: () => copyFileSync(source, join(dir, file)),
-				catch: failWith("failed", `Check that ${source} is readable, then run it again.`),
-			});
+			yield* fileStep(
+				() => copyFileSync(source, join(dir, file)),
+				`Check that ${source} is readable, then run it again.`,
+			);
 			const hash = yield* fileHash(join(dir, file));
 			const attach = (b: Beat): Beat => {
 				if (b.index !== input.beat) return b;

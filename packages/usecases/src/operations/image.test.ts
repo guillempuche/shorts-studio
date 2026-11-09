@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Effect, Fiber } from "effect";
+import { TestClock } from "effect/testing";
 import { describe, expect, it, vi } from "vitest";
 import type { Context } from "../context.ts";
 import { daysNow } from "../days.ts";
@@ -208,6 +209,35 @@ describe("image generate", () => {
 		const entries = await ledgerOf(ctx);
 		expect(entries.map((e) => e.type)).toEqual(["reserve", "release"]);
 		expect(spent(entries, { post: SLUG })).toBe(0);
+	});
+
+	it("should give up on a request the provider never answers, keeping its cost counted", async () => {
+		// GIVEN a provider that takes the request but never answers it
+		const { ctx, maker, ports } = await ready();
+		maker.answer = "held";
+
+		// WHEN beat 0 is generated and a minute passes
+		const error = await Effect.runPromise(
+			Effect.gen(function* () {
+				const generating = yield* generate(ctx, { beat: "0" }).pipe(
+					Effect.provide(ports),
+					Effect.forkChild,
+				);
+				yield* Effect.promise(() => vi.waitUntil(() => maker.held === 1));
+				yield* TestClock.adjust("60 seconds");
+				return yield* Effect.flip(Fiber.join(generating));
+			}).pipe(Effect.provide(TestClock.layer())),
+		);
+
+		// THEN the run fails, saying the provider didn't answer
+		expect(error.code).toBe("provider");
+		expect(error.message).toContain("didn't answer");
+		// AND the reservation stays counted, since the provider may have billed it
+		const entries = await ledgerOf(ctx);
+		expect(entries.map((entry) => entry.type)).toEqual(["reserve"]);
+		expect(spent(entries, { post: SLUG })).toBeCloseTo(0.01);
+		// AND no request was saved to resume, since none came back
+		expect((await postOf(ctx)).beats?.items[0]?.pending).toBeUndefined();
 	});
 
 	it("should keep the reservation counted when sending gets no answer", async () => {

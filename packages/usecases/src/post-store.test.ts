@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { cpSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
@@ -86,5 +86,31 @@ describe("createPost", () => {
 		expect(error.code).toBe("conflict");
 		// AND the first post is untouched
 		expect((await Effect.runPromise(readPost(ctx, SLUG))).brief?.title).toBe("Kept");
+	});
+});
+
+describe("a copied post folder", () => {
+	it("should refuse to change the copy, leaving the original untouched, and still read both", async () => {
+		// GIVEN a post, and a copy of its folder under another name
+		const ctx = testContext();
+		await seedPost(ctx, SLUG);
+		const copy = "2026-11-04-copy";
+		cpSync(postDir(ctx, SLUG), postDir(ctx, copy), { recursive: true });
+		const original = readFileSync(join(postDir(ctx, SLUG), "post.json"), "utf8");
+
+		// WHEN a command updates the copy
+		const error = await Effect.runPromise(
+			Effect.flip(
+				updatePost(ctx, copy, "test", (p) => Effect.succeed({ ...p, aiGenerated: true })),
+			),
+		);
+
+		// THEN it says the file and its folder disagree, and how to fix it
+		expect(error.message).toContain(`"${SLUG}"`);
+		expect(error.fix).toContain(`"slug" to "${copy}"`);
+		// AND the original post wasn't written
+		expect(readFileSync(join(postDir(ctx, SLUG), "post.json"), "utf8")).toBe(original);
+		// AND reading still works, so listing posts doesn't fail over one copied folder
+		expect((await Effect.runPromise(readPost(ctx, copy))).slug).toBe(SLUG);
 	});
 });

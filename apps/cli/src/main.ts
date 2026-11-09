@@ -13,14 +13,15 @@ import * as NodePath from "@effect/platform-node-shared/NodePath";
 import * as NodeRuntime from "@effect/platform-node-shared/NodeRuntime";
 import * as NodeStdio from "@effect/platform-node-shared/NodeStdio";
 import * as NodeTerminal from "@effect/platform-node-shared/NodeTerminal";
+import { exitCodeOf } from "@shorts-studio/domain/errors";
 import { mcpServerLayer } from "@shorts-studio/mcp/mcp";
 import { providersLayer } from "@shorts-studio/providers/index";
 import { makeContext } from "@shorts-studio/providers/node";
 import { configCheck } from "@shorts-studio/usecases/operations/config";
 import { operations } from "@shorts-studio/usecases/operations/index";
-import { Cause, Effect, Exit, Layer, Runtime } from "effect";
+import { Cause, Effect, Exit, Layer, Logger, Runtime } from "effect";
 import { CliError, Command } from "effect/cli";
-import { aliasCommand, nounCommands, root } from "./cli.ts";
+import { aliasCommand, cliOutput, jsonRequested, nounCommands, root } from "./cli.ts";
 
 export const VERSION = "0.1.0";
 
@@ -48,11 +49,15 @@ const platform = Layer.mergeAll(
 	),
 );
 
+const json = jsonRequested(process.argv);
+
+// A group of commands given no command (`post`) shows its help and exits 0, but with --json it
+// has printed a usage error, so it exits as one.
 const isUsageError = (error: unknown): boolean =>
-	CliError.isCliError(error) && (error._tag !== "ShowHelp" || error.errors.length > 0);
+	CliError.isCliError(error) && (error._tag !== "ShowHelp" || error.errors.length > 0 || json);
 
 const teardown: Runtime.Teardown = (exit, onExit) => {
-	if (Exit.isFailure(exit) && isUsageError(Cause.squash(exit.cause))) onExit(2);
+	if (Exit.isFailure(exit) && isUsageError(Cause.squash(exit.cause))) onExit(exitCodeOf("usage"));
 	else Runtime.defaultTeardown(exit, onExit);
 };
 
@@ -63,6 +68,14 @@ root.pipe(
 		mcp,
 	]),
 	Command.run({ version: VERSION }),
-	Effect.provide(Layer.mergeAll(platform, ports)),
-	(program) => NodeRuntime.runMain(program, { teardown }),
+	Effect.provide(Layer.mergeAll(platform, ports, cliOutput(process.argv))),
+	// What runMain would report, reported here instead so it goes to stderr: stdout holds only
+	// results and MCP messages.
+	Effect.tapCause((cause) =>
+		Cause.hasInterruptsOnly(cause) || !Runtime.getErrorReported(Cause.squash(cause))
+			? Effect.void
+			: Effect.logError(cause),
+	),
+	Effect.provideService(Logger.LogToStderr, true),
+	(program) => NodeRuntime.runMain(program, { teardown, disableErrorReporting: true }),
 );

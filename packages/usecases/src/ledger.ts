@@ -9,13 +9,14 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fail, type Reason, type ShortsError } from "@shorts-studio/domain/errors";
 import { Unit } from "@shorts-studio/domain/models";
 import { Effect, Schema } from "effect";
 import { type Context, DEFAULT_CAPS } from "./context.ts";
 import { daysNow } from "./days.ts";
+import { appendText, ensureDir, readText } from "./files.ts";
 import { withLock } from "./lock.ts";
 
 /**
@@ -64,8 +65,15 @@ interface LedgerFile {
 /** A corrupt line fails the read, since the caps can't be trusted past it. */
 const readLedgerFile = (ctx: Context): Effect.Effect<LedgerFile, ShortsError> => {
 	const file = ledgerFile(ctx);
-	if (!existsSync(file)) return Effect.succeed({ entries: [], endsMidLine: false });
-	const text = readFileSync(file, "utf8");
+	// Read when the Effect runs, not when it's built: a caller may build it before taking the lock.
+	return Effect.suspend(() =>
+		existsSync(file)
+			? readText(file, "The ledger was removed while it was being read; run the command again.")
+			: Effect.succeed(""),
+	).pipe(Effect.flatMap((text) => parseLedger(file, text)));
+};
+
+const parseLedger = (file: string, text: string): Effect.Effect<LedgerFile, ShortsError> => {
 	// Some editors save a byte-order mark first; it isn't part of the first line's JSON.
 	// Numbered before blank lines are dropped, so an error names the line an editor shows.
 	const lines = text
@@ -124,16 +132,16 @@ const total = (live: ReturnType<typeof amounts>, { post, since }: SpendFilter): 
 		.reduce((sum, { usd }) => sum + usd, 0);
 
 /** Adds `entry` as a line, ending the last one first if a hand edit left it unended. */
-const append = (ctx: Context, ledger: LedgerFile, entry: LedgerEntry): void => {
+const append = (ctx: Context, ledger: LedgerFile, entry: LedgerEntry) => {
 	// Without it, the new line would join the last one, and the ledger would read as corrupt.
 	const lead = ledger.endsMidLine ? "\n" : "";
-	appendFileSync(ledgerFile(ctx), `${lead}${Schema.encodeSync(EntryLine)(entry)}\n`);
+	return appendText(ledgerFile(ctx), `${lead}${Schema.encodeSync(EntryLine)(entry)}\n`);
 };
 
 const withLedgerLock = <A>(ctx: Context, use: Effect.Effect<A, ShortsError>) =>
-	Effect.suspend(() => {
-		mkdirSync(ctx.paths.data, { recursive: true });
-		return withLock(
+	Effect.andThen(
+		ensureDir(ctx.paths.data),
+		withLock(
 			join(ctx.paths.data, "ledger.lock"),
 			"ledger",
 			() =>
@@ -143,8 +151,8 @@ const withLedgerLock = <A>(ctx: Context, use: Effect.Effect<A, ShortsError>) =>
 					"Another command is updating it; run this one again.",
 				),
 			use,
-		);
-	});
+		),
+	);
 
 export const caps = (ctx: Context) => ({ ...DEFAULT_CAPS, ...ctx.config.caps });
 
@@ -226,7 +234,7 @@ export const reserve = (ctx: Context, call: PaidCall): Effect.Effect<string, Sho
 			}
 
 			const id = randomUUID();
-			append(ctx, ledger, { id, at: days.at, type: "reserve", ...call });
+			yield* append(ctx, ledger, { id, at: days.at, type: "reserve", ...call });
 			return id;
 		}),
 	);
@@ -243,7 +251,7 @@ const close = (
 			const ledger = yield* readLedgerFile(ctx);
 			const reserved = ledger.entries.find((entry) => entry.id === id && entry.type === "reserve");
 			if (reserved === undefined) return;
-			append(ctx, ledger, { ...reserved, at: ctx.now().toISOString(), ...change });
+			yield* append(ctx, ledger, { ...reserved, at: ctx.now().toISOString(), ...change });
 		}),
 	);
 

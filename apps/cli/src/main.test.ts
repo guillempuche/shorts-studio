@@ -72,6 +72,20 @@ describe("shorts-studio", () => {
 		expect((await exited).code).toBe(2);
 	}, 15_000);
 
+	it("should exit 2 with one JSON object when a group of commands gets no command, with --json", async () => {
+		// GIVEN no running process
+		// WHEN `post` is run with no command after it, asking for JSON
+		const { exited, child } = start(["post", "--json"]);
+		let stdout = "";
+		child.stdout.on("data", (chunk: Buffer) => {
+			stdout += chunk.toString();
+		});
+
+		// THEN it exits with the usage code, and stdout is one usage error object
+		expect((await exited).code).toBe(2);
+		expect((JSON.parse(stdout) as { error: { code: string } }).error.code).toBe("usage");
+	}, 15_000);
+
 	it("should report the version package.json declares", () => {
 		// GIVEN the package's version and the CLI's version constant
 		const pkg = JSON.parse(

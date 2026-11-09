@@ -3,10 +3,10 @@ import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import type { Context } from "../context.ts";
 import { readPost } from "../post-store.ts";
-import { testContext } from "../test/context.ts";
+import { tempDir, testContext } from "../test/context.ts";
 import { run, runFailure } from "../test/fakes.ts";
 import { seedPost } from "../test/posts.ts";
-import { scriptApprove } from "./script.ts";
+import { scriptApprove, scriptSet } from "./script.ts";
 
 const SLUG = "2026-11-07-approve";
 const MODE = { dryRun: false, confirmed: true } as const;
@@ -63,5 +63,23 @@ describe("script approve", () => {
 		expect(error.code).toBe("needs-confirmation");
 		expect(error.fix).toContain("terminal");
 		expect((await postOf(ctx)).script?.approvedHash).toBeUndefined();
+	});
+});
+
+describe("script set", () => {
+	it("should fail with a fix, not crash, when the path given is a folder", async () => {
+		// GIVEN a post, and a folder passed where the script file goes
+		const ctx = testContext();
+		await waitingForApproval(ctx);
+		const folder = tempDir();
+
+		// WHEN the script is set from it
+		const error = await runFailure(
+			scriptSet.run({ post: SLUG, file: folder, hook: undefined }, ctx, MODE),
+		);
+
+		// THEN it fails as a ShortsError, whose fix says to check the path
+		expect(error.code).toBe("failed");
+		expect(error.fix).toContain(folder);
 	});
 });

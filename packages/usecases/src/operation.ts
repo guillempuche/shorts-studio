@@ -8,8 +8,9 @@
  */
 
 import type { ShortsError } from "@shorts-studio/domain/errors";
-import { type Effect, Option, Schema } from "effect";
+import { Effect, Option, Schema } from "effect";
 import { Flag } from "effect/cli";
+import { failWith } from "./attempt.ts";
 import type { Context } from "./context.ts";
 import type { Ports } from "./ports.ts";
 
@@ -108,7 +109,27 @@ export interface Operation<P extends Params = Params, O = unknown> {
 	render?(output: O): string;
 }
 
-export const defineOperation = <P extends Params, O>(op: Operation<P, O>): Operation<P, O> => op;
+/**
+ * Registers an operation. A step that throws instead of failing (a defect) still reaches the user
+ * as a ShortsError with a fix, so `--json` prints its one object and MCP its error, whatever broke.
+ */
+export const defineOperation = <P extends Params, O>(op: Operation<P, O>): Operation<P, O> => ({
+	...op,
+	run: (input, ctx, mode) =>
+		op.run(input, ctx, mode).pipe(
+			Effect.catchDefect((defect) =>
+				// The whole trace goes to stderr first, so a bug report can say where it came from.
+				Effect.sync(() =>
+					ctx.log(defect instanceof Error ? (defect.stack ?? defect.message) : String(defect)),
+				).pipe(Effect.andThen(Effect.fail(unexpected(defect)))),
+			),
+		),
+});
+
+const unexpected = failWith(
+	"failed",
+	"If the message names a file or folder, check it exists and can be written. Otherwise this is a bug: please report it.",
+);
 
 /** `inStage` → `in-stage`. */
 export const flagName = (key: string): string =>

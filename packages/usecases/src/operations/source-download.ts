@@ -7,14 +7,14 @@
  * terms and rights are your responsibility.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { fail, type ShortsError } from "@shorts-studio/domain/errors";
 import { audioAmount } from "@shorts-studio/domain/models";
 import { Kind, Origin, Transcript } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import type { Context } from "../context.ts";
-import { writeFileAtomic, writeJsonFile } from "../files.ts";
+import { ensureDir, fileStep, readText, writeFileAtomic, writeJsonFile } from "../files.ts";
 import { checkLanguage, requireKey } from "../inputs.ts";
 import { paidCall } from "../ledger.ts";
 import { chooseModel, costOf } from "../models.ts";
@@ -45,12 +45,12 @@ const checkCollection = (name: string): Effect.Effect<string, ShortsError> =>
 const downloadFix =
 	"Common causes: not logged in to the platform in the browser named in download.cookiesFromBrowser, a private or deleted post, a photo post with no audio, a rate limit (wait, then run it again), or an old yt-dlp (pip install -U yt-dlp).";
 
-const countDownloaded = (dir: string): number =>
-	existsSync(join(dir, "downloaded.txt"))
-		? readFileSync(join(dir, "downloaded.txt"), "utf8")
-				.split("\n")
-				.filter((line) => line.trim() !== "").length
-		: 0;
+const countDownloaded = (dir: string): Effect.Effect<number, ShortsError> => {
+	const file = join(dir, "downloaded.txt");
+	return Effect.suspend(() =>
+		existsSync(file) ? readText(file, "Run the download again.") : Effect.succeed(""),
+	).pipe(Effect.map((text) => text.split("\n").filter((line) => line.trim() !== "").length));
+};
 
 export const sourceDownload = defineOperation({
 	name: "source_download",
@@ -89,7 +89,7 @@ export const sourceDownload = defineOperation({
 						"Collect the post URLs first (see docs/getting-started.md), one per line.",
 					);
 				}
-				const before = countDownloaded(dir);
+				const before = yield* countDownloaded(dir);
 				ctx.log(`Downloading ${name} (pausing 5–15 s between posts)…`);
 				const result = yield* downloader.downloadList({
 					cwd: dir,
@@ -99,7 +99,7 @@ export const sourceDownload = defineOperation({
 				});
 				if (!result.ok) ctx.log(result.errors);
 				return {
-					downloaded: countDownloaded(dir) - before,
+					downloaded: (yield* countDownloaded(dir)) - before,
 					failed: !result.ok,
 					dir,
 					next: result.ok
@@ -111,14 +111,20 @@ export const sourceDownload = defineOperation({
 			if (input.url !== undefined && input.post !== undefined) {
 				yield* readPost(ctx, input.post);
 				const audioDir = join(postDir(ctx, input.post), "audio");
-				mkdirSync(audioDir, { recursive: true });
-				const dir = mkdtempSync(join(audioDir, "download-"));
+				yield* ensureDir(audioDir);
+				const dir = yield* fileStep(
+					() => mkdtempSync(join(audioDir, "download-")),
+					`Check that ${audioDir} is writable, then run it again.`,
+				);
 				const result = yield* downloader.downloadOne({
 					cwd: dir,
 					url: input.url,
 					output: "%(id)s.%(ext)s",
 				});
-				const file = readdirSync(dir).find((name) => name.endsWith(".mp3"));
+				const file = (yield* fileStep(
+					() => readdirSync(dir),
+					`Check that ${dir} is readable, then run it again.`,
+				)).find((name) => name.endsWith(".mp3"));
 				if (!result.ok || file === undefined) {
 					return yield* fail("provider", `Couldn't download ${input.url}.`, downloadFix);
 				}
@@ -183,7 +189,10 @@ export const sourceTranscribe = defineOperation({
 			const transcriber = yield* Transcriber;
 			const media = yield* MediaTools;
 			const model = yield* chooseModel(ctx, transcriber, "transcribe");
-			const files = readdirSync(audioDir)
+			const files = (yield* fileStep(
+				() => readdirSync(audioDir),
+				`Check that ${audioDir} is a folder you can read.`,
+			))
 				.filter((f) => /\.(mp3|m4a|wav)$/i.test(f))
 				.sort();
 			const transcriptOf = (file: string, ext: string) =>
@@ -206,7 +215,7 @@ export const sourceTranscribe = defineOperation({
 				};
 			}
 
-			mkdirSync(join(dir, "transcripts"), { recursive: true });
+			yield* ensureDir(join(dir, "transcripts"));
 			if (todo.length > 0) {
 				// Fail on a missing key before anything is reserved.
 				yield* Effect.forEach(transcriber.keys, (key) => requireKey(ctx, key), { discard: true });
@@ -225,32 +234,33 @@ export const sourceTranscribe = defineOperation({
 					...transcript,
 					model: model.name,
 				});
-				writeFileAtomic(transcriptOf(file, "txt"), `${transcript.text}\n`);
+				yield* writeFileAtomic(transcriptOf(file, "txt"), `${transcript.text}\n`);
 				return cost.usd;
 			});
 
 			// Every file is tried. A failed one is listed, and the next run tries it again. Past a
 			// spending cap every later file would fail the same way, so the run stops there instead.
-			// The transcripts already written stay. Each outcome is a file's cost in dollars, or the
-			// line saying why it failed.
+			// The transcripts already written stay.
 			const outcomes = yield* Effect.forEach(todo, (file) =>
 				transcribeOne(file).pipe(
+					Effect.map((usd) => ({ usd })),
 					Effect.catch((error) =>
 						error.code === "over-budget"
 							? Effect.fail(error)
-							: Effect.succeed(`${file}: ${error.message}`),
+							: Effect.succeed({ failure: `${file}: ${error.message}` }),
 					),
 				),
 			);
-			const failed = outcomes.filter((outcome) => typeof outcome === "string");
+			const failed = outcomes.flatMap((outcome) => ("failure" in outcome ? [outcome.failure] : []));
 			return {
 				transcribed: todo.length - failed.length,
 				skipped: files.length - todo.length,
 				failed,
 				toTranscribe: failed.length,
-				estimateUsd: outcomes
-					.filter((outcome) => typeof outcome === "number")
-					.reduce((sum, usd) => sum + usd, 0),
+				estimateUsd: outcomes.reduce(
+					(sum, outcome) => sum + ("usd" in outcome ? outcome.usd : 0),
+					0,
+				),
 				dryRun: false,
 			};
 		}),

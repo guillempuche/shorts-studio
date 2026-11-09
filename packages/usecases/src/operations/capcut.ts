@@ -8,12 +8,13 @@
  * line the clips up against. CapCut desktop imports SRT; the mobile app can't.
  */
 
-import { copyFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { FRAME, framesOf, motionOf, type RenderBeat } from "@shorts-studio/domain/direction";
 import { fail } from "@shorts-studio/domain/errors";
 import { stageOf } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
+import { fileStep, writeFileAtomic } from "../files.ts";
 import { defineOperation, p } from "../operation.ts";
 import { MediaTools } from "../ports.ts";
 import { postDir, readPost } from "../post-store.ts";
@@ -87,8 +88,10 @@ export const capcutExport = defineOperation({
 			const muted = input.mute || post.audio.origin === "others";
 			const dir = postDir(ctx, input.post);
 			const out = join(dir, FOLDER);
-			rmSync(out, { recursive: true, force: true });
-			mkdirSync(join(out, "clips"), { recursive: true });
+			yield* fileStep(() => {
+				rmSync(out, { recursive: true, force: true });
+				mkdirSync(join(out, "clips"), { recursive: true });
+			}, `Check that ${dir} is writable, then run it again.`);
 
 			const renderBeats: ReadonlyArray<RenderBeat> = beats.map((b) => ({
 				start: b.start,
@@ -133,7 +136,7 @@ export const capcutExport = defineOperation({
 						`Render the draft again: draft render --post ${input.post} --force`,
 					),
 			});
-			writeFileSync(join(out, "README.txt"), instructions(beats.length, muted));
+			yield* writeFileAtomic(join(out, "README.txt"), instructions(beats.length, muted));
 			return { dir: out, clips: beats.length, muted, next: nextStep(post) };
 		}),
 	render: (o) =>

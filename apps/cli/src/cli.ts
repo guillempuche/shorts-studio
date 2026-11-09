@@ -18,11 +18,12 @@ import {
 	commandPath,
 	flagName,
 	type Operation,
+	p,
 	type RunMode,
 } from "@shorts-studio/usecases/operation";
 import { listSlugs, readPost } from "@shorts-studio/usecases/post-store";
-import { Console, Effect, Option, Result, Schema } from "effect";
-import { Command, Flag } from "effect/cli";
+import { Console, Effect, Layer, Result, Schema } from "effect";
+import { CliOutput, Command, Flag } from "effect/cli";
 
 export const OUTPUT_VERSION = 1;
 
@@ -48,36 +49,84 @@ export const root = Command.make("shorts-studio").pipe(
 	),
 );
 
-const printError = (error: ShortsError, json: boolean, command: string) =>
-	json
-		? Console.log(
-				JSON.stringify({
-					ok: false,
-					outputVersion: OUTPUT_VERSION,
-					command,
-					error: reportOf(error),
-				}),
-			)
-		: Console.error(`✗ ${error.message}\n  → ${error.fix}`);
+/** The one object `--json` prints for a run: what it gave, and its error if it failed. */
+const envelope = (
+	command: string,
+	fields: Readonly<Record<string, unknown>>,
+	error: ShortsError | undefined,
+) =>
+	JSON.stringify({
+		ok: error === undefined,
+		outputVersion: OUTPUT_VERSION,
+		command,
+		...fields,
+		...(error === undefined ? {} : { error: reportOf(error) }),
+	});
 
-const optional = <A>(flag: Flag.Flag<A>) =>
-	flag.pipe(Flag.optional, Flag.map(Option.getOrUndefined));
+const textError = (error: ShortsError) => `✗ ${error.message}\n  → ${error.fix}`;
+
+const TRUE_WORDS = new Set(["true", "1", "y", "yes", "on"]);
+const FALSE_WORDS = new Set(["false", "0", "n", "no", "off"]);
+
+/**
+ * Whether the arguments ask for `--json`, in every form effect/cli reads as on: `--json`,
+ * `--json=yes`, `--json true`. Read from the raw arguments, because a command called wrong stops
+ * before its flags are parsed.
+ */
+export const jsonRequested = (argv: ReadonlyArray<string>): boolean => {
+	let json = false;
+	argv.forEach((arg, i) => {
+		if (arg === "--json") json = !FALSE_WORDS.has(argv[i + 1] ?? "");
+		else if (arg.startsWith("--json=")) json = TRUE_WORDS.has(arg.slice("--json=".length));
+		else if (arg === "--no-json") json = false;
+	});
+	return json;
+};
+
+/** The usage error a command called wrong prints with `--json`, for `commandPath`. */
+const usageEnvelope = (commandPath: ReadonlyArray<string>, message: string) =>
+	envelope(
+		// Without the program name, like `command` in every other object.
+		commandPath.slice(1).join(" "),
+		{},
+		fail("usage", message, `See what it takes with: ${commandPath.join(" ")} --help`),
+	);
+
+/**
+ * With `--json`, a command called wrong prints the one error object, instead of its help: stdout
+ * must hold exactly one JSON object. So does a group of commands given no command (`post`).
+ * Help asked for with `--help`, and every other output, stay the default.
+ */
+export const cliOutput = (argv: ReadonlyArray<string>): Layer.Layer<never> =>
+	jsonRequested(argv)
+		? CliOutput.layerPresenter({
+				present: (event) => {
+					if (event._tag === "InvalidInvocation") {
+						return Console.log(
+							usageEnvelope(
+								event.commandPath,
+								event.errors.map((error) => error.message).join(" "),
+							),
+						);
+					}
+					if (event._tag === "Help" && event.reason === "Implicit") {
+						return Console.log(
+							usageEnvelope(
+								event.commandPath,
+								`"${event.commandPath.join(" ")}" needs one of its commands.`,
+							),
+						);
+					}
+					return CliOutput.defaultPresenter.present(event);
+				},
+			})
+		: Layer.empty;
 
 /** The flags that pick several posts, replacing a single required `--post`. */
 const batchFlags = {
-	post: optional(
-		Flag.String("post").pipe(Flag.withDescription("Post slug, or several separated by commas")),
-	),
-	inStage: optional(
-		Flag.Literals("in-stage", Stage.literals).pipe(
-			Flag.withDescription("Every post at this stage"),
-		),
-	),
-	day: optional(
-		Flag.String("day").pipe(
-			Flag.withDescription("Every post created that day: today or YYYY-MM-DD"),
-		),
-	),
+	post: p.optional(p.string("Post slug, or several separated by commas")).flag("post"),
+	inStage: p.optional(p.literals(Stage.literals, "Every post at this stage")).flag("in-stage"),
+	day: p.optional(p.string("Every post created that day: today or YYYY-MM-DD")).flag("day"),
 };
 
 /** A command acting on one existing post (a required `post`) can run on several. */
@@ -110,11 +159,14 @@ const selectPosts = Effect.fn("selectPosts")(function* (ctx: Context, input: Sel
 	if (day !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
 		return yield* fail("usage", `"${input.day}" isn't a day.`, "Use today or YYYY-MM-DD.");
 	}
-	const posts = yield* Effect.forEach(listSlugs(ctx), (slug) => readPost(ctx, slug));
+	// By folder, the name commands take, even when a post.json was copied from another post.
+	const posts = yield* Effect.forEach(yield* listSlugs(ctx), (slug) =>
+		Effect.map(readPost(ctx, slug), (post) => ({ slug, post })),
+	);
 	const matching = posts
-		.filter((post) => day === undefined || post.slug.startsWith(day))
-		.filter((post) => input.inStage === undefined || stageOf(post) === input.inStage)
-		.map((post) => post.slug);
+		.filter(({ slug }) => day === undefined || slug.startsWith(day))
+		.filter(({ post }) => input.inStage === undefined || stageOf(post) === input.inStage)
+		.map(({ slug }) => slug);
 	if (matching.length > 0) return matching;
 	return yield* fail("not-found", "No posts match.", "Check the selection with: post list");
 });
@@ -126,8 +178,15 @@ const confirmationError = (label: string) =>
 		"Check the estimate above, then run the same command with --yes.",
 	);
 
+interface SharedFlags {
+	readonly json: boolean;
+	readonly dryRun: boolean;
+	readonly yes: boolean;
+}
+
 const leaf = (op: Operation, ctx: Context, name?: string) => {
-	const label = commandPath(op.name).join(" ");
+	// What the user typed, so `doctor` reports itself as `doctor` here and in a usage error.
+	const label = name ?? commandPath(op.name).join(" ");
 	const batchable = isBatchable(op);
 	const flags: Record<string, Flag.Flag<unknown>> = {};
 	for (const [key, param] of Object.entries(op.params)) flags[key] = param.flag(flagName(key));
@@ -136,97 +195,87 @@ const leaf = (op: Operation, ctx: Context, name?: string) => {
 	const render = (result: unknown) =>
 		op.render ? op.render(result) : JSON.stringify(encode(result), null, 2);
 
-	return Command.make(name ?? commandPath(op.name)[1], flags, (raw) =>
-		Effect.gen(function* () {
-			const shared = yield* root;
-			if (shared.dryRun && !op.spends) {
-				const error = fail(
-					"usage",
-					`${label} spends nothing, so it has no dry run.`,
-					"Run it without --dry-run; only spending commands such as image generate take it.",
-				);
-				yield* printError(error, shared.json, label);
-				return yield* error;
-			}
-			// Without --yes a spending command still runs as a dry run, so the user sees the estimate,
-			// then fails asking for --yes. With --json, both go in the one object stdout holds. A
-			// command with `needsYes: false` runs for real without --yes.
-			const needsConfirmation = op.spends && op.needsYes !== false && !shared.yes && !shared.dryRun;
-			const confirmation = needsConfirmation ? confirmationError(label) : undefined;
-			const mode: RunMode = { dryRun: shared.dryRun || needsConfirmation, confirmed: shared.yes };
-			const input = raw as Record<string, unknown> & Selection;
-			const posts = batchable
-				? yield* selectPosts(ctx, input).pipe(
-						Effect.tapError((error) => printError(error, shared.json, label)),
-					)
-				: undefined;
+	/**
+	 * Runs the command on its post or posts. Text results print as each finishes; it returns what
+	 * `--json` prints, built only when asked for, and the error the command ends with, if any.
+	 */
+	const attempt = Effect.fnUntraced(function* (
+		input: Record<string, unknown> & Selection,
+		shared: SharedFlags,
+	) {
+		if (shared.dryRun && !op.spends) {
+			return yield* fail(
+				"usage",
+				`${label} spends nothing, so it has no dry run.`,
+				"Run it without --dry-run; only spending commands such as image generate take it.",
+			);
+		}
+		// Without --yes a spending command still runs as a dry run, so the user sees the estimate,
+		// then fails asking for --yes. With --json, both go in the one object stdout holds. A
+		// command with `needsYes: false` runs for real without --yes.
+		const needsConfirmation = op.spends && op.needsYes !== false && !shared.yes && !shared.dryRun;
+		const confirmation = needsConfirmation ? confirmationError(label) : undefined;
+		const mode: RunMode = { dryRun: shared.dryRun || needsConfirmation, confirmed: shared.yes };
+		const posts = batchable ? yield* selectPosts(ctx, input) : undefined;
 
-			if (posts === undefined || posts.length === 1) {
-				const single = posts === undefined ? input : { ...input, post: posts[0] };
-				const result = yield* op
-					.run(single, ctx, mode)
-					.pipe(Effect.tapError((error) => printError(error, shared.json, label)));
-				yield* shared.json
-					? Console.log(
-							JSON.stringify({
-								ok: confirmation === undefined,
-								outputVersion: OUTPUT_VERSION,
-								command: label,
-								result: encode(result),
-								...(confirmation === undefined ? {} : { error: reportOf(confirmation) }),
-							}),
-						)
-					: Console.log(render(result));
-			} else {
-				// One post after another: each prints as it finishes, and a failure doesn't stop the rest.
-				const results = yield* Effect.forEach(posts, (post) =>
-					Effect.result(op.run({ ...input, post }, ctx, mode)).pipe(
-						Effect.tap((outcome) =>
-							shared.json
-								? Effect.void
-								: Console.log(`── ${post}`).pipe(
-										Effect.andThen(
-											Result.isSuccess(outcome)
-												? Console.log(render(outcome.success))
-												: Console.error(`✗ ${outcome.failure.message}\n  → ${outcome.failure.fix}`),
-										),
-									),
-						),
-						Effect.map((outcome) => ({ post, outcome })),
-					),
-				);
-				const failed = results.filter(({ outcome }) => Result.isFailure(outcome)).length;
-				if (shared.json) {
-					yield* Console.log(
-						JSON.stringify({
-							ok: failed === 0 && confirmation === undefined,
-							outputVersion: OUTPUT_VERSION,
-							command: label,
-							results: results.map(({ post, outcome }) =>
-								Result.isSuccess(outcome)
-									? { post, ok: true, result: encode(outcome.success) }
-									: { post, ok: false, error: reportOf(outcome.failure) },
+		if (posts === undefined || posts.length === 1) {
+			const single = posts === undefined ? input : { ...input, post: posts[0] };
+			const result = yield* op.run(single, ctx, mode);
+			if (!shared.json) yield* Console.log(render(result));
+			return { fields: () => ({ result: encode(result) }), error: confirmation };
+		}
+
+		// One post after another: each prints as it finishes, and a failure doesn't stop the rest.
+		const results = yield* Effect.forEach(posts, (post) =>
+			Effect.result(op.run({ ...input, post }, ctx, mode)).pipe(
+				Effect.tap((outcome) =>
+					shared.json
+						? Effect.void
+						: Console.log(`── ${post}`).pipe(
+								Effect.andThen(
+									Result.isSuccess(outcome)
+										? Console.log(render(outcome.success))
+										: Console.error(textError(outcome.failure)),
+								),
 							),
-							...(confirmation === undefined ? {} : { error: reportOf(confirmation) }),
-						}),
-					);
-				}
-				if (failed > 0 && confirmation === undefined) {
-					const error = fail(
-						"failed",
-						`${failed} of ${posts.length} posts failed.`,
-						"Each post's error is above; run the command again to retry them.",
-					);
-					// With --json the batch object above already says so.
-					if (!shared.json) yield* printError(error, false, label);
-					return yield* error;
-				}
-			}
-			if (confirmation !== undefined) {
-				// With --json the object above already holds this error.
-				if (!shared.json) yield* printError(confirmation, false, label);
-				return yield* confirmation;
-			}
+				),
+				Effect.map((outcome) => ({ post, outcome })),
+			),
+		);
+		const failed = results.filter(({ outcome }) => Result.isFailure(outcome)).length;
+		return {
+			fields: () => ({
+				results: results.map(({ post, outcome }) =>
+					Result.isSuccess(outcome)
+						? { post, ok: true, result: encode(outcome.success) }
+						: { post, ok: false, error: reportOf(outcome.failure) },
+				),
+			}),
+			error:
+				confirmation ??
+				(failed === 0
+					? undefined
+					: fail(
+							"failed",
+							`${failed} of ${posts.length} posts failed.`,
+							"Each post's error is listed with it; run the command again to retry them.",
+						)),
+		};
+	});
+
+	return Command.make(
+		name ?? commandPath(op.name)[1],
+		flags,
+		Effect.fn(label)(function* (raw) {
+			const shared = yield* root;
+			const { fields, error } = yield* attempt(
+				raw as Record<string, unknown> & Selection,
+				shared,
+			).pipe(Effect.catch((error) => Effect.succeed({ fields: () => ({}), error })));
+			// The one place a run's outcome is printed: one JSON object, or the error on stderr.
+			if (shared.json) yield* Console.log(envelope(label, fields(), error));
+			else if (error !== undefined) yield* Console.error(textError(error));
+			if (error !== undefined) return yield* error;
 		}),
 	).pipe(Command.withDescription(op.description));
 };

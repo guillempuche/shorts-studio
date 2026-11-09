@@ -6,12 +6,12 @@
  * audio and every image prompt, so a change to any of them needs approving again.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fail } from "@shorts-studio/domain/errors";
 import { approvalOf, isScriptApproved } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
-import { hashOf, writeFileAtomic } from "../files.ts";
+import { hashOf, readText, writeFileAtomic } from "../files.ts";
 import { requireUser } from "../inputs.ts";
 import { defineOperation, p } from "../operation.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
@@ -41,10 +41,13 @@ export const scriptSet = defineOperation({
 					"Write the script to a file first, then pass its path.",
 				);
 			}
-			const text = readFileSync(input.file, "utf8");
+			const text = yield* readText(
+				input.file,
+				"Write the script to a file first, then pass its path.",
+			);
 			const hash = hashOf(text);
 			yield* readPost(ctx, input.post);
-			writeFileAtomic(join(postDir(ctx, input.post), SCRIPT_FILE), text);
+			yield* writeFileAtomic(join(postDir(ctx, input.post), SCRIPT_FILE), text);
 			const post = yield* updatePost(ctx, input.post, "script set", (post) =>
 				// The approval and hook stay; the approval holds only if the text is unchanged.
 				Effect.succeed({

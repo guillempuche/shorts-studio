@@ -1,20 +1,23 @@
+import { cpSync } from "node:fs";
 import * as NodeChildProcessSpawner from "@effect/platform-node-shared/NodeChildProcessSpawner";
 import * as NodeFileSystem from "@effect/platform-node-shared/NodeFileSystem";
 import * as NodePath from "@effect/platform-node-shared/NodePath";
 import * as NodeStdio from "@effect/platform-node-shared/NodeStdio";
 import * as NodeTerminal from "@effect/platform-node-shared/NodeTerminal";
 import type { Context } from "@shorts-studio/usecases/context";
-import { commandPath } from "@shorts-studio/usecases/operation";
+import { commandPath, defineOperation, type Operation } from "@shorts-studio/usecases/operation";
+import { configCheck } from "@shorts-studio/usecases/operations/config";
 import { operations } from "@shorts-studio/usecases/operations/index";
 import type { Ports } from "@shorts-studio/usecases/ports";
+import { postDir } from "@shorts-studio/usecases/post-store";
 import { testContext } from "@shorts-studio/usecases/test/context";
 import { fakeImageMaker, fakePorts } from "@shorts-studio/usecases/test/fakes";
 import { readyForImages, seedPost } from "@shorts-studio/usecases/test/posts";
-import { DateTime, Effect, Exit, Layer } from "effect";
+import { DateTime, Effect, Exit, Layer, Schema } from "effect";
 import { Command } from "effect/cli";
 import { TestConsole } from "effect/testing";
 import { describe, expect, it } from "vitest";
-import { nounCommands, root } from "./cli.ts";
+import { aliasCommand, cliOutput, jsonRequested, nounCommands, root } from "./cli.ts";
 
 const platform = Layer.mergeAll(
 	NodeFileSystem.layer,
@@ -24,7 +27,6 @@ const platform = Layer.mergeAll(
 	NodeChildProcessSpawner.layer.pipe(
 		Layer.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
 	),
-	TestConsole.layer,
 );
 
 /**
@@ -35,22 +37,23 @@ const runCli = (
 	ctx: Context,
 	argv: ReadonlyArray<string>,
 	ports: Layer.Layer<Ports> = fakePorts(),
+	ops: ReadonlyArray<Operation> = operations,
 ): Promise<{ readonly ok: boolean; readonly out: string; readonly err: string }> =>
 	Effect.runPromise(
 		Effect.gen(function* () {
-			const program = root.pipe(Command.withSubcommands(nounCommands(operations, ctx)));
+			const program = root.pipe(
+				Command.withSubcommands([
+					...nounCommands(ops, ctx),
+					aliasCommand(configCheck, ctx, "doctor"),
+				]),
+			);
 			const exit = yield* Effect.exit(Command.runWith(program, { version: "0.0.0" })([...argv]));
 			return {
 				ok: Exit.isSuccess(exit),
 				out: (yield* TestConsole.logLines).join("\n"),
 				err: (yield* TestConsole.errorLines).join("\n"),
 			};
-			// The layers below provide everything the CLI needs. The cast just drops that from the type.
-		}).pipe(Effect.provide(Layer.mergeAll(platform, ports))) as Effect.Effect<{
-			readonly ok: boolean;
-			readonly out: string;
-			readonly err: string;
-		}>,
+		}).pipe(Effect.provide(Layer.mergeAll(platform, TestConsole.layer, ports, cliOutput(argv)))),
 	);
 
 /** Three posts: two from 2026-11-04 (one with a script) and one from 2026-11-05. */
@@ -98,6 +101,105 @@ describe("CLI output", () => {
 		expect(parsed.ok).toBe(false);
 		expect(parsed.error.code).toBe("not-found");
 		expect(parsed.error.fix).toContain("post list");
+	});
+
+	it("should print one JSON error object, not help, when a command is called wrong with --json", async () => {
+		// GIVEN no posts
+		const ctx = testContext();
+
+		// WHEN posts are listed with a flag that doesn't exist, asking for JSON
+		const run = await runCli(ctx, ["post", "list", "--colour", "red", "--json"]);
+
+		// THEN the run fails, and stdout holds only a usage error naming the command
+		expect(run.ok).toBe(false);
+		const parsed = JSON.parse(run.out) as {
+			ok: boolean;
+			command: string;
+			error: { code: string; fix: string };
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.command).toBe("post list");
+		expect(parsed.error.code).toBe("usage");
+		expect(parsed.error.fix).toContain("post list --help");
+	});
+
+	it.each([
+		["--json=true", ["post", "list", "--colour", "red", "--json=true"]],
+		["--json yes", ["post", "list", "--json", "yes", "--colour", "red"]],
+	])(
+		"should print one JSON error object when a command is called wrong with %s",
+		async (_, argv) => {
+			// GIVEN no posts
+			const ctx = testContext();
+
+			// WHEN posts are listed with a flag that doesn't exist, asking for JSON in another form
+			const run = await runCli(ctx, argv);
+
+			// THEN stdout holds only the usage error
+			expect(run.ok).toBe(false);
+			expect((JSON.parse(run.out) as { error: { code: string } }).error.code).toBe("usage");
+		},
+	);
+
+	it("should print one JSON error object when a group of commands is given no command, with --json", async () => {
+		// GIVEN no posts
+		const ctx = testContext();
+
+		// WHEN `post` is run with no command after it, asking for JSON
+		const run = await runCli(ctx, ["post", "--json"]);
+
+		// THEN stdout holds a usage error naming the group, instead of its help
+		expect(run.ok).toBe(false);
+		const parsed = JSON.parse(run.out) as { command: string; error: { code: string; fix: string } };
+		expect(parsed.command).toBe("post");
+		expect(parsed.error.code).toBe("usage");
+		expect(parsed.error.fix).toContain("post --help");
+	});
+
+	it("should tell when --json is asked for, in each form the CLI reads as on", () => {
+		// GIVEN the forms a boolean flag takes
+		// WHEN each is checked
+		// THEN only the ones that turn it on count
+		expect(jsonRequested(["post", "list", "--json"])).toBe(true);
+		expect(jsonRequested(["post", "list", "--json=yes"])).toBe(true);
+		expect(jsonRequested(["post", "list", "--json", "--post", "x"])).toBe(true);
+		expect(jsonRequested(["post", "list", "--json=false"])).toBe(false);
+		expect(jsonRequested(["post", "list", "--json", "no"])).toBe(false);
+		expect(jsonRequested(["post", "list"])).toBe(false);
+	});
+
+	it("should name doctor as doctor, the way it was called", async () => {
+		// GIVEN no settings
+		const ctx = testContext();
+
+		// WHEN doctor runs with --json
+		const run = await runCli(ctx, ["doctor", "--json"]);
+
+		// THEN its object names the command as it was typed, as a usage error would
+		expect((JSON.parse(run.out) as { command: string }).command).toBe("doctor");
+	});
+
+	it("should show a result through its text form without --json, whatever its JSON form", async () => {
+		// GIVEN a command whose result can be shown as text but doesn't fit its own output Schema
+		const ctx = testContext();
+		const odd = defineOperation({
+			name: "test_odd",
+			description: "Returns a result its Schema doesn't take",
+			params: {},
+			output: Schema.Struct({ count: Schema.Int }),
+			surface: "cli-only",
+			spends: false,
+			hints: { readonly: true, destructive: false, idempotent: true, openWorld: false },
+			run: () => Effect.succeed({ count: 1.5 }),
+			render: (o) => `count ${o.count}`,
+		});
+
+		// WHEN it runs without --json
+		const run = await runCli(ctx, ["test", "odd"], fakePorts(), [odd]);
+
+		// THEN its text is shown, since nothing asked for the JSON form
+		expect(run.ok).toBe(true);
+		expect(run.out).toBe("count 1.5");
 	});
 
 	it("should print the error and its fix on stderr without --json", async () => {
@@ -243,6 +345,24 @@ describe("batching posts on the CLI", () => {
 		expect((JSON.parse(run.out) as { result: { slug: string } }).result.slug).toBe("2026-11-05-c");
 	});
 
+	it("should select a copied post folder by its own name, not the name its post.json carries", async () => {
+		// GIVEN a post, and a copy of its folder under another name from the same day
+		const ctx = await threePosts();
+		cpSync(postDir(ctx, "2026-11-04-a"), postDir(ctx, "2026-11-04-copy"), { recursive: true });
+
+		// WHEN that day's posts are shown, and listed
+		const shown = await runCli(ctx, ["post", "show", "--day", "2026-11-04", "--json"]);
+		const listed = await runCli(ctx, ["post", "list", "--json"]);
+
+		// THEN the copy is selected by its folder's name, and the original only once
+		expect(slugsOf(shown.out)).toEqual(["2026-11-04-a", "2026-11-04-b", "2026-11-04-copy"]);
+		expect(
+			(JSON.parse(listed.out) as { result: { posts: Array<{ slug: string }> } }).result.posts
+				.map((post) => post.slug)
+				.sort(),
+		).toEqual(["2026-11-04-a", "2026-11-04-b", "2026-11-04-copy", "2026-11-05-c"]);
+	});
+
 	it("should say how many posts failed after printing each error", async () => {
 		// GIVEN one real post
 		const ctx = await threePosts();
@@ -256,6 +376,31 @@ describe("batching posts on the CLI", () => {
 		// AND the run fails, its last words counting the failures
 		expect(run.ok).toBe(false);
 		expect(run.err).toContain("1 of 2 posts failed.");
+	});
+
+	it("should give a batch that partly failed the documented error object with --json", async () => {
+		// GIVEN one real post
+		const ctx = await threePosts();
+
+		// WHEN it's shown as JSON together with a post that doesn't exist
+		const run = await runCli(ctx, [
+			"post",
+			"show",
+			"--post",
+			"2026-11-04-a,2026-11-04-nope",
+			"--json",
+		]);
+
+		// THEN the one object holds each post's outcome and the error the run ended with
+		const parsed = JSON.parse(run.out) as {
+			ok: boolean;
+			results: Array<{ post: string; ok: boolean }>;
+			error: { code: string; message: string };
+		};
+		expect(parsed.ok).toBe(false);
+		expect(parsed.results.map((r) => r.ok)).toEqual([true, false]);
+		expect(parsed.error.code).toBe("failed");
+		expect(parsed.error.message).toBe("1 of 2 posts failed.");
 	});
 
 	it("should refuse --dry-run on a command that spends nothing", async () => {
