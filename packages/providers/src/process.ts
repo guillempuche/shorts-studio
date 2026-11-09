@@ -1,9 +1,7 @@
 /**
  * Running an external program (ffmpeg, ffprobe), and stopping it when its work is abandoned.
  *
- * We use plain `spawn`, not Effect's process spawner. On macOS and Linux that one detaches
- * child processes, so a Ctrl-C could leave ffmpeg encoding (content-studio docs/effect.md has
- * the measurement). The stopping logic comes from content-studio's `stopWhenAborted`.
+ * Plain `spawn`, not Effect's process spawner: docs/architecture.md#key-decisions says why.
  */
 
 import { spawn } from "node:child_process";
@@ -16,8 +14,8 @@ export const LET_GO_TIMEOUT_MS = 5_000;
  * Returns a function to call once the process has ended, so neither the abort listener nor the
  * pending kill outlives it.
  *
- * Don't also pass the same signal to `spawn`: its early `error` event would end the run and
- * cancel the kill.
+ * Don't also pass the same signal to `spawn`: Node would then send its own SIGTERM, with no
+ * SIGKILL to follow if the program ignores it.
  */
 export function stopWhenAborted(
 	proc: { kill: (signal: NodeJS.Signals) => boolean },
@@ -58,13 +56,17 @@ export const runProcess = (
 		const release = stopWhenAborted(proc, options.signal);
 		let stdout = "";
 		let stderr = "";
-		proc.stdout.on("data", (chunk: Buffer) => {
-			stdout += chunk.toString();
+		// Decoded by the stream, so a character split across two chunks (é in a path) stays whole.
+		proc.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+			stdout += chunk;
 		});
-		proc.stderr.on("data", (chunk: Buffer) => {
-			stderr += chunk.toString();
+		proc.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+			stderr += chunk;
 		});
 		proc.on("error", (error) => {
+			// Only a program that never started ends here. A started one also emits `error` when a
+			// kill fails, and is answered on `close`, so its pending SIGKILL isn't cancelled early.
+			if (proc.pid !== undefined) return;
 			release();
 			reject(error);
 		});

@@ -1,3 +1,5 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { IMAGE_SIZE } from "@shorts-studio/domain/direction";
 import { imageAmount, type Model, price } from "@shorts-studio/domain/models";
 import { ImageMaker } from "@shorts-studio/usecases/ports";
@@ -35,7 +37,9 @@ imageMakerContract("FAL", {
 				? { finalStatus: "FAILED" }
 				: answer === "refused"
 					? { submitStatus: 422 }
-					: {},
+					: answer === "unknown"
+						? { submitStatus: 502 }
+						: {},
 			withKey ? undefined : {},
 		);
 		return fal;
@@ -43,6 +47,20 @@ imageMakerContract("FAL", {
 });
 
 const schnell = FAL_MODELS["flux-schnell"];
+
+/** A server that only records the requests it gets, standing in for an address that isn't FAL. */
+const startListener = async () => {
+	const requests: Array<string | undefined> = [];
+	const server = createServer((req, res) => {
+		requests.push(req.headers.authorization);
+		res.end("{}");
+	});
+	await new Promise<void>((listening) => server.listen(0, "127.0.0.1", () => listening()));
+	const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+	const close = () => new Promise<void>((closed) => server.close(() => closed()));
+	onTestFinished(() => (server.listening ? close() : undefined));
+	return { url, requests, close };
+};
 
 describe("FAL's own models", () => {
 	it("should price each image by whole megapixels, as FAL bills them", async () => {
@@ -94,22 +112,11 @@ describe("FAL submit", () => {
 		});
 	});
 
-	it("should leave a 5xx answer to a submit as an unknown outcome", async () => {
-		// GIVEN FAL behind a gateway that answers 502, as one can after FAL queued the job
-		const { fal } = await withFakeFal({ submitStatus: 502 });
-
-		// WHEN an image is submitted
-		const error = await Effect.runPromise(Effect.flip(fal.submit(schnell, "a red door", 7)));
-
-		// THEN it is a provider failure, not a refusal, so its reservation stays counted
-		expect(error.code).toBe("provider");
-		expect(error.reason._tag).toBe("ProviderFailed");
-		expect(error.message).toContain("HTTP 502");
-	});
-
-	it("should leave a dropped connection as an unknown outcome", async () => {
-		// GIVEN FAL at an address where nothing answers
-		const ctx = providerContext({ secrets: { FAL_KEY: "test-key" } });
+	it("should leave a dropped connection as an unknown outcome, saying why it dropped", async () => {
+		// GIVEN FAL at an address where nothing listens any more
+		const gone = await startListener();
+		await gone.close();
+		const ctx = providerContext({ endpoints: { fal: gone.url }, secrets: { FAL_KEY: "test-key" } });
 		const fal = await Effect.runPromise(
 			Effect.gen(function* () {
 				return yield* ImageMaker;
@@ -122,6 +129,8 @@ describe("FAL submit", () => {
 		// THEN it is a provider failure, not a refusal
 		expect(error.code).toBe("provider");
 		expect(error.reason._tag).toBe("ProviderFailed");
+		// AND it says why, so "check your connection" has something to go on
+		expect(error.message).toContain("ECONNREFUSED");
 	});
 
 	it("should fail with missing-key, before sending anything, when FAL_KEY isn't set", async () => {
@@ -219,18 +228,40 @@ describe("FAL collect", () => {
 		expect(error.message).toContain("FAILED");
 	});
 
-	it("should report a 4xx from FAL as a refusal, with the HTTP status", async () => {
-		// GIVEN a request whose status address FAL doesn't know
+	it("should leave a 4xx while checking on a request as an unknown outcome, with the HTTP status", async () => {
+		// GIVEN a request FAL took on, whose status address FAL no longer knows
 		const { fake, fal } = await withFakeFal();
 		const request = { requestId: "req-9", statusUrl: `${fake.url}/nope`, responseUrl: fake.url };
 
 		// WHEN its image is collected
 		const error = await Effect.runPromise(Effect.flip(fal.collect(request)));
 
-		// THEN it is a refusal, a provider failure, that names the HTTP status
+		// THEN it is a provider failure but not a refusal: FAL took the job on, so it may have
+		// billed it, and the reservation must stay counted
 		expect(error.code).toBe("provider");
-		expect(error.reason._tag).toBe("Refused");
-		expect(error.message).toContain("HTTP 404");
+		expect(error.reason._tag).toBe("ProviderFailed");
+		// AND it names the HTTP status and the method
+		expect(error.message).toContain("HTTP 404 from GET");
+	});
+
+	it("should send the key only to FAL, even when post.json names another address", async () => {
+		// GIVEN FAL, and a saved request whose status address a hand edit pointed elsewhere
+		const { fake, fal } = await withFakeFal();
+		const elsewhere = await startListener();
+		const request = {
+			requestId: "req-1",
+			statusUrl: `${elsewhere.url}/requests/req-1/status`,
+			responseUrl: `${fake.url}/requests/req-1`,
+		};
+
+		// WHEN its image is collected
+		const error = await Effect.runPromise(Effect.flip(fal.collect(request)));
+
+		// THEN it fails as a usage error naming the address
+		expect(error.code).toBe("usage");
+		expect(error.message).toContain(elsewhere.url);
+		// AND nothing, and so no key, was sent to that address
+		expect(elsewhere.requests).toHaveLength(0);
 	});
 
 	it("should fail with missing-key when FAL_KEY isn't set", async () => {

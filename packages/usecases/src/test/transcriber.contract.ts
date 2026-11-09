@@ -14,9 +14,12 @@ import { tempDir } from "./context.ts";
 import { defaultModelOf } from "./models.ts";
 
 export interface TranscriberHarness {
-	/** The provider, with its service answering with words or refusing, and with or without its key. */
+	/**
+	 * The provider, with its service answering with words, refusing (an HTTP 4xx), or not saying
+	 * whether it took the file on (a 5xx, or a dropped connection), and with or without its key.
+	 */
 	readonly make: (setup: {
-		readonly answer: "words" | "refused";
+		readonly answer: "words" | "refused" | "unknown";
 		readonly withKey: boolean;
 	}) => Promise<Transcriber["Service"]>;
 }
@@ -80,6 +83,20 @@ export const transcriberContract = (name: string, harness: TranscriberHarness): 
 			expect(error.reason._tag).toBe("Refused");
 			expect(error.code).toBe("provider");
 			expect(error.fix).not.toBe("");
+		});
+
+		it("should leave a call with an unknown outcome as ProviderFailed, never Refused", async () => {
+			// GIVEN a provider whose service may have taken the file on without saying so
+			const transcriber = await harness.make({ answer: "unknown", withKey: true });
+
+			// WHEN a file is transcribed
+			const error = await Effect.runPromise(
+				Effect.flip(transcriber.transcribe(defaultModelOf(transcriber), audioFile(), undefined)),
+			);
+
+			// THEN it fails with reason ProviderFailed, so its reservation stays counted
+			expect(error.reason._tag).toBe("ProviderFailed");
+			expect(error.code).toBe("provider");
 		});
 
 		it("should say which key to set when its key is missing", async (test) => {

@@ -13,10 +13,11 @@ import { defaultModelOf } from "./models.ts";
 export interface ImageMakerHarness {
 	/**
 	 * The provider, with its service answering every request with an image, by giving up on it,
-	 * or by refusing it with an HTTP 4xx, and with or without its API key set.
+	 * by refusing it with an HTTP 4xx, or without saying whether it took it on (a 5xx, or a
+	 * dropped connection), and with or without its API key set.
 	 */
 	readonly make: (setup: {
-		readonly answer: "image" | "ended" | "refused";
+		readonly answer: "image" | "ended" | "refused" | "unknown";
 		readonly withKey: boolean;
 	}) => Promise<ImageMaker["Service"]>;
 }
@@ -82,6 +83,20 @@ export const imageMakerContract = (name: string, harness: ImageMakerHarness): vo
 
 			// THEN it fails with reason Refused, a provider failure, so its reservation is freed
 			expect(error.reason._tag).toBe("Refused");
+			expect(error.code).toBe("provider");
+		});
+
+		it("should leave a submit with an unknown outcome as ProviderFailed, never Refused", async () => {
+			// GIVEN a provider whose service may have taken the job on without saying so
+			const maker = await harness.make({ answer: "unknown", withKey: true });
+
+			// WHEN an image is submitted
+			const error = await Effect.runPromise(
+				Effect.flip(maker.submit(defaultModelOf(maker), "a red door", 7)),
+			);
+
+			// THEN it fails with reason ProviderFailed, so its reservation stays counted
+			expect(error.reason._tag).toBe("ProviderFailed");
 			expect(error.code).toBe("provider");
 		});
 

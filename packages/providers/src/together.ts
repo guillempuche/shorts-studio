@@ -5,7 +5,7 @@
  * (docs.together.ai, "Create audio transcription request"). Uploads are capped at 80 MB.
  */
 
-import { openAsBlob, statSync } from "node:fs";
+import { openAsBlob } from "node:fs";
 import { basename } from "node:path";
 import { fail } from "@shorts-studio/domain/errors";
 import type { Model } from "@shorts-studio/domain/models";
@@ -32,10 +32,11 @@ export const TOGETHER_MODELS = {
 	},
 } satisfies Record<string, Model>;
 
-const MAX_UPLOAD_BYTES = 80 * 1024 * 1024;
+const MB = 1024 * 1024;
+const MAX_UPLOAD_MB = 80;
 
 /** What Together sends back; Whisper names a word's text `word`, some versions `text`. */
-const Response = Schema.Struct({
+const Transcription = Schema.Struct({
 	language: Schema.optionalKey(Schema.String),
 	text: Schema.optionalKey(Schema.String),
 	words: Schema.optionalKey(
@@ -65,18 +66,6 @@ export const togetherLayer = Layer.effect(
 			language: string | undefined,
 		) {
 			const key = yield* requireKey(env, TOGETHER_KEY);
-			const size = yield* Effect.try({
-				try: () => statSync(file).size,
-				catch: failWith("not-found", `Check that ${file} exists, then run it again.`),
-			});
-			if (size > MAX_UPLOAD_BYTES) {
-				return yield* fail(
-					"usage",
-					`${basename(file)} is ${(size / 1e6).toFixed(0)} MB; Together accepts up to 80 MB.`,
-					"Cut the audio shorter, then import it again.",
-				);
-			}
-
 			const audio = yield* Effect.tryPromise({
 				try: () => openAsBlob(file),
 				catch: failWith(
@@ -84,6 +73,13 @@ export const togetherLayer = Layer.effect(
 					`Check that ${file} exists and is readable, then run it again.`,
 				),
 			});
+			if (audio.size > MAX_UPLOAD_MB * MB) {
+				return yield* fail(
+					"usage",
+					`${basename(file)} is ${(audio.size / MB).toFixed(1)} MB; Together accepts up to ${MAX_UPLOAD_MB} MB.`,
+					"Cut the audio shorter, then import it again.",
+				);
+			}
 			const form = new FormData();
 			form.append("file", audio, basename(file));
 			form.append("model", model.endpoint);
@@ -95,7 +91,7 @@ export const togetherLayer = Layer.effect(
 				HttpClientRequest.bearerToken(key),
 				HttpClientRequest.bodyFormData(form),
 				http.execute,
-				Effect.flatMap(HttpClientResponse.schemaBodyJson(Response)),
+				Effect.flatMap(HttpClientResponse.schemaBodyJson(Transcription)),
 				Effect.catch(providerFailure(fix)),
 			);
 

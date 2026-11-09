@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { truncateSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Model } from "@shorts-studio/domain/models";
 import { Transcriber } from "@shorts-studio/usecases/ports";
@@ -13,7 +13,8 @@ import { TOGETHER_MODELS, togetherLayer } from "./together.ts";
 
 transcriberContract("Together", {
 	make: async ({ answer, withKey }) => {
-		const fake = await startFakeTogether(answer === "refused" ? { status: 400 } : {});
+		const status = { words: undefined, refused: 400, unknown: 500 }[answer];
+		const fake = await startFakeTogether(status === undefined ? {} : { status });
 		onTestFinished(() => fake.close());
 		const ctx = providerContext({
 			endpoints: { together: fake.url },
@@ -28,9 +29,9 @@ transcriberContract("Together", {
 });
 
 describe("Together transcribe", () => {
-	it("should leave a 5xx answer as an unknown outcome", async () => {
-		// GIVEN Together answering every upload with a 500
-		const fake = await startFakeTogether({ status: 500 });
+	it("should refuse a file over 80 MB before uploading anything", async () => {
+		// GIVEN Together with a key, and an 81 MB audio file
+		const fake = await startFakeTogether();
 		onTestFinished(() => fake.close());
 		const ctx = providerContext({
 			endpoints: { together: fake.url },
@@ -41,17 +42,21 @@ describe("Together transcribe", () => {
 				return yield* Transcriber;
 			}).pipe(Effect.provide(withEnv(togetherLayer, ctx))),
 		);
-		const file = join(tempDir(), "audio.m4a");
-		writeFileSync(file, new Uint8Array(64));
+		const file = join(tempDir(), "long.m4a");
+		writeFileSync(file, "");
+		// A sparse file: its size is set without writing 81 MB.
+		truncateSync(file, 81 * 1024 * 1024);
 
-		// WHEN a file is transcribed
+		// WHEN it is transcribed
 		const error = await Effect.runPromise(
 			Effect.flip(together.transcribe(TOGETHER_MODELS["openai/whisper-large-v3"], file, undefined)),
 		);
 
-		// THEN it is a provider failure, not a refusal, so its reservation stays counted
-		expect(error.code).toBe("provider");
-		expect(error.reason._tag).toBe("ProviderFailed");
+		// THEN it is a usage error that gives both sizes in the same unit
+		expect(error.code).toBe("usage");
+		expect(error.message).toBe("long.m4a is 81.0 MB; Together accepts up to 80 MB.");
+		// AND nothing reached Together
+		expect(fake.authorizations).toHaveLength(0);
 	});
 
 	it("should ask for the model's id, so a model added in config.json needs no code", async () => {
