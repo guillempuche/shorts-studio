@@ -35,15 +35,15 @@ An operation takes plain values in a `Context` (folders, settings, `secret()`, `
 
 Each paid provider ships its models as data (`FAL_MODELS`, `TOGETHER_MODELS`): the endpoint, the unit it's billed by, the price of one, the day that price was checked, and fields sent with every request. `modelsFor` (`packages/usecases/src/models.ts`) merges them with `config.json`'s `models`, and `chooseModel` picks one. The use case hands the whole model to the provider, so a model added in `config.json` needs no code. `costOf` prices a call from its model and its units.
 
-`providersLayer` (`packages/providers/src/index.ts`) picks the provider for each job from `config.json` (`transcribe.provider`, `image.provider`). A fork adds a provider by writing its module and adding one line to the list for each job it does. No use case changes. Every provider, and every in-memory fake the use-case tests use, runs the same contract suite for its port, so they can't drift apart.
+`providersLayer` (`packages/providers/src/index.ts`) picks the provider for each job from `config.json` (`transcribe.provider`, `image.provider`). A fork adds a provider by writing its module and adding one line to the list for each job it does. No use case changes. Every paid provider (`Transcriber`, `ImageMaker`), and the in-memory fake of it that the use-case tests use, runs the same contract suite for its port, so they can't drift apart.
 
-Settings come in layers, read through Effect's `ConfigProvider`: built-in defaults, then `config.json` and `brand.json`, then `SHORTS_*` environment variables, then flags. Each value comes from the highest layer that sets it, and the result is checked against the same Schema that publishes `schemas/config.schema.json` and `schemas/brand.schema.json`. API keys come only from the environment or the macOS Keychain, as `Redacted` values, so a key printed by mistake shows `<redacted>`.
+Settings come in layers: built-in defaults, then `config.json` and `brand.json`, then `SHORTS_*` environment variables, then flags. Each value comes from the highest layer that sets it, and the result is checked against the same Schema that publishes `schemas/config.schema.json` and `schemas/brand.schema.json`. A variable names exactly one setting (`SHORTS_CAPTIONS_FONT_SIZE` is `captions.fontSize`), so setting one never hides the rest of the file; `models` are set in `config.json` only (`packages/providers/src/node.ts`). A variable that isn't valid is left out and the others still apply, also when `config.json` itself isn't valid; then its own values fall back to the defaults, and `doctor` names the problem. API keys come only from the environment or the macOS Keychain, as `Redacted` values, so a key printed by mistake shows `<redacted>`.
 
 Tests sit next to the module they test (`beats.ts` and `beats.test.ts`). Use-case tests provide in-memory fake ports; provider tests run against a local fake of the service.
 
 ### Errors
 
-Every command fails with one `ShortsError` (`packages/domain/src/errors.ts`). It always says what went wrong (`message`) and what to do next (`fix`). Its `reason` is a tagged error (`NotFound`, `Usage`, `OverBudget`, `MissingKey`, `ProviderFailed`, `Refused`, `RequestEnded`…), so code handles one kind with `Effect.catchReason`. The reason sets the stable `code` that scripts and agents match on, and the exit code.
+Every command fails with one `ShortsError` (`packages/domain/src/errors.ts`). It always says what went wrong (`message`) and what to do next (`fix`). A step that throws instead of failing still ends as one, with code `failed` (`defineOperation`), so `--json` and MCP keep their error shape whatever broke; its trace goes to stderr for the bug report. Its `reason` is a tagged error (`NotFound`, `Usage`, `OverBudget`, `MissingKey`, `ProviderFailed`, `Refused`, `RequestEnded`…), so code handles one kind with `Effect.catchReason`. The reason sets the stable `code` that scripts and agents match on, and the exit code.
 
 ## Data flow
 
@@ -104,7 +104,7 @@ The user runs `post review` (CLI-only) to approve, ask for a fix (with notes per
 
 The Schema lives in `packages/domain/src/post.ts`. `pnpm schemas` writes it to `schemas/post.schema.json`, and `schema show` prints it along with each command's schemas.
 
-Only `updatePost` (`packages/usecases/src/post-store.ts`) writes the file. It takes the post's lock file, reads the file again, makes the change, replaces the file in one step, and adds 1 to `revision`. Long operations don't hold the lock the whole time. Instead, they save each finished piece with a short update.
+Only `updatePost` (`packages/usecases/src/post-store.ts`) writes the file, always to the folder it read it from, and only while the file's `slug` names that folder, so a copied folder can't write over the original. It takes the post's lock file, reads the file again, makes the change, replaces the file in one step, and adds 1 to `revision`. Long operations don't hold the lock the whole time. Instead, they save each finished piece with a short update.
 
 Every generated output stores an `inputHash`. It covers the output's inputs, the hashes of the earlier outputs it was built from, and the version of the code that made it (`PLANNER_VERSION`, `RENDERER_VERSION`). An output is up to date only while that hash matches. So an edited prompt or a re-cut beat also makes everything built from it out of date.
 
@@ -118,7 +118,7 @@ A reservation is freed only when the failure proves nothing was billed (`nothing
 
 ## Agent interface
 
-Results go to stdout. Progress and log messages go to stderr. With `--json`, stdout holds exactly one object: `{ ok: true, outputVersion, command, result }` or `{ ok: false, outputVersion, command, error: { code, message, fix } }`. A failed MCP call returns the same error object with `isError: true`.
+Results go to stdout. Progress and log messages go to stderr. With `--json`, stdout holds exactly one object, even when a command is given a flag or value it doesn't take: `{ ok: true, outputVersion, command, result }` or `{ ok: false, outputVersion, command, error: { code, message, fix } }`. A run that selects more than one post (`--post a,b`, or `--day` or `--in-stage` matching several) holds `results`, one per post, in place of `result`. A failed MCP call returns the same error object with `isError: true`; arguments that don't match a tool's Schema get the MCP library's own error instead.
 
 When a spending command runs without `--yes`, that one object holds both the estimate (`result`) and the request for confirmation (`error`).
 
@@ -143,7 +143,7 @@ Spending commands take `--dry-run` and need `--yes` on the CLI, except transcrip
 
 **Why a workspace of packages, not folders in one package:** package dependencies make the layers a rule, not a habit. The domain can't import a provider, because pnpm doesn't link one into it.
 
-**Why `spawn` with `stopWhenAborted`, not Effect's process spawner:** on macOS and Linux, Effect's spawner detaches the programs it starts, so an interrupted render could leave ffmpeg running.
+**Why `spawn` with `stopWhenAborted`, not Effect's process spawner:** on macOS and Linux, Effect's spawner starts each program in its own process group. When the run is interrupted, it stops that whole group. But if Node dies before it can, as when the terminal closes, the program keeps running, while one started with plain `spawn` is in the terminal's process group and gets its signal too. Effect's spawner also waits without limit for a program to exit after SIGKILL; `attempt` waits at most 10 s. The CLI provides a stub in its place (`apps/cli/src/platform.ts`), since `effect/cli` asks for one but never starts a program.
 
 **Why models as data, not code:** models change often, and the same job is worth trying with several. A new model from a family a provider already handles is a `config.json` entry, and old ledger lines keep the price they were made with.
 

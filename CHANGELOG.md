@@ -35,6 +35,15 @@ Notable changes, newest first. The release workflow publishes each version's sec
 - `transcript.json`, lock files and ledger lines are read through their Schemas, so a damaged file names the bad field and the fix.
 - API keys are held as redacted values, so a key printed by mistake shows `<redacted>`.
 
+### Fixed
+
+- A `SHORTS_*` variable whose name starts like another setting's, such as `SHORTS_CAPTIONS_FONT_SIZE`, no longer makes config.json unreadable, which had put the spending caps back to their defaults. A variable with a value that isn't valid is reported by `doctor` and left out; config.json and the other variables still apply, and valid variables apply even when config.json isn't valid. A number or yes/no written as text in config.json (`"dailyUsd": "1"`) is still read as that value. A `SHORTS_MODELS_*` variable no longer replaces config.json's models.
+- With `--json` (or `--json=true`), a command called wrong, or a group of commands given no command such as `post`, prints one JSON error object instead of help, and a run on several posts where some failed ends with the error object too. `doctor --json` names itself `doctor`.
+- A file that can't be read or written (a folder in its place, no permission, a full disk) fails with a fix, instead of a stack trace and, with `--json`, no JSON at all. An unexpected failure ends the same way, with its trace on stderr. An image that was paid for but couldn't be saved is fetched again, free, on the next run.
+- A lock file that can't be read no longer makes a command hang, Ctrl-C ends a wait for a busy post at once, and a lock left from before the machine restarted is taken over.
+- A post folder copied under a new name is refused, instead of writing over the original's post.json. `post list` and `--day`/`--in-stage` name it by its folder.
+- An HTTP 4xx while FAL finishes an image no longer counts as a refusal, since FAL had already taken the job on. Each check on an image gives up after 30 s, and its download after 2 minutes, instead of hanging, and the FAL key is sent only to FAL.
+
 ### Removed
 
 - `source adopt`.

@@ -8,7 +8,7 @@
 
 ### Requirement: post.json SHALL be written only by commands, safely
 
-A command SHALL change `post.json` only while it holds that post's lock. It SHALL read the file again first and add 1 to `revision`. It SHALL write a temporary file and then rename it over `post.json`. When the process that holds a lock no longer exists, the next command SHALL take the lock over.
+A command SHALL change `post.json` only while it holds that post's lock, in the folder it read it from, and only while the file's `slug` names that folder. It SHALL read the file again first, add 1 to `revision`, write a temporary file and rename it over `post.json`. A lock whose process no longer runs, or taken before the machine last started, SHALL be taken over. Ctrl-C SHALL end a wait for a lock at once.
 
 #### Scenario: Two commands on one post
 
@@ -20,6 +20,18 @@ A command SHALL change `post.json` only while it holds that post's lock. It SHAL
 
 - **WHEN** the lock file names a process that isn't running
 - **THEN** the next command takes the lock
+
+#### Scenario: A copied post folder
+
+- **WHEN** a post's folder is copied under another name and a command changes the copy
+- **THEN** it refuses, naming the `slug` to set
+- **AND** the original's `post.json` is unchanged
+- **AND** `post list` names the copy by its folder
+
+#### Scenario: A lock that can't be read
+
+- **WHEN** a folder sits where a post's lock file goes
+- **THEN** the command fails at once with a fix naming the lock file
 
 ### Requirement: A hand-edited post.json SHALL be checked when read
 
