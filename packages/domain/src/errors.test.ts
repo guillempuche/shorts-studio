@@ -1,6 +1,6 @@
-import { Runtime } from "effect";
+import { Result, Runtime, Schema } from "effect";
 import { describe, expect, it } from "vitest";
-import { type ErrorCode, fail, failBecause, RequestEnded, reportOf } from "./errors.ts";
+import { type ErrorCode, fail, failBecause, issueLine, RequestEnded, reportOf } from "./errors.ts";
 
 describe("fail", () => {
 	it("should keep the code, the message and the fix", () => {
@@ -25,6 +25,29 @@ describe("fail", () => {
 		// AND everything else exits 1
 		expect(exitCode("not-found")).toBe(1);
 		expect(exitCode("provider")).toBe(1);
+	});
+});
+
+describe("issueLine", () => {
+	it("should name each bad field by its path, on one line", () => {
+		// GIVEN a settings object with a negative cap and a cap that isn't a number
+		const Caps = Schema.Struct({
+			caps: Schema.Struct({
+				dailyUsd: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+				postUsd: Schema.Finite,
+			}),
+		});
+		const result = Schema.decodeUnknownResult(Caps, { errors: "all" })({
+			caps: { dailyUsd: -1, postUsd: "lots" },
+		});
+
+		// WHEN its failure is put in words
+		const line = Result.isFailure(result) ? issueLine(result.failure) : "";
+
+		// THEN both fields are named, and nothing breaks the line
+		expect(line).toContain("caps.dailyUsd: ");
+		expect(line).toContain("caps.postUsd: ");
+		expect(line).not.toContain("\n");
 	});
 });
 

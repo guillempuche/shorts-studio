@@ -5,7 +5,7 @@
  */
 
 import { join } from "node:path";
-import { fail, type ShortsError } from "@shorts-studio/domain/errors";
+import { fail, issueLine, type ShortsError } from "@shorts-studio/domain/errors";
 import { type Job, Model, price } from "@shorts-studio/domain/models";
 import { Effect, Result, Schema } from "effect";
 import type { Context } from "./context.ts";
@@ -71,7 +71,7 @@ export const readModels = (
 				Effect.mapError((error) =>
 					fail(
 						"usage",
-						`models.${name} in config.json isn't a whole model: ${error.message.replace(/\s*\n\s*/g, " ")}`,
+						`models.${name} in config.json isn't a whole model: ${issueLine(error)}`,
 						`Fix it in ${join(ctx.paths.data, "config.json")}. A new model needs provider, job, endpoint, billedBy, usdPerUnit and priceChecked.`,
 					),
 				),

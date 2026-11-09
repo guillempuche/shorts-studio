@@ -7,7 +7,7 @@
  * Its `code` is stable and documented: it sets the exit code, and it's what scripts match on.
  */
 
-import { Runtime, Schema } from "effect";
+import { Runtime, Schema, SchemaIssue } from "effect";
 
 export const ErrorCode = Schema.Literals([
 	"failed",
@@ -126,6 +126,26 @@ export const failBecause = (reason: Reason): ShortsError =>
 
 export const fail = (code: ErrorCode, message: string, fix: string): ShortsError =>
 	failBecause(REASON[code]({ message, fix }));
+
+const formatIssues = SchemaIssue.makeFormatterStandardSchemaV1();
+
+/** What a Schema failure found wrong: each bad field's path, with what's wrong with it. */
+export const schemaIssues = (
+	error: Schema.SchemaError,
+): ReadonlyArray<{ readonly path: ReadonlyArray<string>; readonly message: string }> =>
+	formatIssues(error.issue).issues.map(({ path, message }) => ({
+		path: (path ?? []).map((key) => String(typeof key === "object" ? key.key : key)),
+		message,
+	}));
+
+/**
+ * A Schema failure as one line for a `message`,
+ * e.g. `caps.dailyUsd: Expected a value greater than or equal to 0, got -1`.
+ */
+export const issueLine = (error: Schema.SchemaError): string =>
+	schemaIssues(error)
+		.map(({ path, message }) => (path.length === 0 ? message : `${path.join(".")}: ${message}`))
+		.join("; ");
 
 /** The documented error shape: what `--json` prints and what an MCP tool returns. */
 export const ErrorReport = Schema.Struct({

@@ -117,7 +117,10 @@ export interface Context {
 	readonly settingsIssues: ReadonlyArray<string>;
 	/** Settings that fell back to a default without stopping anything, such as TZ. Doctor warns. */
 	readonly settingsWarnings: ReadonlyArray<string>;
-	/** An API key, or undefined when it isn't set. Redacted, so printing it shows `<redacted>`. */
+	/**
+	 * An API key, or undefined when it isn't set. Redacted, so printing it shows `<redacted>`.
+	 * Never rejects: a lookup that fails (no keychain, a locked one) reads as unset.
+	 */
 	readonly secret: (key: KeySpec) => Promise<Redacted.Redacted<string> | undefined>;
 	readonly now: () => Date;
 	/** The machine's time zone, which sets where a day and a month start for the caps. */

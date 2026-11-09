@@ -128,17 +128,135 @@ describe("makeContext", () => {
 		expect(ctx.settingsIssues).toEqual([]);
 	});
 
-	it("should report a SHORTS_* variable that isn't valid, naming the setting", () => {
-		// GIVEN no settings file
-		// WHEN the daily cap is set to a word in the environment
+	it("should report a SHORTS_* variable that isn't valid, and still use the file and the other variables", () => {
+		// GIVEN a config.json with a lowered cap
+		const data = join(tempDir(), "data");
+		mkdirSync(data, { recursive: true });
+		writeFileSync(join(data, "config.json"), '{ "caps": { "dailyUsd": 1 } }');
+
+		// WHEN the per-post cap is set to a word in the environment, and the caption size properly
 		const ctx = makeContext({
-			SHORTS_DATA_DIR: join(tempDir(), "data"),
-			SHORTS_CAPS_DAILY_USD: "lots",
+			SHORTS_DATA_DIR: data,
+			SHORTS_CAPS_POST_USD: "lots",
+			SHORTS_CAPTIONS_FONT_SIZE: "64",
 		});
 
-		// THEN the defaults apply and the problem names the setting
-		expect(ctx.config).toEqual({});
-		expect(ctx.settingsIssues[0]).toContain('["caps"]["dailyUsd"]');
+		// THEN the file's cap and the valid variable apply, and only the bad variable is dropped
+		expect(ctx.config).toEqual({ caps: { dailyUsd: 1 }, captions: { fontSize: 64 } });
+		// AND the problem names that variable, for doctor to report
+		expect(ctx.settingsIssues).toHaveLength(1);
+		expect(ctx.settingsIssues[0]).toContain("SHORTS_CAPS_POST_USD");
+	});
+
+	it.each([
+		["a list instead of an object", '[{ "caps": { "dailyUsd": 1 } }]', {}],
+		[
+			"a word where a group of settings goes",
+			'{ "captions": "big" }',
+			{ SHORTS_CAPTIONS_FONT_SIZE: "64" },
+		],
+	])("should report a config.json with %s, even when variables are set", (_, file, vars) => {
+		// GIVEN a config.json whose shape is wrong
+		const data = join(tempDir(), "data");
+		mkdirSync(data, { recursive: true });
+		writeFileSync(join(data, "config.json"), file);
+
+		// WHEN the settings are loaded
+		const ctx = makeContext({ SHORTS_DATA_DIR: data, ...vars });
+
+		// THEN the file is reported rather than passed over, and only the variables apply
+		expect(ctx.config).toEqual(
+			Object.keys(vars).length === 0 ? {} : { captions: { fontSize: 64 } },
+		);
+		expect(ctx.settingsIssues).toHaveLength(1);
+		expect(ctx.settingsIssues[0]).toContain(join(data, "config.json"));
+	});
+
+	it("should read a number or yes/no written as text in config.json, as earlier versions did", () => {
+		// GIVEN a config.json with a cap and the word highlight written as strings
+		const data = join(tempDir(), "data");
+		mkdirSync(data, { recursive: true });
+		writeFileSync(
+			join(data, "config.json"),
+			'{ "caps": { "dailyUsd": "1" }, "captions": { "highlight": "true", "font": "Inter" } }',
+		);
+
+		// WHEN the settings are loaded
+		const ctx = makeContext({ SHORTS_DATA_DIR: data });
+
+		// THEN they're read as the values they name, so the lowered cap holds
+		expect(ctx.config).toEqual({
+			caps: { dailyUsd: 1 },
+			captions: { highlight: true, font: "Inter" },
+		});
+		expect(ctx.settingsIssues).toEqual([]);
+	});
+
+	it("should still apply valid SHORTS_* variables when config.json isn't valid", () => {
+		// GIVEN a config.json that isn't JSON
+		const data = join(tempDir(), "data");
+		mkdirSync(data, { recursive: true });
+		writeFileSync(join(data, "config.json"), "{ caps: ");
+
+		// WHEN the per-post cap is set in the environment
+		const ctx = makeContext({ SHORTS_DATA_DIR: data, SHORTS_CAPS_POST_USD: "0.5" });
+
+		// THEN the cap from the environment holds, and the file is reported
+		expect(ctx.config).toEqual({ caps: { postUsd: 0.5 } });
+		expect(ctx.settingsIssues).toHaveLength(1);
+		expect(ctx.settingsIssues[0]).toContain(join(data, "config.json"));
+	});
+
+	it("should keep the rest of config.json when a variable sets a setting whose name starts like another's", () => {
+		// GIVEN a config.json with a lowered cap and a caption font
+		const data = join(tempDir(), "data");
+		mkdirSync(data, { recursive: true });
+		writeFileSync(
+			join(data, "config.json"),
+			'{ "caps": { "dailyUsd": 1 }, "captions": { "font": "Inter" } }',
+		);
+
+		// WHEN the caption size is set in the environment (FONT_SIZE begins with FONT)
+		const ctx = makeContext({ SHORTS_DATA_DIR: data, SHORTS_CAPTIONS_FONT_SIZE: "64" });
+
+		// THEN the size comes from the environment and everything else from the file
+		expect(ctx.config).toEqual({
+			caps: { dailyUsd: 1 },
+			captions: { font: "Inter", fontSize: 64 },
+		});
+		expect(ctx.settingsIssues).toEqual([]);
+	});
+
+	it("should set a caption size from the environment when no font is set anywhere", () => {
+		// GIVEN no settings file
+		// WHEN only the caption size is set in the environment
+		const ctx = makeContext({
+			SHORTS_DATA_DIR: join(tempDir(), "data"),
+			SHORTS_CAPTIONS_FONT_SIZE: "64",
+		});
+
+		// THEN that one setting is used, with nothing to report
+		expect(ctx.config).toEqual({ captions: { fontSize: 64 } });
+		expect(ctx.settingsIssues).toEqual([]);
+	});
+
+	it("should take models from config.json only, exactly as written", () => {
+		// GIVEN a config.json with a price override whose option is a string of digits
+		const data = join(tempDir(), "data");
+		mkdirSync(data, { recursive: true });
+		writeFileSync(
+			join(data, "config.json"),
+			'{ "models": { "flux-dev": { "usdPerUnit": 0.03, "options": { "steps": "28" } } } }',
+		);
+
+		// WHEN a variable that looks like a model setting is also set
+		const ctx = makeContext({ SHORTS_DATA_DIR: data, SHORTS_MODELS_MINE_PROVIDER: "fal" });
+
+		// THEN the file's model is kept as written, and the variable doesn't add one
+		expect(ctx.config.models).toEqual({
+			"flux-dev": { usdPerUnit: 0.03, options: { steps: "28" } },
+		});
+		expect(ctx.settingsIssues).toEqual([]);
 	});
 
 	it("should read brand overrides from SHORTS_BRAND_* variables", () => {
