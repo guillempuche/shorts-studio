@@ -16,6 +16,7 @@ Notable changes, newest first. The release workflow publishes each version's sec
 - A monthly spending cap, `caps.monthlyUsd` ($100 by default), next to the daily and per-post caps. `budget show` reports the month.
 - `doctor` warns when the price in use was checked more than 90 days ago, or when a model in config.json belongs to no provider in use, and fails when a job's model can't be used.
 - CI builds the Linux, macOS and Windows binaries and runs them through `scripts/smoke-binary.ts`, and the release runs it before publishing, since the binaries run on Bun while the tests run on Node.
+- The MCP server speaks MCP 2026-07-28, so a client on the newest version is served instead of getting an internal error. Clients on 2025-11-25 and 2025-06-18 keep their version.
 
 ### Changed
 

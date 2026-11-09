@@ -118,7 +118,9 @@ A reservation is freed only when the failure proves nothing was billed (`nothing
 
 ## Agent interface
 
-Results go to stdout. Progress and log messages go to stderr. With `--json`, stdout holds exactly one object, even when a command is given a flag or value it doesn't take: `{ ok: true, outputVersion, command, result }` or `{ ok: false, outputVersion, command, error: { code, message, fix } }`. A run that selects more than one post (`--post a,b`, or `--day` or `--in-stage` matching several) holds `results`, one per post, in place of `result`. A failed MCP call returns the same error object with `isError: true`; arguments that don't match a tool's Schema get the MCP library's own error instead.
+Results go to stdout. Progress and log messages go to stderr. With `--json`, stdout holds exactly one object, even when a command is given a flag or value it doesn't take: `{ ok: true, outputVersion, command, result }` or `{ ok: false, outputVersion, command, error: { code, message, fix } }`. A run that selects more than one post (`--post a,b`, or `--day` or `--in-stage` matching several) holds `results`, one per post, in place of `result`. A failed MCP call returns the same error object with `isError: true`. Arguments that don't match a tool's Schema get the MCP library's own error instead: a JSON-RPC error on 2025-11-25 and 2025-06-18, and a result with `isError: true` on 2026-07-28.
+
+`mcp serve` speaks MCP 2026-07-28, where each request carries its own version, and 2025-11-25 and 2025-06-18 for clients that start with `initialize` (`MCP_PROTOCOLS` in `apps/mcp/src/mcp.ts`).
 
 When a spending command runs without `--yes`, that one object holds both the estimate (`result`) and the request for confirmation (`error`).
 
