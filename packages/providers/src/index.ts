@@ -7,7 +7,7 @@ import { fail } from "@shorts-studio/domain/errors";
 import { type Check, ImageMaker, type Ports, Transcriber } from "@shorts-studio/usecases/ports";
 import { Effect, Layer } from "effect";
 import type { HttpClient } from "effect/http";
-import { ProviderEnv, withEnv } from "./env.ts";
+import { type ProviderEnv, withEnv } from "./env.ts";
 import { falLayer } from "./fal.ts";
 import { ffmpegLayer } from "./ffmpeg.ts";
 import type { ProviderContext } from "./node.ts";
@@ -24,7 +24,10 @@ const IMAGE_MAKERS: Readonly<Record<string, ProviderLayer<ImageMaker>>> = {
 	fal: falLayer,
 };
 
-/** A provider the settings name but no layer offers: every call, and doctor, say how to fix it. */
+/**
+ * A provider the settings name but no layer offers: every call, and doctor, say how to fix it.
+ * `info` is what both ports share, so a stub only adds its calls.
+ */
 const unknownProvider = (job: string, name: string, known: Readonly<Record<string, unknown>>) => {
 	const error = fail(
 		"usage",
@@ -37,45 +40,40 @@ const unknownProvider = (job: string, name: string, known: Readonly<Record<strin
 		detail: error.message,
 		fix: error.fix,
 	};
-	return { provider: name, keys: [], checks: Effect.succeed([check]), fail: Effect.fail(error) };
+	return {
+		info: {
+			provider: name,
+			keys: [],
+			checks: Effect.succeed([check]),
+			models: {},
+			defaultModel: "",
+		},
+		failing: Effect.fail(error),
+	};
 };
 
 const transcriberLayer = (name: string): ProviderLayer<Transcriber> => {
 	const layer = TRANSCRIBERS[name];
 	if (layer !== undefined) return layer;
-	const stub = unknownProvider("transcribe", name, TRANSCRIBERS);
-	return Layer.succeed(Transcriber, {
-		...stub,
-		models: {},
-		defaultModel: "",
-		transcribe: () => stub.fail,
-	});
+	const { info, failing } = unknownProvider("transcribe", name, TRANSCRIBERS);
+	return Layer.succeed(Transcriber, { ...info, transcribe: () => failing });
 };
 
 const imageMakerLayer = (name: string): ProviderLayer<ImageMaker> => {
 	const layer = IMAGE_MAKERS[name];
 	if (layer !== undefined) return layer;
-	const stub = unknownProvider("image", name, IMAGE_MAKERS);
-	return Layer.succeed(ImageMaker, {
-		...stub,
-		models: {},
-		defaultModel: "",
-		submit: () => stub.fail,
-		collect: () => stub.fail,
-	});
+	const { info, failing } = unknownProvider("image", name, IMAGE_MAKERS);
+	return Layer.succeed(ImageMaker, { ...info, submit: () => failing, collect: () => failing });
 };
 
 /** Every port, each from the provider the settings choose. */
-const chosen = Layer.unwrap(
-	Effect.gen(function* () {
-		const env = yield* ProviderEnv;
-		return Layer.mergeAll(
-			transcriberLayer(env.config.transcribe?.provider ?? "together"),
-			imageMakerLayer(env.config.image?.provider ?? "fal"),
+export const providersLayer = (ctx: ProviderContext): Layer.Layer<Ports> =>
+	withEnv(
+		Layer.mergeAll(
+			transcriberLayer(ctx.config.transcribe?.provider ?? "together"),
+			imageMakerLayer(ctx.config.image?.provider ?? "fal"),
 			ffmpegLayer,
 			ytDlpLayer,
-		);
-	}),
-);
-
-export const providersLayer = (ctx: ProviderContext): Layer.Layer<Ports> => withEnv(chosen, ctx);
+		),
+		ctx,
+	);

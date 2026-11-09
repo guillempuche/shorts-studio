@@ -166,6 +166,18 @@ export const Post = Schema.Struct({
 });
 export type Post = typeof Post.Type;
 
+/** `post` with `change` applied to each of its beats; a post without beats comes back as is. */
+export const mapBeats = (post: Post, change: (beat: Beat) => Beat): Post =>
+	post.beats === undefined
+		? post
+		: { ...post, beats: { ...post.beats, items: post.beats.items.map(change) } };
+
+/** A beat without its pending image request. */
+export const withoutPending = (beat: Beat): Beat => {
+	const { pending: _, ...rest } = beat;
+	return rest;
+};
+
 export const Stage = Schema.Literals([
 	"idea",
 	"script-ready",

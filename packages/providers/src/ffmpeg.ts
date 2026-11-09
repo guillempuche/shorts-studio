@@ -4,7 +4,7 @@
  */
 
 import { fail, type ShortsError } from "@shorts-studio/domain/errors";
-import { attempt } from "@shorts-studio/usecases/attempt";
+import { attempt, failWith } from "@shorts-studio/usecases/attempt";
 import { type Check, MediaTools } from "@shorts-studio/usecases/ports";
 import { Effect, Layer } from "effect";
 import { ProviderEnv } from "./env.ts";
@@ -24,11 +24,7 @@ const failure =
 	(error: unknown): ShortsError =>
 		error instanceof ToolRefused
 			? fail("failed", error.message, fix)
-			: fail(
-					"missing-tool",
-					error instanceof Error ? error.message : String(error),
-					"Check that ffmpeg and ffprobe work: doctor",
-				);
+			: failWith("missing-tool", "Check that ffmpeg and ffprobe work: doctor")(error);
 
 /**
  * Runs ffmpeg, in `cwd` when given (relative paths resolve there). A refusal carries the last

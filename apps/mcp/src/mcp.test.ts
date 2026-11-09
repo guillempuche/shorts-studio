@@ -4,9 +4,9 @@ import type { Ports } from "@shorts-studio/usecases/ports";
 import { testContext } from "@shorts-studio/usecases/test/context";
 import { fakeImageMaker, fakePorts } from "@shorts-studio/usecases/test/fakes";
 import { readyForImages, seedPost } from "@shorts-studio/usecases/test/posts";
-import { Effect, Layer } from "effect";
+import { Effect, Fiber, Layer } from "effect";
 import { McpProtocol, McpTest } from "effect/ai";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mcpOperations, mcpRegistrations } from "./mcp.ts";
 
 /** Connects an in-memory MCP client to the server and runs `use` with it. */
@@ -17,7 +17,7 @@ const withClient = <A, E>(
 ) =>
 	Effect.runPromise(
 		Effect.scoped(
-			McpTest.makeClient(mcpRegistrations(operations, ctx, ports), {
+			McpTest.makeClient(mcpRegistrations(operations, ctx).pipe(Layer.provide(ports)), {
 				protocols: [McpProtocol.v2025_11_25],
 			}).pipe(Effect.flatMap(use)),
 		),
@@ -88,6 +88,43 @@ describe("MCP tools", () => {
 		// AND the real call paid for both images
 		expect(real.isError).not.toBe(true);
 		expect(maker.submits).toHaveLength(2);
+	});
+
+	it("should stop a tool's work when the client cancels the call", async () => {
+		// GIVEN a post ready for images, and a provider that never finishes an image
+		const ctx = testContext();
+		await seedPost(ctx, "2026-11-04-mcp", readyForImages());
+		let waiting = 0;
+		let stopped = 0;
+		const maker = {
+			...fakeImageMaker(),
+			collect: () =>
+				Effect.sync(() => {
+					waiting += 1;
+				}).pipe(
+					Effect.andThen(Effect.never),
+					Effect.onInterrupt(() =>
+						Effect.sync(() => {
+							stopped += 1;
+						}),
+					),
+				),
+		};
+
+		// WHEN a client asks for the images, then cancels while they're being made
+		await withClient(ctx, fakePorts({ imageMaker: maker }), (client) =>
+			Effect.gen(function* () {
+				const call = yield* Effect.forkChild(
+					client.callTool({ name: "image_generate", arguments: { post: "2026-11-04-mcp" } }),
+				);
+				yield* Effect.promise(() => vi.waitUntil(() => waiting > 0));
+				yield* Fiber.interrupt(call);
+				// THEN the tool's work is interrupted while the server still runs, which is what
+				// aborts fetches and stops child processes
+				yield* Effect.promise(() => vi.waitUntil(() => stopped > 0));
+			}),
+		);
+		expect(stopped).toBeGreaterThan(0);
 	});
 
 	it("should build the providers once for all the calls a server answers", async () => {

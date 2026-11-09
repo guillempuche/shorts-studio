@@ -58,29 +58,29 @@ const settingsChecks = (ctx: Context): ReadonlyArray<Check> => [
 ];
 
 /** The settings and models, then the tools of every provider in use, then the keys they need. */
-const runChecks = (ctx: Context) =>
-	Effect.gen(function* () {
-		const offers = yield* jobOffers;
-		const providers: ReadonlyArray<ProviderInfo> = [
-			yield* MediaTools,
-			yield* Downloader,
-			...offers.map(({ offer }) => offer),
-		];
-		const modelRows = yield* modelChecks(ctx, offers);
-		const toolRows = yield* Effect.forEach(providers, (provider) => provider.checks, {
-			concurrency: "unbounded",
-		});
-		// One row per key, even when two providers need the same one.
-		const keys = new Map(
-			providers.flatMap((provider) => provider.keys.map((key) => [key.env, { provider, key }])),
-		);
-		const keyRows = yield* Effect.promise(() =>
-			Promise.all(
-				[...keys.values()].map(({ provider, key }) => keyCheck(ctx, provider.provider, key)),
-			),
-		);
-		return [...settingsChecks(ctx), ...modelRows, ...toolRows.flat(), ...keyRows];
+const runChecks = Effect.fn("runChecks")(function* (ctx: Context) {
+	const offers = yield* jobOffers;
+	const providers: ReadonlyArray<ProviderInfo> = [
+		yield* MediaTools,
+		yield* Downloader,
+		...offers.map(({ offer }) => offer),
+	];
+	const modelRows = yield* modelChecks(ctx, offers);
+	const toolRows = yield* Effect.forEach(providers, (provider) => provider.checks, {
+		concurrency: "unbounded",
 	});
+	// One row per key, even when two providers need the same one.
+	const keys = new Map(
+		providers.flatMap((provider) => provider.keys.map((key) => [key.env, { provider, key }])),
+	);
+	// keyCheck never rejects: `secret` reads a lookup that fails as unset.
+	const keyRows = yield* Effect.forEach(
+		[...keys.values()],
+		({ provider, key }) => Effect.promise(() => keyCheck(ctx, provider.provider, key)),
+		{ concurrency: "unbounded" },
+	);
+	return [...settingsChecks(ctx), ...modelRows, ...toolRows.flat(), ...keyRows];
+});
 
 const MARK = { ok: "✓", warn: "!", fail: "✗" } as const;
 
@@ -111,20 +111,19 @@ export const configShow = defineOperation({
 	surface: "cli-and-mcp",
 	spends: false,
 	hints: { readonly: true, destructive: false, idempotent: true, openWorld: false },
-	run: (_input, ctx) =>
-		Effect.gen(function* () {
-			const transcriber = yield* Transcriber;
-			const maker = yield* ImageMaker;
-			return {
-				paths: ctx.paths,
-				caps: caps(ctx),
-				timeZone: DateTime.zoneToString(ctx.timeZone),
-				imageModel: modelNameFor(ctx, maker, "image"),
-				imageProvider: maker.provider,
-				transcriber: `${transcriber.provider} ${modelNameFor(ctx, transcriber, "transcribe")}`,
-				checks: yield* runChecks(ctx),
-			};
-		}),
+	run: Effect.fn("config_show")(function* (_input, ctx) {
+		const transcriber = yield* Transcriber;
+		const maker = yield* ImageMaker;
+		return {
+			paths: ctx.paths,
+			caps: caps(ctx),
+			timeZone: DateTime.zoneToString(ctx.timeZone),
+			imageModel: modelNameFor(ctx, maker, "image"),
+			imageProvider: maker.provider,
+			transcriber: `${transcriber.provider} ${modelNameFor(ctx, transcriber, "transcribe")}`,
+			checks: yield* runChecks(ctx),
+		};
+	}),
 	render: (o) => {
 		const blocking = o.checks.filter((c) => c.status === "fail").length;
 		return [

@@ -85,23 +85,22 @@ export const postCreate = defineOperation({
 	surface: "cli-and-mcp",
 	spends: false,
 	hints: { readonly: false, destructive: false, idempotent: false, openWorld: false },
-	run: (input, ctx) =>
-		Effect.gen(function* () {
-			// One clock read, so the slug's date and createdAt agree even at midnight.
-			const { at, today } = daysNow(ctx);
-			const slug = DATED.test(input.post) ? input.post : `${today}-${input.post}`;
-			const brief = {
-				...(input.title !== undefined ? { title: input.title } : {}),
-				...(input.notes !== undefined ? { notes: input.notes } : {}),
-			};
-			const post = yield* createPost(ctx, {
-				slug,
-				createdAt: at,
-				...(Object.keys(brief).length > 0 ? { brief } : {}),
-				aiGenerated: true,
-			});
-			return { slug, dir: postDir(ctx, slug), next: nextStep(post) };
-		}),
+	run: Effect.fn("post_create")(function* (input, ctx) {
+		// One clock read, so the slug's date and createdAt agree even at midnight.
+		const { at, today } = daysNow(ctx);
+		const slug = DATED.test(input.post) ? input.post : `${today}-${input.post}`;
+		const brief = {
+			...(input.title !== undefined ? { title: input.title } : {}),
+			...(input.notes !== undefined ? { notes: input.notes } : {}),
+		};
+		const post = yield* createPost(ctx, {
+			slug,
+			createdAt: at,
+			...(Object.keys(brief).length > 0 ? { brief } : {}),
+			aiGenerated: true,
+		});
+		return { slug, dir: postDir(ctx, slug), next: nextStep(post) };
+	}),
 	render: (o) => `Created ${o.slug}\n  ${o.dir}\nNext: ${o.next}`,
 });
 

@@ -37,39 +37,39 @@ export const modelsList = defineOperation({
 	surface: "cli-and-mcp",
 	spends: false,
 	hints: { readonly: true, destructive: false, idempotent: true, openWorld: false },
-	run: (_input, ctx) =>
-		Effect.gen(function* () {
-			const { today } = daysNow(ctx);
-			const offers = yield* jobOffers;
-			const jobs = yield* Effect.forEach(offers, ({ job, offer }) =>
-				Effect.map(readModels(ctx, offer, job), ({ models, problems }) => ({
-					problems,
-					rows: Object.entries(models).map(([name, model]) => ({
-						job,
-						provider: model.provider,
-						name,
-						endpoint: model.endpoint,
-						billedBy: model.billedBy,
-						usdPerUnit: model.usdPerUnit,
-						roundUp: model.roundUp === true,
-						priceChecked: model.priceChecked,
-						daysSinceChecked: daysBetween(model.priceChecked, today),
-						inUse: name === modelNameFor(ctx, offer, job),
-					})),
-				})),
-			);
-			// The same bad entry can show up for each job; report it once.
-			const problems = new Map(
-				jobs.flatMap(({ problems }) =>
-					problems.map(({ message, fix }) => [message, { message, fix }]),
-				),
-			);
+	run: Effect.fn("models_list")(function* (_input, ctx) {
+		const { today } = daysNow(ctx);
+		const offers = yield* jobOffers;
+		const jobs = offers.map(({ job, offer }) => {
+			const { models, problems } = readModels(ctx, offer, job);
 			return {
-				models: jobs.flatMap(({ rows }) => rows),
-				staleAfterDays: STALE_PRICE_DAYS,
-				problems: [...problems.values()],
+				problems,
+				rows: Object.entries(models).map(([name, model]) => ({
+					job,
+					provider: model.provider,
+					name,
+					endpoint: model.endpoint,
+					billedBy: model.billedBy,
+					usdPerUnit: model.usdPerUnit,
+					roundUp: model.roundUp === true,
+					priceChecked: model.priceChecked,
+					daysSinceChecked: daysBetween(model.priceChecked, today),
+					inUse: name === modelNameFor(ctx, offer, job),
+				})),
 			};
-		}),
+		});
+		// The same bad entry can show up for each job; report it once.
+		const problems = new Map(
+			jobs.flatMap(({ problems }) =>
+				problems.map(({ message, fix }) => [message, { message, fix }]),
+			),
+		);
+		return {
+			models: jobs.flatMap(({ rows }) => rows),
+			staleAfterDays: STALE_PRICE_DAYS,
+			problems: [...problems.values()],
+		};
+	}),
 	render: (o) => {
 		const jobs = [...new Set(o.models.map((m) => m.job))];
 		return [

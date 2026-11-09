@@ -54,89 +54,88 @@ export const audioTranscribe = defineOperation({
 	spends: true,
 	needsYes: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: true },
-	run: (input, ctx, mode: RunMode) =>
-		Effect.gen(function* () {
-			yield* checkLanguage(input.language);
+	run: Effect.fn("audio_transcribe")(function* (input, ctx, mode: RunMode) {
+		yield* checkLanguage(input.language);
 
-			const post = yield* readPost(ctx, input.post);
-			if (post.audio === undefined) {
-				return yield* fail(
-					"not-found",
-					`${input.post} has no audio.`,
-					`Import it first: source import --post ${input.post} --file <audio> --origin mine --kind speech`,
-				);
-			}
-
-			const dir = postDir(ctx, input.post);
-			const file = join(dir, TRANSCRIPT_FILE);
-			const transcriber = yield* Transcriber;
-			const model = yield* chooseModel(ctx, transcriber, "transcribe");
-			const inputHash = hashOf(
-				post.audio.hash,
-				transcriber.provider,
-				model.name,
-				input.language ?? "auto",
+		const post = yield* readPost(ctx, input.post);
+		if (post.audio === undefined) {
+			return yield* fail(
+				"not-found",
+				`${input.post} has no audio.`,
+				`Import it first: source import --post ${input.post} --file <audio> --origin mine --kind speech`,
 			);
-			if (!input.force && post.transcript?.inputHash === inputHash && existsSync(file)) {
-				const saved = yield* readTranscript(ctx, input.post);
-				return {
-					file,
-					language: post.transcript.language,
-					words: saved.words.length,
-					skipped: true,
-					estimateUsd: 0,
-					dryRun: mode.dryRun,
-					next: nextStep(post),
-				};
-			}
+		}
 
-			const cost = costOf(model, audioAmount(model, post.audio.durationSec));
-			if (mode.dryRun) {
-				return {
-					file,
-					language: input.language ?? "auto",
-					words: 0,
-					skipped: false,
-					estimateUsd: cost.usd,
-					dryRun: true,
-					next: nextStep(post),
-				};
-			}
-
-			// Fail on a missing key before anything is reserved.
-			yield* Effect.forEach(transcriber.keys, (key) => requireKey(ctx, key), { discard: true });
-			ctx.log(`Transcribing ${post.audio.durationSec.toFixed(0)} s of audio…`);
-			const transcript = yield* paidCall(
-				ctx,
-				{ ...cost, post: input.post, note: "transcript" },
-				transcriber.transcribe(model, join(dir, post.audio.file), input.language),
-			);
-
-			yield* writeJsonFile(file, Transcript, transcript);
-			const hash = yield* fileHash(file);
-			const updated = yield* updatePost(ctx, input.post, "audio transcribe", (current) =>
-				Effect.succeed({
-					...current,
-					transcript: {
-						file: TRANSCRIPT_FILE,
-						hash,
-						inputHash,
-						provider: transcriber.provider,
-						model: model.name,
-						language: transcript.language,
-					},
-				}),
-			);
+		const dir = postDir(ctx, input.post);
+		const file = join(dir, TRANSCRIPT_FILE);
+		const transcriber = yield* Transcriber;
+		const model = yield* chooseModel(ctx, transcriber, "transcribe");
+		const inputHash = hashOf(
+			post.audio.hash,
+			transcriber.provider,
+			model.name,
+			input.language ?? "auto",
+		);
+		if (!input.force && post.transcript?.inputHash === inputHash && existsSync(file)) {
+			const saved = yield* readTranscript(ctx, input.post);
 			return {
 				file,
-				language: transcript.language,
-				words: transcript.words.length,
+				language: post.transcript.language,
+				words: saved.words.length,
+				skipped: true,
+				estimateUsd: 0,
+				dryRun: mode.dryRun,
+				next: nextStep(post),
+			};
+		}
+
+		const cost = costOf(model, audioAmount(model, post.audio.durationSec));
+		if (mode.dryRun) {
+			return {
+				file,
+				language: input.language ?? "auto",
+				words: 0,
 				skipped: false,
 				estimateUsd: cost.usd,
-				dryRun: false,
-				next: nextStep(updated),
+				dryRun: true,
+				next: nextStep(post),
 			};
-		}),
+		}
+
+		// Fail on a missing key before anything is reserved.
+		yield* Effect.forEach(transcriber.keys, (key) => requireKey(ctx, key), { discard: true });
+		ctx.log(`Transcribing ${post.audio.durationSec.toFixed(0)} s of audio…`);
+		const transcript = yield* paidCall(
+			ctx,
+			{ ...cost, post: input.post, note: "transcript" },
+			transcriber.transcribe(model, join(dir, post.audio.file), input.language),
+		);
+
+		yield* writeJsonFile(file, Transcript, transcript);
+		const hash = yield* fileHash(file);
+		const updated = yield* updatePost(ctx, input.post, "audio transcribe", (current) =>
+			Effect.succeed({
+				...current,
+				transcript: {
+					file: TRANSCRIPT_FILE,
+					hash,
+					inputHash,
+					provider: transcriber.provider,
+					model: model.name,
+					language: transcript.language,
+				},
+			}),
+		);
+		return {
+			file,
+			language: transcript.language,
+			words: transcript.words.length,
+			skipped: false,
+			estimateUsd: cost.usd,
+			dryRun: false,
+			next: nextStep(updated),
+		};
+	}),
 	render: (o) =>
 		o.skipped
 			? `Transcript is up to date (${o.language}).\nNext: ${o.next}`

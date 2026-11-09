@@ -2,17 +2,19 @@
  * The MCP server: every operation whose surface is `cli-and-mcp` becomes a tool with the same
  * name (`post_create`). Its parameters match the CLI flags, in camelCase.
  *
- * A failure comes back as the tool's JSON result with `isError: true` and the same
- * `{ code, message, fix }` the CLI prints, so an agent always gets the next step. Spending tools
- * take `dryRun` but not `yes`: the MCP client's approval prompt does that job (the repository's
- * .claude/settings.json asks before each one).
+ * A failed operation comes back as the tool's JSON result with `isError: true` and the same
+ * `{ code, message, fix }` the CLI prints, so an agent always gets the next step. Arguments that
+ * don't match the tool's Schema get Effect's own error instead, before any operation runs.
+ *
+ * Spending tools take `dryRun` but not `yes`: the MCP client's approval prompt does that job (the
+ * repository's .claude/settings.json asks before each one).
  */
 
 import { ErrorReport, reportOf } from "@shorts-studio/domain/errors";
 import type { Context } from "@shorts-studio/usecases/context";
 import { type Operation, toolInputSchema } from "@shorts-studio/usecases/operation";
 import type { Ports } from "@shorts-studio/usecases/ports";
-import { Effect, Layer, Logger, type Schema } from "effect";
+import { Effect, Layer, Logger } from "effect";
 import { McpProtocol, McpServer, Tool, Toolkit } from "effect/ai";
 
 export const SERVER_INSTRUCTIONS = [
@@ -27,9 +29,7 @@ export const mcpOperations = (operations: ReadonlyArray<Operation>): ReadonlyArr
 
 // MCP requires a tool's parameters to be an object, and an empty Struct doesn't encode to one.
 const parametersOf = (op: Operation) =>
-	Object.keys(op.params).length === 0 && !op.spends
-		? Tool.EmptyParams
-		: (toolInputSchema(op) as Schema.Struct<Schema.Struct.Fields>);
+	Object.keys(op.params).length === 0 && !op.spends ? Tool.EmptyParams : toolInputSchema(op);
 
 const toTool = (op: Operation) =>
 	Tool.make(op.name, {
@@ -44,49 +44,42 @@ const toTool = (op: Operation) =>
 		.annotate(Tool.Idempotent, op.hints.idempotent)
 		.annotate(Tool.OpenWorld, op.hints.openWorld);
 
-const normalize = (op: Operation, params: Record<string, unknown>): Record<string, unknown> => {
-	const input: Record<string, unknown> = {};
-	for (const [key, param] of Object.entries(op.params)) input[key] = param.normalize(params[key]);
-	return input;
-};
-
-/** The toolkit and its handlers, as one registration layer for any MCP transport. */
-export const mcpRegistrations = (
-	operations: ReadonlyArray<Operation>,
-	ctx: Context,
-	ports: Layer.Layer<Ports>,
-) => {
+/**
+ * The toolkit and its handlers, as one registration layer for any MCP transport. The ports are
+ * built once, when the server starts, and every tool call shares them.
+ */
+export const mcpRegistrations = (operations: ReadonlyArray<Operation>, ctx: Context) => {
 	const ops = mcpOperations(operations);
-	// The toolkit is built at runtime from the registry, so TypeScript can't know its exact
-	// tuple type. Each handler is checked against its tool's Schema when it's called.
-	const toolkit = Toolkit.make(...(ops.map(toTool) as [ReturnType<typeof toTool>]));
-	// The ports are built once, when the server starts, and every tool call shares them.
+	const toolkit = Toolkit.make(...ops.map(toTool));
 	const handlers = Effect.gen(function* () {
 		const services = yield* Effect.context<Ports>();
-		const byName: Record<string, (params: Record<string, unknown>) => unknown> = {};
-		for (const op of ops) {
-			byName[op.name] = (params) =>
-				op
-					.run(normalize(op, params), ctx, { dryRun: params["dryRun"] === true, confirmed: true })
-					.pipe(Effect.mapError(reportOf), Effect.provide(services));
-		}
-		return byName;
+		return toolkit.of(
+			Object.fromEntries(
+				ops.map((op) => [
+					op.name,
+					// The input arrives decoded through the tool's Schema, so a boolean left out is false.
+					({ dryRun, ...input }: Record<string, unknown>) =>
+						op
+							.run(input, ctx, { dryRun: dryRun === true, confirmed: true })
+							.pipe(Effect.mapError(reportOf), Effect.provide(services)),
+				]),
+			),
+		);
 	});
-	return McpServer.toolkit(toolkit).pipe(
-		Layer.provide(toolkit.toLayer(handlers as never).pipe(Layer.provide(ports))),
-	) as Layer.Layer<never, never, McpServer.McpServer>;
+	return McpServer.toolkit(toolkit).pipe(Layer.provide(toolkit.toLayer(handlers)));
 };
 
 export const mcpServerLayer = (
 	operations: ReadonlyArray<Operation>,
 	ctx: Context,
-	ports: Layer.Layer<Ports>,
 	version: string,
 ) =>
 	McpServer.layerStdio({
 		name: "shorts-studio",
 		version,
 		instructions: SERVER_INSTRUCTIONS,
+		// Clients on the older version keep it: the server answers the version a client asks for,
+		// if listed, and the first one otherwise.
 		protocols: [McpProtocol.v2025_11_25, McpProtocol.v2025_06_18],
-		registrations: mcpRegistrations(operations, ctx, ports),
+		registrations: mcpRegistrations(operations, ctx),
 	}).pipe(Layer.provideMerge(Layer.succeed(Logger.LogToStderr, true)));

@@ -58,85 +58,84 @@ export const draftRender = defineOperation({
 	surface: "cli-and-mcp",
 	spends: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
-	run: (input, ctx) =>
-		Effect.gen(function* () {
-			const post = yield* readPost(ctx, input.post);
-			const dir = postDir(ctx, input.post);
-			const beats = post.beats?.items ?? [];
-			if (
-				post.audio === undefined ||
-				beats.length === 0 ||
-				beats.some((b) => b.image === undefined)
-			) {
-				return yield* fail(
-					"not-found",
-					`${input.post} isn't ready to render: it needs audio, beats and an image for every beat.`,
-					nextStep(post),
-				);
-			}
-			const media = yield* MediaTools;
-			const inputHash = draftInputHash(ctx, post, media.rendererVersion);
-			if (
-				!input.force &&
-				post.draft?.inputHash === inputHash &&
-				existsSync(join(dir, post.draft.file))
-			) {
-				return {
-					file: join(dir, post.draft.file),
-					durationSec: post.draft.durationSec,
-					skipped: true,
-					next: nextStep(post),
-				};
-			}
-
-			const words: ReadonlyArray<Word> =
-				post.audio.kind === "speech" && existsSync(join(dir, TRANSCRIPT_FILE))
-					? (yield* readTranscript(ctx, input.post)).words
-					: [];
-			const groups = groupCaptions(words);
-			yield* writeFileAtomic(
-				join(dir, "captions.ass"),
-				toAss(groups, captionStyle(ctx), post.script?.hook),
+	run: Effect.fn("draft_render")(function* (input, ctx) {
+		const post = yield* readPost(ctx, input.post);
+		const dir = postDir(ctx, input.post);
+		const beats = post.beats?.items ?? [];
+		if (
+			post.audio === undefined ||
+			beats.length === 0 ||
+			beats.some((b) => b.image === undefined)
+		) {
+			return yield* fail(
+				"not-found",
+				`${input.post} isn't ready to render: it needs audio, beats and an image for every beat.`,
+				nextStep(post),
 			);
-			yield* writeFileAtomic(join(dir, "captions.srt"), toSrt(groups));
+		}
+		const media = yield* MediaTools;
+		const inputHash = draftInputHash(ctx, post, media.rendererVersion);
+		if (
+			!input.force &&
+			post.draft?.inputHash === inputHash &&
+			existsSync(join(dir, post.draft.file))
+		) {
+			return {
+				file: join(dir, post.draft.file),
+				durationSec: post.draft.durationSec,
+				skipped: true,
+				next: nextStep(post),
+			};
+		}
 
-			const tmp = "draft.rendering.mp4";
-			ctx.log(`Rendering ${beats.length} beats, ${post.audio.durationSec.toFixed(1)} s…`);
-			const durationSec = yield* Effect.gen(function* () {
-				yield* media.renderVideo({
-					cwd: dir,
-					beats: beats.map((b) => ({
-						start: b.start,
-						end: b.end,
-						image: b.image?.file ?? "",
-						motion: motionOf(b.moment, b.motion),
-					})),
-					audio: post.audio?.file,
-					captions: "captions.ass",
-					output: tmp,
-				});
-				yield* fileStep(
-					() => renameSync(join(dir, tmp), join(dir, DRAFT_FILE)),
-					`Check that ${dir} is writable, then run it again.`,
-				);
-				return yield* media.duration(join(dir, DRAFT_FILE));
-			}).pipe(Effect.ensuring(Effect.sync(() => rmSync(join(dir, tmp), { force: true }))));
+		const words: ReadonlyArray<Word> =
+			post.audio.kind === "speech" && existsSync(join(dir, TRANSCRIPT_FILE))
+				? (yield* readTranscript(ctx, input.post)).words
+				: [];
+		const groups = groupCaptions(words);
+		yield* writeFileAtomic(
+			join(dir, "captions.ass"),
+			toAss(groups, captionStyle(ctx), post.script?.hook),
+		);
+		yield* writeFileAtomic(join(dir, "captions.srt"), toSrt(groups));
 
-			const hash = yield* fileHash(join(dir, DRAFT_FILE));
-			const updated = yield* updatePost(ctx, input.post, "draft render", (current) =>
-				Effect.succeed({
-					...current,
-					draft: {
-						file: DRAFT_FILE,
-						hash,
-						inputHash,
-						rendererVersion: media.rendererVersion,
-						durationSec,
-					},
-				}),
+		const tmp = "draft.rendering.mp4";
+		ctx.log(`Rendering ${beats.length} beats, ${post.audio.durationSec.toFixed(1)} s…`);
+		const durationSec = yield* Effect.gen(function* () {
+			yield* media.renderVideo({
+				cwd: dir,
+				beats: beats.map((b) => ({
+					start: b.start,
+					end: b.end,
+					image: b.image?.file ?? "",
+					motion: motionOf(b.moment, b.motion),
+				})),
+				audio: post.audio?.file,
+				captions: "captions.ass",
+				output: tmp,
+			});
+			yield* fileStep(
+				() => renameSync(join(dir, tmp), join(dir, DRAFT_FILE)),
+				`Check that ${dir} is writable, then run it again.`,
 			);
-			return { file: join(dir, DRAFT_FILE), durationSec, skipped: false, next: nextStep(updated) };
-		}),
+			return yield* media.duration(join(dir, DRAFT_FILE));
+		}).pipe(Effect.ensuring(Effect.sync(() => rmSync(join(dir, tmp), { force: true }))));
+
+		const hash = yield* fileHash(join(dir, DRAFT_FILE));
+		const updated = yield* updatePost(ctx, input.post, "draft render", (current) =>
+			Effect.succeed({
+				...current,
+				draft: {
+					file: DRAFT_FILE,
+					hash,
+					inputHash,
+					rendererVersion: media.rendererVersion,
+					durationSec,
+				},
+			}),
+		);
+		return { file: join(dir, DRAFT_FILE), durationSec, skipped: false, next: nextStep(updated) };
+	}),
 	render: (o) =>
 		`${o.skipped ? "Draft is up to date" : "Rendered"}: ${o.file} (${o.durationSec.toFixed(1)} s)\nNext: ${o.next}`,
 });

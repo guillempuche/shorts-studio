@@ -14,14 +14,17 @@ import { failWith } from "./attempt.ts";
 import type { Context } from "./context.ts";
 import type { Ports } from "./ports.ts";
 
+/** A field of a tool's input Schema. Decoding it needs no services, so neither do the handlers. */
+type Field = Schema.Codec<unknown, unknown>;
+
 export interface Param<A> {
-	readonly description: string;
-	/** The field in the MCP tool's input Schema. */
-	readonly field: Schema.Top;
+	/**
+	 * The field in the MCP tool's input Schema. MCP input is decoded through it, so it gives a
+	 * missing value the same default the CLI flag does.
+	 */
+	readonly field: Field;
 	/** The CLI flag; its name is set when the operation is built, from the parameter's key. */
 	readonly flag: (flagName: string) => Flag.Flag<A>;
-	/** Fills in MCP input the way the CLI flag would (a missing boolean becomes false). */
-	readonly normalize: (value: unknown) => A;
 	/** Set by `p.optional`. */
 	readonly optional?: true;
 }
@@ -34,39 +37,36 @@ export type InputOf<P extends Params> = {
 const described = <A>(flag: Flag.Flag<A>, description: string): Flag.Flag<A> =>
 	flag.pipe(Flag.withDescription(description));
 
+/** An optional boolean that reads as false when left out, like a CLI flag that isn't passed. */
+const booleanField = (description: string): Field =>
+	// Annotated first, so the description reaches the published JSON Schema.
+	Schema.Boolean.annotate({ description }).pipe(
+		Schema.withDecodingDefaultKey(Effect.succeed(false)),
+	);
+
 export const p = {
 	string: (description: string): Param<string> => ({
-		description,
 		field: Schema.String.annotate({ description }),
 		flag: (name) => described(Flag.String(name), description),
-		normalize: (value) => value as string,
 	}),
 	int: (description: string): Param<number> => ({
-		description,
 		field: Schema.Int.annotate({ description }),
 		flag: (name) => described(Flag.Int(name), description),
-		normalize: (value) => value as number,
 	}),
 	boolean: (description: string): Param<boolean> => ({
-		description,
-		field: Schema.optionalKey(Schema.Boolean.annotate({ description })),
+		field: booleanField(description),
 		flag: (name) => described(Flag.Boolean(name), description).pipe(Flag.withDefault(false)),
-		normalize: (value) => value === true,
 	}),
 	literals: <const L extends ReadonlyArray<string>>(
 		values: L,
 		description: string,
 	): Param<L[number]> => ({
-		description,
 		field: Schema.Literals(values).annotate({ description }),
 		flag: (name) => described(Flag.Literals(name, values), description),
-		normalize: (value) => value as L[number],
 	}),
 	optional: <A>(param: Param<A>): Param<A | undefined> => ({
-		description: param.description,
-		field: Schema.optionalKey(param.field as Schema.Constraint),
+		field: Schema.optionalKey(param.field),
 		flag: (name) => param.flag(name).pipe(Flag.optional, Flag.map(Option.getOrUndefined)),
-		normalize: (value) => (value === undefined ? undefined : param.normalize(value)),
 		optional: true,
 	}),
 };
@@ -142,15 +142,13 @@ export const commandPath = (name: string): readonly [string, string] => {
 	return [noun, verb];
 };
 
-export const toolInputSchema = (op: Operation): Schema.Top => {
-	const fields: Record<string, Schema.Top> = {};
+export const toolInputSchema = (op: Operation) => {
+	const fields: Record<string, Field> = {};
 	for (const [key, param] of Object.entries(op.params)) fields[key] = param.field;
 	if (op.spends) {
-		fields["dryRun"] = Schema.optionalKey(
-			Schema.Boolean.annotate({
-				description: "Describe the files and estimated cost without spending anything",
-			}),
+		fields["dryRun"] = booleanField(
+			"Describe the files and estimated cost without spending anything",
 		);
 	}
-	return Schema.Struct(fields as Schema.Struct.Fields);
+	return Schema.Struct(fields);
 };

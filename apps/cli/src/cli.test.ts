@@ -1,9 +1,4 @@
 import { cpSync } from "node:fs";
-import * as NodeChildProcessSpawner from "@effect/platform-node-shared/NodeChildProcessSpawner";
-import * as NodeFileSystem from "@effect/platform-node-shared/NodeFileSystem";
-import * as NodePath from "@effect/platform-node-shared/NodePath";
-import * as NodeStdio from "@effect/platform-node-shared/NodeStdio";
-import * as NodeTerminal from "@effect/platform-node-shared/NodeTerminal";
 import type { Context } from "@shorts-studio/usecases/context";
 import { commandPath, defineOperation, type Operation } from "@shorts-studio/usecases/operation";
 import { configCheck } from "@shorts-studio/usecases/operations/config";
@@ -18,16 +13,7 @@ import { Command } from "effect/cli";
 import { TestConsole } from "effect/testing";
 import { describe, expect, it } from "vitest";
 import { aliasCommand, cliOutput, jsonRequested, nounCommands, root } from "./cli.ts";
-
-const platform = Layer.mergeAll(
-	NodeFileSystem.layer,
-	NodePath.layer,
-	NodeTerminal.layer,
-	NodeStdio.layer,
-	NodeChildProcessSpawner.layer.pipe(
-		Layer.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
-	),
-);
+import { platform } from "./platform.ts";
 
 /**
  * Runs `shorts-studio <argv>` in this process with the given ports (in-memory fakes by default)

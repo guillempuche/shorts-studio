@@ -34,17 +34,17 @@ export const jobOffers = Effect.gen(function* () {
 export const modelNameFor = (ctx: Context, offer: Offer, job: Job): string =>
 	ctx.config[job]?.model ?? offer.defaultModel;
 
-const decodeModel = Schema.decodeUnknownEffect(Model);
+const decodeModel = Schema.decodeUnknownResult(Model);
 
 /** Every model `offer`'s provider has for `job`, after config.json's changes and additions. */
 export const modelsFor = (
 	ctx: Context,
 	offer: Offer,
 	job: Job,
-): Effect.Effect<Readonly<Record<string, Model>>, ShortsError> =>
-	Effect.flatMap(readModels(ctx, offer, job), ({ models, problems }) =>
-		problems[0] === undefined ? Effect.succeed(models) : Effect.fail(problems[0]),
-	);
+): Effect.Effect<Readonly<Record<string, Model>>, ShortsError> => {
+	const { models, problems } = readModels(ctx, offer, job);
+	return problems[0] === undefined ? Effect.succeed(models) : Effect.fail(problems[0]);
+};
 
 /**
  * Like `modelsFor`, but keeps going past an entry that isn't a whole model, so `models list` can
@@ -54,40 +54,32 @@ export const readModels = (
 	ctx: Context,
 	offer: Offer,
 	job: Job,
-): Effect.Effect<{
+): {
 	readonly models: Readonly<Record<string, Model>>;
 	readonly problems: ReadonlyArray<ShortsError>;
-}> => {
+} => {
 	const configured = ctx.config.models ?? {};
 	const names = new Set([
 		...Object.keys(offer.models),
 		...Object.keys(configured).filter((name) => configured[name]?.provider === offer.provider),
 	]);
-
-	return Effect.forEach([...names], (name) =>
-		Effect.result(
-			decodeModel({ ...ownEntry(offer.models, name), ...ownEntry(configured, name) }).pipe(
-				Effect.map((model) => [name, model] as const),
-				Effect.mapError((error) =>
-					fail(
-						"usage",
-						`models.${name} in config.json isn't a whole model: ${issueLine(error)}`,
-						`Fix it in ${join(ctx.paths.data, "config.json")}. A new model needs provider, job, endpoint, billedBy, usdPerUnit and priceChecked.`,
-					),
+	const models: Record<string, Model> = {};
+	const problems: Array<ShortsError> = [];
+	for (const name of names) {
+		const decoded = decodeModel({ ...ownEntry(offer.models, name), ...ownEntry(configured, name) });
+		if (Result.isFailure(decoded)) {
+			problems.push(
+				fail(
+					"usage",
+					`models.${name} in config.json isn't a whole model: ${issueLine(decoded.failure)}`,
+					`Fix it in ${join(ctx.paths.data, "config.json")}. A new model needs provider, job, endpoint, billedBy, usdPerUnit and priceChecked.`,
 				),
-			),
-		),
-	).pipe(
-		Effect.map((results) => ({
-			models: Object.fromEntries(
-				results
-					.filter(Result.isSuccess)
-					.map((result) => result.success)
-					.filter(([, model]) => model.provider === offer.provider && model.job === job),
-			),
-			problems: results.filter(Result.isFailure).map((result) => result.failure),
-		})),
-	);
+			);
+		} else if (decoded.success.provider === offer.provider && decoded.success.job === job) {
+			models[name] = decoded.success;
+		}
+	}
+	return { models, problems };
 };
 
 /** `record[name]` only when the record itself has it: "constructor" isn't a model name. */
@@ -141,62 +133,59 @@ export const costOf = (model: NamedModel, amount: number): Omit<PaidCall, "post"
  * would; a price in use checked more than `STALE_PRICE_DAYS` ago, or dated after today, warns; so
  * does a model in config.json that no provider in use claims, which is often a misspelt name.
  */
-export const modelChecks = (
+export const modelChecks = Effect.fn("modelChecks")(function* (
 	ctx: Context,
 	offers: ReadonlyArray<{ readonly job: Job; readonly offer: Offer }>,
-): Effect.Effect<ReadonlyArray<Check>> =>
-	Effect.gen(function* () {
-		const { today } = daysNow(ctx);
-		const configFile = join(ctx.paths.data, "config.json");
-		const rows: Array<Check> = [];
+): Effect.fn.Return<ReadonlyArray<Check>> {
+	const { today } = daysNow(ctx);
+	const configFile = join(ctx.paths.data, "config.json");
+	const rows: Array<Check> = [];
 
-		// A provider with no models of its own is one the settings name wrongly; its own row says so.
-		for (const { job, offer } of offers.filter(
-			({ offer }) => Object.keys(offer.models).length > 0,
-		)) {
-			const chosen = yield* Effect.result(chooseModel(ctx, offer, job));
-			if (Result.isFailure(chosen)) {
-				const { message, fix } = chosen.failure;
-				rows.push({ name: `${job} model`, status: "fail", detail: message, fix });
-				continue;
-			}
-			const model = chosen.success;
-			const age = daysBetween(model.priceChecked, today);
-			if (age < 0) {
-				rows.push({
-					name: `${job} model`,
-					status: "warn",
-					detail: `${model.name}'s price says it was checked on ${model.priceChecked}, which is after today.`,
-					fix: `Set models.${model.name}.priceChecked in ${configFile} to the day you checked it.`,
-				});
-			}
-			if (age > STALE_PRICE_DAYS) {
-				rows.push({
-					name: `${job} model`,
-					status: "warn",
-					detail: `${model.name}'s price ($${model.usdPerUnit} per ${model.billedBy}) was checked ${age} days ago, on ${model.priceChecked}.`,
-					fix: `Check it on ${model.provider}'s site, then set models.${model.name}.usdPerUnit and priceChecked in ${configFile}.`,
-				});
-			}
+	// A provider with no models of its own is one the settings name wrongly; its own row says so.
+	for (const { job, offer } of offers.filter(({ offer }) => Object.keys(offer.models).length > 0)) {
+		const chosen = yield* Effect.result(chooseModel(ctx, offer, job));
+		if (Result.isFailure(chosen)) {
+			const { message, fix } = chosen.failure;
+			rows.push({ name: `${job} model`, status: "fail", detail: message, fix });
+			continue;
 		}
-
-		// A provider in use claims an entry when it is one of its own models, or when the entry
-		// names that provider and the job it does. One with no job is incomplete, which the job's
-		// own row already reports.
-		const claimed = (name: string, settings: { readonly provider?: string; readonly job?: Job }) =>
-			offers.some(
-				({ job, offer }) =>
-					Object.hasOwn(offer.models, name) ||
-					(settings.provider === offer.provider && (settings.job ?? job) === job),
-			);
-		for (const [name, settings] of Object.entries(ctx.config.models ?? {})) {
-			if (claimed(name, settings)) continue;
+		const model = chosen.success;
+		const age = daysBetween(model.priceChecked, today);
+		if (age < 0) {
 			rows.push({
-				name: "models",
+				name: `${job} model`,
 				status: "warn",
-				detail: `models.${name} in config.json belongs to no provider in use, so nothing uses it.`,
-				fix: "Check its name against models list, or give it the provider and job it's for.",
+				detail: `${model.name}'s price says it was checked on ${model.priceChecked}, which is after today.`,
+				fix: `Set models.${model.name}.priceChecked in ${configFile} to the day you checked it.`,
 			});
 		}
-		return rows;
-	});
+		if (age > STALE_PRICE_DAYS) {
+			rows.push({
+				name: `${job} model`,
+				status: "warn",
+				detail: `${model.name}'s price ($${model.usdPerUnit} per ${model.billedBy}) was checked ${age} days ago, on ${model.priceChecked}.`,
+				fix: `Check it on ${model.provider}'s site, then set models.${model.name}.usdPerUnit and priceChecked in ${configFile}.`,
+			});
+		}
+	}
+
+	// A provider in use claims an entry when it is one of its own models, or when the entry
+	// names that provider and the job it does. One with no job is incomplete, which the job's
+	// own row already reports.
+	const claimed = (name: string, settings: { readonly provider?: string; readonly job?: Job }) =>
+		offers.some(
+			({ job, offer }) =>
+				Object.hasOwn(offer.models, name) ||
+				(settings.provider === offer.provider && (settings.job ?? job) === job),
+		);
+	for (const [name, settings] of Object.entries(ctx.config.models ?? {})) {
+		if (claimed(name, settings)) continue;
+		rows.push({
+			name: "models",
+			status: "warn",
+			detail: `models.${name} in config.json belongs to no provider in use, so nothing uses it.`,
+			fix: "Check its name against models list, or give it the provider and job it's for.",
+		});
+	}
+	return rows;
+});

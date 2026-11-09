@@ -1,6 +1,6 @@
-import { Result, Runtime, Schema } from "effect";
+import { Cause, Result, Runtime, Schema } from "effect";
 import { describe, expect, it } from "vitest";
-import { type ErrorCode, fail, failBecause, issueLine, RequestEnded, reportOf } from "./errors.ts";
+import { ErrorCode, fail, failBecause, issueLine, RequestEnded, reportOf } from "./errors.ts";
 
 describe("fail", () => {
 	it("should keep the code, the message and the fix", () => {
@@ -16,7 +16,7 @@ describe("fail", () => {
 
 	it("should set the documented exit code for each kind of failure", () => {
 		// GIVEN one failure of each code
-		const exitCode = (code: ErrorCode) => fail(code, "m", "f")[Runtime.errorExitCode];
+		const exitCode = (code: typeof ErrorCode.Type) => fail(code, "m", "f")[Runtime.errorExitCode];
 
 		// THEN calling it wrong exits 2, needing confirmation 3, passing a cap 4
 		expect(exitCode("usage")).toBe(2);
@@ -25,6 +25,26 @@ describe("fail", () => {
 		// AND everything else exits 1
 		expect(exitCode("not-found")).toBe(1);
 		expect(exitCode("provider")).toBe(1);
+	});
+
+	it("should give back the code it was made with, for every code", () => {
+		// GIVEN every documented code
+		// WHEN a failure is made with each
+		// THEN each reports the same code, so the two tables in errors.ts agree
+		for (const code of ErrorCode.literals) expect(fail(code, "m", "f").code).toBe(code);
+	});
+
+	it("should show its message when printed, and keep the runtime's own report out of its JSON", () => {
+		// GIVEN a failure
+		const error = fail("not-found", "No post x.", "List posts with: post list");
+
+		// WHEN it is printed, as the runtime would, and turned into JSON
+		// THEN the printed form names the problem
+		expect(Cause.pretty(Cause.fail(error))).toContain("No post x.");
+		// AND the JSON holds only its fields
+		expect(Object.keys(JSON.parse(JSON.stringify(error)))).not.toContain(
+			String(Runtime.errorReported),
+		);
 	});
 });
 

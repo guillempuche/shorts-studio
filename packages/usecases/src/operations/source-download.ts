@@ -76,77 +76,76 @@ export const sourceDownload = defineOperation({
 	surface: "cli-only",
 	spends: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: true },
-	run: (input, ctx, mode) =>
-		Effect.gen(function* () {
-			const downloader = yield* Downloader;
-			if (input.collection !== undefined) {
-				const name = yield* checkCollection(input.collection);
-				const dir = savedPath(ctx, name);
-				if (!existsSync(join(dir, "urls.txt"))) {
-					return yield* fail(
-						"not-found",
-						`No ${join(dir, "urls.txt")}.`,
-						"Collect the post URLs first (see docs/getting-started.md), one per line.",
-					);
-				}
-				const before = yield* countDownloaded(dir);
-				ctx.log(`Downloading ${name} (pausing 5–15 s between posts)…`);
-				const result = yield* downloader.downloadList({
-					cwd: dir,
-					urlsFile: "urls.txt",
-					archiveFile: "downloaded.txt",
-					output: "audio/%(id)s.%(ext)s",
-				});
-				if (!result.ok) ctx.log(result.errors);
-				return {
-					downloaded: (yield* countDownloaded(dir)) - before,
-					failed: !result.ok,
-					dir,
-					next: result.ok
-						? `source transcribe --collection ${name}`
-						: `${downloadFix} Then run it again to retry.`,
-				};
-			}
-
-			if (input.url !== undefined && input.post !== undefined) {
-				yield* readPost(ctx, input.post);
-				const audioDir = join(postDir(ctx, input.post), "audio");
-				yield* ensureDir(audioDir);
-				const dir = yield* fileStep(
-					() => mkdtempSync(join(audioDir, "download-")),
-					`Check that ${audioDir} is writable, then run it again.`,
+	run: Effect.fn("source_download")(function* (input, ctx, mode) {
+		const downloader = yield* Downloader;
+		if (input.collection !== undefined) {
+			const name = yield* checkCollection(input.collection);
+			const dir = savedPath(ctx, name);
+			if (!existsSync(join(dir, "urls.txt"))) {
+				return yield* fail(
+					"not-found",
+					`No ${join(dir, "urls.txt")}.`,
+					"Collect the post URLs first (see docs/getting-started.md), one per line.",
 				);
-				const result = yield* downloader.downloadOne({
-					cwd: dir,
-					url: input.url,
-					output: "%(id)s.%(ext)s",
-				});
-				const file = (yield* fileStep(
-					() => readdirSync(dir),
-					`Check that ${dir} is readable, then run it again.`,
-				)).find((name) => name.endsWith(".mp3"));
-				if (!result.ok || file === undefined) {
-					return yield* fail("provider", `Couldn't download ${input.url}.`, downloadFix);
-				}
-				const imported = yield* sourceImport.run(
-					{
-						post: input.post,
-						file: join(dir, file),
-						origin: input.origin ?? "others",
-						kind: input.kind ?? "speech",
-					},
-					ctx,
-					mode,
-				);
-				return { downloaded: 1, failed: false, dir, next: imported.next };
 			}
+			const before = yield* countDownloaded(dir);
+			ctx.log(`Downloading ${name} (pausing 5–15 s between posts)…`);
+			const result = yield* downloader.downloadList({
+				cwd: dir,
+				urlsFile: "urls.txt",
+				archiveFile: "downloaded.txt",
+				output: "audio/%(id)s.%(ext)s",
+			});
+			if (!result.ok) ctx.log(result.errors);
+			return {
+				downloaded: (yield* countDownloaded(dir)) - before,
+				failed: !result.ok,
+				dir,
+				next: result.ok
+					? `source transcribe --collection ${name}`
+					: `${downloadFix} Then run it again to retry.`,
+			};
+		}
 
-			return yield* fail(
-				"usage",
-				"Nothing to download.",
-				"Pass --collection <name>, or --url <url> with --post <slug>.",
+		if (input.url !== undefined && input.post !== undefined) {
+			yield* readPost(ctx, input.post);
+			const audioDir = join(postDir(ctx, input.post), "audio");
+			yield* ensureDir(audioDir);
+			const dir = yield* fileStep(
+				() => mkdtempSync(join(audioDir, "download-")),
+				`Check that ${audioDir} is writable, then run it again.`,
 			);
-		}),
+			const result = yield* downloader.downloadOne({
+				cwd: dir,
+				url: input.url,
+				output: "%(id)s.%(ext)s",
+			});
+			const file = (yield* fileStep(
+				() => readdirSync(dir),
+				`Check that ${dir} is readable, then run it again.`,
+			)).find((name) => name.endsWith(".mp3"));
+			if (!result.ok || file === undefined) {
+				return yield* fail("provider", `Couldn't download ${input.url}.`, downloadFix);
+			}
+			const imported = yield* sourceImport.run(
+				{
+					post: input.post,
+					file: join(dir, file),
+					origin: input.origin ?? "others",
+					kind: input.kind ?? "speech",
+				},
+				ctx,
+				mode,
+			);
+			return { downloaded: 1, failed: false, dir, next: imported.next };
+		}
+
+		return yield* fail(
+			"usage",
+			"Nothing to download.",
+			"Pass --collection <name>, or --url <url> with --post <slug>.",
+		);
+	}),
 	render: (o) =>
 		`${o.failed ? "Some downloads failed. " : ""}Downloaded ${o.downloaded} new into ${o.dir}\nNext: ${o.next}`,
 });
@@ -172,98 +171,94 @@ export const sourceTranscribe = defineOperation({
 	spends: true,
 	needsYes: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: true },
-	run: (input, ctx, mode: RunMode) =>
-		Effect.gen(function* () {
-			const name = yield* checkCollection(input.collection);
-			yield* checkLanguage(input.language);
-			const dir = savedPath(ctx, name);
-			const audioDir = join(dir, "audio");
-			if (!existsSync(audioDir)) {
-				return yield* fail(
-					"not-found",
-					`No audio in ${dir}.`,
-					`Download it first: source download --collection ${name}`,
-				);
-			}
-
-			const transcriber = yield* Transcriber;
-			const media = yield* MediaTools;
-			const model = yield* chooseModel(ctx, transcriber, "transcribe");
-			const files = (yield* fileStep(
-				() => readdirSync(audioDir),
-				`Check that ${audioDir} is a folder you can read.`,
-			))
-				.filter((f) => /\.(mp3|m4a|wav)$/i.test(f))
-				.sort();
-			const transcriptOf = (file: string, ext: string) =>
-				join(dir, "transcripts", `${basename(file).replace(/\.[^.]+$/, "")}.${ext}`);
-			const todo = files.filter((file) => !existsSync(transcriptOf(file, "json")));
-			const costOfFile = (file: string) =>
-				media
-					.duration(join(audioDir, file))
-					.pipe(Effect.map((seconds) => costOf(model, audioAmount(model, seconds))));
-
-			if (mode.dryRun) {
-				const costs = yield* Effect.forEach(todo, costOfFile);
-				return {
-					transcribed: 0,
-					skipped: files.length - todo.length,
-					failed: [],
-					toTranscribe: todo.length,
-					estimateUsd: costs.reduce((sum, cost) => sum + cost.usd, 0),
-					dryRun: true,
-				};
-			}
-
-			yield* ensureDir(join(dir, "transcripts"));
-			if (todo.length > 0) {
-				// Fail on a missing key before anything is reserved.
-				yield* Effect.forEach(transcriber.keys, (key) => requireKey(ctx, key), { discard: true });
-			}
-
-			const transcribeOne = Effect.fn("transcribeOne")(function* (file: string) {
-				ctx.log(`Transcribing ${file}…`);
-				const audio = join(audioDir, file);
-				const cost = yield* costOfFile(file);
-				const transcript = yield* paidCall(
-					ctx,
-					{ ...cost, post: `saved/${name}`, note: file },
-					transcriber.transcribe(model, audio, input.language),
-				);
-				yield* writeJsonFile(transcriptOf(file, "json"), SavedTranscript, {
-					...transcript,
-					model: model.name,
-				});
-				yield* writeFileAtomic(transcriptOf(file, "txt"), `${transcript.text}\n`);
-				return cost.usd;
-			});
-
-			// Every file is tried. A failed one is listed, and the next run tries it again. Past a
-			// spending cap every later file would fail the same way, so the run stops there instead.
-			// The transcripts already written stay.
-			const outcomes = yield* Effect.forEach(todo, (file) =>
-				transcribeOne(file).pipe(
-					Effect.map((usd) => ({ usd })),
-					Effect.catch((error) =>
-						error.code === "over-budget"
-							? Effect.fail(error)
-							: Effect.succeed({ failure: `${file}: ${error.message}` }),
-					),
-				),
+	run: Effect.fn("source_transcribe")(function* (input, ctx, mode: RunMode) {
+		const name = yield* checkCollection(input.collection);
+		yield* checkLanguage(input.language);
+		const dir = savedPath(ctx, name);
+		const audioDir = join(dir, "audio");
+		if (!existsSync(audioDir)) {
+			return yield* fail(
+				"not-found",
+				`No audio in ${dir}.`,
+				`Download it first: source download --collection ${name}`,
 			);
-			const failed = outcomes.flatMap((outcome) => ("failure" in outcome ? [outcome.failure] : []));
+		}
+
+		const transcriber = yield* Transcriber;
+		const media = yield* MediaTools;
+		const model = yield* chooseModel(ctx, transcriber, "transcribe");
+		const files = (yield* fileStep(
+			() => readdirSync(audioDir),
+			`Check that ${audioDir} is a folder you can read.`,
+		))
+			.filter((f) => /\.(mp3|m4a|wav)$/i.test(f))
+			.sort();
+		const transcriptOf = (file: string, ext: string) =>
+			join(dir, "transcripts", `${basename(file).replace(/\.[^.]+$/, "")}.${ext}`);
+		const todo = files.filter((file) => !existsSync(transcriptOf(file, "json")));
+		const costOfFile = (file: string) =>
+			media
+				.duration(join(audioDir, file))
+				.pipe(Effect.map((seconds) => costOf(model, audioAmount(model, seconds))));
+
+		if (mode.dryRun) {
+			const costs = yield* Effect.forEach(todo, costOfFile);
 			return {
-				transcribed: todo.length - failed.length,
+				transcribed: 0,
 				skipped: files.length - todo.length,
-				failed,
-				toTranscribe: failed.length,
-				estimateUsd: outcomes.reduce(
-					(sum, outcome) => sum + ("usd" in outcome ? outcome.usd : 0),
-					0,
-				),
-				dryRun: false,
+				failed: [],
+				toTranscribe: todo.length,
+				estimateUsd: costs.reduce((sum, cost) => sum + cost.usd, 0),
+				dryRun: true,
 			};
-		}),
+		}
+
+		yield* ensureDir(join(dir, "transcripts"));
+		if (todo.length > 0) {
+			// Fail on a missing key before anything is reserved.
+			yield* Effect.forEach(transcriber.keys, (key) => requireKey(ctx, key), { discard: true });
+		}
+
+		const transcribeOne = Effect.fn("transcribeOne")(function* (file: string) {
+			ctx.log(`Transcribing ${file}…`);
+			const audio = join(audioDir, file);
+			const cost = yield* costOfFile(file);
+			const transcript = yield* paidCall(
+				ctx,
+				{ ...cost, post: `saved/${name}`, note: file },
+				transcriber.transcribe(model, audio, input.language),
+			);
+			yield* writeJsonFile(transcriptOf(file, "json"), SavedTranscript, {
+				...transcript,
+				model: model.name,
+			});
+			yield* writeFileAtomic(transcriptOf(file, "txt"), `${transcript.text}\n`);
+			return cost.usd;
+		});
+
+		// Every file is tried. A failed one is listed, and the next run tries it again. Past a
+		// spending cap every later file would fail the same way, so the run stops there instead.
+		// The transcripts already written stay.
+		const outcomes = yield* Effect.forEach(todo, (file) =>
+			transcribeOne(file).pipe(
+				Effect.map((usd) => ({ usd })),
+				Effect.catch((error) =>
+					error.code === "over-budget"
+						? Effect.fail(error)
+						: Effect.succeed({ failure: `${file}: ${error.message}` }),
+				),
+			),
+		);
+		const failed = outcomes.flatMap((outcome) => ("failure" in outcome ? [outcome.failure] : []));
+		return {
+			transcribed: todo.length - failed.length,
+			skipped: files.length - todo.length,
+			failed,
+			toTranscribe: failed.length,
+			estimateUsd: outcomes.reduce((sum, outcome) => sum + ("usd" in outcome ? outcome.usd : 0), 0),
+			dryRun: false,
+		};
+	}),
 	render: (o) =>
 		o.dryRun
 			? `Would transcribe ${o.toTranscribe} file${o.toTranscribe === 1 ? "" : "s"} (~$${o.estimateUsd.toFixed(3)}), already done ${o.skipped}; nothing was spent.`

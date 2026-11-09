@@ -16,7 +16,9 @@ import {
 	type Beat,
 	changesSinceApproval,
 	isScriptApproved,
+	mapBeats,
 	type Post,
+	withoutPending,
 } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import type { Context } from "../context.ts";
@@ -123,7 +125,7 @@ const generateOne = Effect.fn("generateOne")(function* (
 	const forgetRequest = release(ctx, request.ledgerId).pipe(
 		Effect.andThen(
 			updatePost(ctx, slug, "image generate", (post) =>
-				Effect.succeed(withBeat(post, beat.index, dropPending)),
+				Effect.succeed(withBeat(post, beat.index, withoutPending)),
 			),
 		),
 		Effect.ignore,
@@ -173,7 +175,7 @@ const generateOne = Effect.fn("generateOne")(function* (
 	yield* updatePost(ctx, slug, "image generate", (post) =>
 		Effect.succeed(
 			withBeat(post, beat.index, (b) => ({
-				...dropPending(b),
+				...withoutPending(b),
 				seed,
 				image: {
 					file,
@@ -194,21 +196,8 @@ const generateOne = Effect.fn("generateOne")(function* (
 	ctx.log(`beat ${beat.index}: saved ${file}`);
 });
 
-const dropPending = (beat: Beat): Beat => {
-	const { pending: _, ...rest } = beat;
-	return rest;
-};
-
 const withBeat = (post: Post, index: number, change: (beat: Beat) => Beat): Post =>
-	post.beats === undefined
-		? post
-		: {
-				...post,
-				beats: {
-					...post.beats,
-					items: post.beats.items.map((b) => (b.index === index ? change(b) : b)),
-				},
-			};
+	mapBeats(post, (b) => (b.index === index ? change(b) : b));
 
 export const imageGenerate = defineOperation({
 	name: "image_generate",
@@ -234,116 +223,105 @@ export const imageGenerate = defineOperation({
 	surface: "cli-and-mcp",
 	spends: true,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: true },
-	run: (input, ctx, mode: RunMode) =>
-		Effect.gen(function* () {
-			const only = input.beat === undefined ? undefined : yield* parseBeatList(input.beat);
-			const maker = yield* ImageMaker;
-			const model = yield* chooseModel(ctx, maker, "image", input.model);
-			let post = yield* readPost(ctx, input.post);
-			if (!isScriptApproved(post)) {
-				const changed = changesSinceApproval(post);
-				return yield* fail(
-					"needs-confirmation",
-					changed.length === 0
-						? `${input.post}'s script isn't approved, so nothing will be spent on images yet.`
-						: `${input.post} changed since the user approved it (${changed.join(", ")}), so nothing will be spent on images yet.`,
-					`The user approves it after reading it, in their terminal: script approve --post ${input.post}`,
-				);
-			}
-
-			const beats = post.beats?.items ?? [];
-			const withoutPrompt = beats
-				.filter((b) => b.prompt === undefined && b.image?.source !== "imported")
-				.map((b) => b.index);
-			if (beats.length === 0 || withoutPrompt.length > 0) {
-				return yield* fail(
-					"not-found",
-					beats.length === 0
-						? `${input.post} has no beats.`
-						: `Beats without a prompt: ${withoutPrompt.join(", ")}.`,
-					nextStep(post),
-				);
-			}
-
-			if (!mode.dryRun) {
-				// Fail on a missing key before anything changes: --reroll saves new seeds, and
-				// sending reserves money.
-				yield* Effect.forEach(maker.keys, (key) => requireKey(ctx, key), { discard: true });
-			}
-
-			if (input.reroll && !mode.dryRun) {
-				const targets = new Set(only ?? beats.map((b) => b.index));
-				const reseed = (b: Beat, slug: string): Beat =>
-					targets.has(b.index)
-						? {
-								...dropPending(b),
-								seed: ((b.seed ?? defaultSeed(slug, b.index)) + 1) % SEED_LIMIT,
-							}
-						: b;
-				post = yield* updatePost(ctx, input.post, "image generate", (current) =>
-					Effect.succeed(
-						current.beats === undefined
-							? current
-							: {
-									...current,
-									beats: {
-										...current.beats,
-										items: current.beats.items.map((b) => reseed(b, current.slug)),
-									},
-								},
-					),
-				);
-			}
-
-			const chosen = (post.beats?.items ?? []).filter(
-				(b) => only === undefined || only.includes(b.index),
+	run: Effect.fn("image_generate")(function* (input, ctx, mode: RunMode) {
+		const only = input.beat === undefined ? undefined : yield* parseBeatList(input.beat);
+		const maker = yield* ImageMaker;
+		const model = yield* chooseModel(ctx, maker, "image", input.model);
+		let post = yield* readPost(ctx, input.post);
+		if (!isScriptApproved(post)) {
+			const changed = changesSinceApproval(post);
+			return yield* fail(
+				"needs-confirmation",
+				changed.length === 0
+					? `${input.post}'s script isn't approved, so nothing will be spent on images yet.`
+					: `${input.post} changed since the user approved it (${changed.join(", ")}), so nothing will be spent on images yet.`,
+				`The user approves it after reading it, in their terminal: script approve --post ${input.post}`,
 			);
-			const planned = chosen.map((b) => {
-				const seed = b.seed ?? defaultSeed(post.slug, b.index);
-				// A dry run doesn't save the rerolled seeds, so it plans with the next seed here.
-				const hash = imageInputHash(
-					ctx,
-					model.name,
-					b,
-					input.reroll && mode.dryRun ? seed + 1 : seed,
-				);
-				// An imported image (Midjourney, a photo) stays unless the beat is rerolled. A beat
-				// without a prompt (allowed only with an imported image) is never sent, rerolled or not.
-				const imported = b.image?.source === "imported" && !input.reroll;
-				const action =
-					b.prompt === undefined
-						? "skip"
-						: b.pending?.inputHash === hash
-							? "resume"
-							: imported || b.image?.inputHash === hash
-								? "skip"
-								: "generate";
-				return {
-					beat: b.index,
-					action,
-					estimateUsd: action === "generate" ? imageCost(model).usd : 0,
-				} as const;
-			});
-			const total = planned.reduce((sum, item) => sum + item.estimateUsd, 0);
+		}
 
-			if (!mode.dryRun) {
-				const toSend = chosen.filter(
-					(b) => planned.find((item) => item.beat === b.index)?.action !== "skip",
-				);
-				yield* Effect.forEach(toSend, (beat) => generateOne(ctx, maker, model, post.slug, beat), {
-					concurrency: CONCURRENCY,
-					discard: true,
-				});
-				post = yield* readPost(ctx, input.post);
-			}
+		const beats = post.beats?.items ?? [];
+		const withoutPrompt = beats
+			.filter((b) => b.prompt === undefined && b.image?.source !== "imported")
+			.map((b) => b.index);
+		if (beats.length === 0 || withoutPrompt.length > 0) {
+			return yield* fail(
+				"not-found",
+				beats.length === 0
+					? `${input.post} has no beats.`
+					: `Beats without a prompt: ${withoutPrompt.join(", ")}.`,
+				nextStep(post),
+			);
+		}
+
+		if (!mode.dryRun) {
+			// Fail on a missing key before anything changes: --reroll saves new seeds, and
+			// sending reserves money.
+			yield* Effect.forEach(maker.keys, (key) => requireKey(ctx, key), { discard: true });
+		}
+
+		if (input.reroll && !mode.dryRun) {
+			const targets = new Set(only ?? beats.map((b) => b.index));
+			const reseed = (b: Beat, slug: string): Beat =>
+				targets.has(b.index)
+					? {
+							...withoutPending(b),
+							seed: ((b.seed ?? defaultSeed(slug, b.index)) + 1) % SEED_LIMIT,
+						}
+					: b;
+			post = yield* updatePost(ctx, input.post, "image generate", (current) =>
+				Effect.succeed(mapBeats(current, (b) => reseed(b, current.slug))),
+			);
+		}
+
+		const chosen = (post.beats?.items ?? []).filter(
+			(b) => only === undefined || only.includes(b.index),
+		);
+		const planned = chosen.map((b) => {
+			const seed = b.seed ?? defaultSeed(post.slug, b.index);
+			// A dry run doesn't save the rerolled seeds, so it plans with the next seed here.
+			const hash = imageInputHash(
+				ctx,
+				model.name,
+				b,
+				input.reroll && mode.dryRun ? seed + 1 : seed,
+			);
+			// An imported image (Midjourney, a photo) stays unless the beat is rerolled. A beat
+			// without a prompt (allowed only with an imported image) is never sent, rerolled or not.
+			const imported = b.image?.source === "imported" && !input.reroll;
+			const action =
+				b.prompt === undefined
+					? "skip"
+					: b.pending?.inputHash === hash
+						? "resume"
+						: imported || b.image?.inputHash === hash
+							? "skip"
+							: "generate";
 			return {
-				model: model.name,
-				planned,
-				estimateUsd: total,
-				dryRun: mode.dryRun,
-				next: nextStep(post),
-			};
-		}),
+				beat: b.index,
+				action,
+				estimateUsd: action === "generate" ? imageCost(model).usd : 0,
+			} as const;
+		});
+		const total = planned.reduce((sum, item) => sum + item.estimateUsd, 0);
+
+		if (!mode.dryRun) {
+			const toSend = chosen.filter(
+				(b) => planned.find((item) => item.beat === b.index)?.action !== "skip",
+			);
+			yield* Effect.forEach(toSend, (beat) => generateOne(ctx, maker, model, post.slug, beat), {
+				concurrency: CONCURRENCY,
+				discard: true,
+			});
+			post = yield* readPost(ctx, input.post);
+		}
+		return {
+			model: model.name,
+			planned,
+			estimateUsd: total,
+			dryRun: mode.dryRun,
+			next: nextStep(post),
+		};
+	}),
 	render: (o) => {
 		const counts = { generate: 0, resume: 0, skip: 0 };
 		for (const item of o.planned) counts[item.action]++;

@@ -77,17 +77,21 @@ const CODE: Readonly<Record<Reason["_tag"], ErrorCode>> = {
 
 type Said = { readonly message: string; readonly fix: string };
 
-const REASON: Readonly<Record<ErrorCode, (said: Said) => Reason>> = {
-	failed: (s) => new Failed(s),
-	usage: (s) => new Usage(s),
-	"needs-confirmation": (s) => new NeedsConfirmation(s),
-	"over-budget": (s) => new OverBudget(s),
-	"not-found": (s) => new NotFound(s),
-	conflict: (s) => new Conflict(s),
-	stale: (s) => new Stale(s),
-	"missing-tool": (s) => new MissingTool(s),
-	"missing-key": (s) => new MissingKey(s),
-	provider: (s) => new ProviderFailed(s),
+/**
+ * The reason `fail` builds for each code. `provider` builds `ProviderFailed`, the outcome-unknown
+ * reason that keeps a reservation counted: a refusal or an ended request needs `failBecause`.
+ */
+const REASON: Readonly<Record<ErrorCode, new (said: Said) => Reason>> = {
+	failed: Failed,
+	usage: Usage,
+	"needs-confirmation": NeedsConfirmation,
+	"over-budget": OverBudget,
+	"not-found": NotFound,
+	conflict: Conflict,
+	stale: Stale,
+	"missing-tool": MissingTool,
+	"missing-key": MissingKey,
+	provider: ProviderFailed,
 };
 
 /** Process exit code per error code; see docs/architecture.md#exit-codes. */
@@ -104,11 +108,16 @@ export const exitCodeOf = (code: ErrorCode): number => {
 	}
 };
 
+/** Its `message` and `fix` are read from its reason, so the two can't disagree. */
 export class ShortsError extends Schema.TaggedError<ShortsError>()("ShortsError", {
 	reason: Reason,
-	message: Schema.String,
-	fix: Schema.String,
 }) {
+	override get message(): string {
+		return this.reason.message;
+	}
+	get fix(): string {
+		return this.reason.fix;
+	}
 	get code(): ErrorCode {
 		return CODE[this.reason._tag];
 	}
@@ -116,16 +125,16 @@ export class ShortsError extends Schema.TaggedError<ShortsError>()("ShortsError"
 		return exitCodeOf(this.code);
 	}
 	// The CLI prints every ShortsError itself (as text or JSON), so the runtime must not
-	// print it a second time.
-	override readonly [Runtime.errorReported] = false;
+	// print it a second time. A getter, so it stays out of the error's JSON.
+	override get [Runtime.errorReported](): boolean {
+		return false;
+	}
 }
 
-/** A ShortsError around a reason, with the reason's message and fix copied to the top. */
-export const failBecause = (reason: Reason): ShortsError =>
-	new ShortsError({ reason, message: reason.message, fix: reason.fix });
+export const failBecause = (reason: Reason): ShortsError => new ShortsError({ reason });
 
 export const fail = (code: ErrorCode, message: string, fix: string): ShortsError =>
-	failBecause(REASON[code]({ message, fix }));
+	failBecause(new REASON[code]({ message, fix }));
 
 const formatIssues = SchemaIssue.makeFormatterStandardSchemaV1();
 

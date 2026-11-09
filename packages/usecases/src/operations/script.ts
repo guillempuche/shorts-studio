@@ -32,40 +32,39 @@ export const scriptSet = defineOperation({
 	surface: "cli-and-mcp",
 	spends: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
-	run: (input, ctx) =>
-		Effect.gen(function* () {
-			if (!existsSync(input.file)) {
-				return yield* fail(
-					"not-found",
-					`No file at ${input.file}.`,
-					"Write the script to a file first, then pass its path.",
-				);
-			}
-			const text = yield* readText(
-				input.file,
+	run: Effect.fn("script_set")(function* (input, ctx) {
+		if (!existsSync(input.file)) {
+			return yield* fail(
+				"not-found",
+				`No file at ${input.file}.`,
 				"Write the script to a file first, then pass its path.",
 			);
-			const hash = hashOf(text);
-			yield* readPost(ctx, input.post);
-			yield* writeFileAtomic(join(postDir(ctx, input.post), SCRIPT_FILE), text);
-			const post = yield* updatePost(ctx, input.post, "script set", (post) =>
-				// The approval and hook stay; the approval holds only if the text is unchanged.
-				Effect.succeed({
-					...post,
-					script: {
-						...post.script,
-						file: SCRIPT_FILE,
-						hash,
-						...(input.hook !== undefined ? { hook: input.hook } : {}),
-					},
-				}),
-			);
-			return {
-				file: join(postDir(ctx, input.post), SCRIPT_FILE),
-				approved: isScriptApproved(post),
-				next: nextStep(post),
-			};
-		}),
+		}
+		const text = yield* readText(
+			input.file,
+			"Write the script to a file first, then pass its path.",
+		);
+		const hash = hashOf(text);
+		yield* readPost(ctx, input.post);
+		yield* writeFileAtomic(join(postDir(ctx, input.post), SCRIPT_FILE), text);
+		const post = yield* updatePost(ctx, input.post, "script set", (post) =>
+			// The approval and hook stay; the approval holds only if the text is unchanged.
+			Effect.succeed({
+				...post,
+				script: {
+					...post.script,
+					file: SCRIPT_FILE,
+					hash,
+					...(input.hook !== undefined ? { hook: input.hook } : {}),
+				},
+			}),
+		);
+		return {
+			file: join(postDir(ctx, input.post), SCRIPT_FILE),
+			approved: isScriptApproved(post),
+			next: nextStep(post),
+		};
+	}),
 	render: (o) =>
 		`Saved ${o.file}${o.approved ? " (unchanged, still approved)" : ""}\nNext: ${o.next}`,
 });
@@ -79,25 +78,24 @@ export const scriptApprove = defineOperation({
 	surface: "cli-only",
 	spends: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
-	run: (input, ctx) =>
-		Effect.gen(function* () {
-			yield* requireUser(ctx, `script approve --post ${input.post}`);
-			const approvedAt = ctx.now().toISOString();
-			const post = yield* updatePost(ctx, input.post, "script approve", (post) =>
-				post.script === undefined
-					? Effect.fail(
-							fail(
-								"not-found",
-								`${input.post} has no script yet.`,
-								`Save one first: script set --post ${input.post} --file script.md`,
-							),
-						)
-					: Effect.succeed({
-							...post,
-							script: { ...post.script, ...approvalOf(post), approvedAt },
-						}),
-			);
-			return { approvedAt, next: nextStep(post) };
-		}),
+	run: Effect.fn("script_approve")(function* (input, ctx) {
+		yield* requireUser(ctx, `script approve --post ${input.post}`);
+		const approvedAt = ctx.now().toISOString();
+		const post = yield* updatePost(ctx, input.post, "script approve", (post) =>
+			post.script === undefined
+				? Effect.fail(
+						fail(
+							"not-found",
+							`${input.post} has no script yet.`,
+							`Save one first: script set --post ${input.post} --file script.md`,
+						),
+					)
+				: Effect.succeed({
+						...post,
+						script: { ...post.script, ...approvalOf(post), approvedAt },
+					}),
+		);
+		return { approvedAt, next: nextStep(post) };
+	}),
 	render: (o) => `Script approved.\nNext: ${o.next}`,
 });

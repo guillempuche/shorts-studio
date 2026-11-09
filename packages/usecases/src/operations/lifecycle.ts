@@ -55,44 +55,43 @@ export const postReview = defineOperation({
 	surface: "cli-only",
 	spends: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
-	run: (input, ctx) =>
-		Effect.gen(function* () {
-			yield* requireUser(ctx, `post review --post ${input.post} --decision ${input.decision}`);
-			const beatNotes = yield* parseBeatNotes(input.beatNotes);
-			const animate = yield* parseBeatList(input.animate);
-			const post = yield* updatePost(ctx, input.post, "post review", (current) => {
-				if (current.draft === undefined) {
-					return Effect.fail(
-						fail("not-found", `${input.post} has no draft to review.`, nextStep(current)),
-					);
-				}
-				const known = new Set((current.beats?.items ?? []).map((b) => b.index));
-				const unknown = [...beatNotes.map((n) => n.beat), ...animate].filter(
-					(beat) => !known.has(beat),
+	run: Effect.fn("post_review")(function* (input, ctx) {
+		yield* requireUser(ctx, `post review --post ${input.post} --decision ${input.decision}`);
+		const beatNotes = yield* parseBeatNotes(input.beatNotes);
+		const animate = yield* parseBeatList(input.animate);
+		const post = yield* updatePost(ctx, input.post, "post review", (current) => {
+			if (current.draft === undefined) {
+				return Effect.fail(
+					fail("not-found", `${input.post} has no draft to review.`, nextStep(current)),
 				);
-				if (unknown.length > 0) {
-					return Effect.fail(
-						fail(
-							"usage",
-							`No beat ${unknown.join(", ")} in ${input.post}.`,
-							`See them with: post show --post ${input.post}`,
-						),
-					);
-				}
-				return Effect.succeed({
-					...current,
-					review: {
-						decision: input.decision,
-						at: ctx.now().toISOString(),
-						draftHash: current.draft.hash,
-						...(input.note !== undefined ? { note: input.note } : {}),
-						...(beatNotes.length > 0 ? { beatNotes } : {}),
-						...(animate.length > 0 ? { animate } : {}),
-					},
-				});
+			}
+			const known = new Set((current.beats?.items ?? []).map((b) => b.index));
+			const unknown = [...beatNotes.map((n) => n.beat), ...animate].filter(
+				(beat) => !known.has(beat),
+			);
+			if (unknown.length > 0) {
+				return Effect.fail(
+					fail(
+						"usage",
+						`No beat ${unknown.join(", ")} in ${input.post}.`,
+						`See them with: post show --post ${input.post}`,
+					),
+				);
+			}
+			return Effect.succeed({
+				...current,
+				review: {
+					decision: input.decision,
+					at: ctx.now().toISOString(),
+					draftHash: current.draft.hash,
+					...(input.note !== undefined ? { note: input.note } : {}),
+					...(beatNotes.length > 0 ? { beatNotes } : {}),
+					...(animate.length > 0 ? { animate } : {}),
+				},
 			});
-			return { stage: stageOf(post), next: nextStep(post) };
-		}),
+		});
+		return { stage: stageOf(post), next: nextStep(post) };
+	}),
 	render: (o) => `Review recorded: ${o.stage}.\nNext: ${o.next}`,
 });
 
@@ -108,38 +107,37 @@ export const postFinalize = defineOperation({
 	surface: "cli-and-mcp",
 	spends: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
-	run: (input, ctx) =>
-		Effect.gen(function* () {
-			const source = resolve(input.file);
-			if (!existsSync(source)) {
-				return yield* fail(
-					"not-found",
-					`No file at ${source}.`,
-					"Export the video from CapCut first, then pass its path.",
-				);
-			}
-			const before = yield* readPost(ctx, input.post);
-			if (stageOf(before) !== "approved" && stageOf(before) !== "final") {
-				return yield* fail(
-					"needs-confirmation",
-					`${input.post} is at "${stageOf(before)}", not approved.`,
-					`The user reviews the draft first: post review --post ${input.post} --decision approve`,
-				);
-			}
-			const file = `final${extname(source) || ".mp4"}`;
-			const target = join(postDir(ctx, input.post), file);
-			const media = yield* MediaTools;
-			const durationSec = yield* media.duration(source);
-			yield* fileStep(
-				() => copyFileSync(source, target),
-				`Check that ${target} can be written, then run it again.`,
+	run: Effect.fn("post_finalize")(function* (input, ctx) {
+		const source = resolve(input.file);
+		if (!existsSync(source)) {
+			return yield* fail(
+				"not-found",
+				`No file at ${source}.`,
+				"Export the video from CapCut first, then pass its path.",
 			);
-			const hash = yield* fileHash(target);
-			const post = yield* updatePost(ctx, input.post, "post finalize", (current) =>
-				Effect.succeed({ ...current, final: { file, hash, at: ctx.now().toISOString() } }),
+		}
+		const before = yield* readPost(ctx, input.post);
+		if (stageOf(before) !== "approved" && stageOf(before) !== "final") {
+			return yield* fail(
+				"needs-confirmation",
+				`${input.post} is at "${stageOf(before)}", not approved.`,
+				`The user reviews the draft first: post review --post ${input.post} --decision approve`,
 			);
-			return { file: target, durationSec, next: nextStep(post) };
-		}),
+		}
+		const file = `final${extname(source) || ".mp4"}`;
+		const target = join(postDir(ctx, input.post), file);
+		const media = yield* MediaTools;
+		const durationSec = yield* media.duration(source);
+		yield* fileStep(
+			() => copyFileSync(source, target),
+			`Check that ${target} can be written, then run it again.`,
+		);
+		const hash = yield* fileHash(target);
+		const post = yield* updatePost(ctx, input.post, "post finalize", (current) =>
+			Effect.succeed({ ...current, final: { file, hash, at: ctx.now().toISOString() } }),
+		);
+		return { file: target, durationSec, next: nextStep(post) };
+	}),
 	render: (o) => `Final video saved: ${o.file} (${o.durationSec.toFixed(1)} s)\nNext: ${o.next}`,
 });
 
@@ -155,32 +153,29 @@ export const postPublish = defineOperation({
 	surface: "cli-and-mcp",
 	spends: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
-	run: (input, ctx) =>
-		Effect.gen(function* () {
-			if (!/^https?:\/\//.test(input.url)) {
-				return yield* fail(
-					"usage",
-					`"${input.url}" isn't a URL.`,
-					"Pass the post's full https:// address.",
-				);
-			}
-			const post = yield* updatePost(ctx, input.post, "post publish", (current) => {
-				const others = (current.published ?? []).filter(
-					(entry) => entry.platform !== input.platform,
-				);
-				return Effect.succeed({
-					...current,
-					published: [
-						...others,
-						{ platform: input.platform, url: input.url, at: ctx.now().toISOString() },
-					],
-				});
+	run: Effect.fn("post_publish")(function* (input, ctx) {
+		if (!/^https?:\/\//.test(input.url)) {
+			return yield* fail(
+				"usage",
+				`"${input.url}" isn't a URL.`,
+				"Pass the post's full https:// address.",
+			);
+		}
+		const post = yield* updatePost(ctx, input.post, "post publish", (current) => {
+			const others = (current.published ?? []).filter((entry) => entry.platform !== input.platform);
+			return Effect.succeed({
+				...current,
+				published: [
+					...others,
+					{ platform: input.platform, url: input.url, at: ctx.now().toISOString() },
+				],
 			});
-			return {
-				platforms: (post.published ?? []).map((entry) => entry.platform),
-				next: nextStep(post),
-			};
-		}),
+		});
+		return {
+			platforms: (post.published ?? []).map((entry) => entry.platform),
+			next: nextStep(post),
+		};
+	}),
 	render: (o) => `Published on: ${o.platforms.join(", ")}.\nNext: ${o.next}`,
 });
 
@@ -193,13 +188,12 @@ export const postArchive = defineOperation({
 	surface: "cli-and-mcp",
 	spends: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
-	run: (input, ctx) =>
-		Effect.gen(function* () {
-			const archivedAt = ctx.now().toISOString();
-			yield* updatePost(ctx, input.post, "post archive", (current) =>
-				Effect.succeed({ ...current, archivedAt: current.archivedAt ?? archivedAt }),
-			);
-			return { archivedAt };
-		}),
+	run: Effect.fn("post_archive")(function* (input, ctx) {
+		const archivedAt = ctx.now().toISOString();
+		yield* updatePost(ctx, input.post, "post archive", (current) =>
+			Effect.succeed({ ...current, archivedAt: current.archivedAt ?? archivedAt }),
+		);
+		return { archivedAt };
+	}),
 	render: (o) => `Archived at ${o.archivedAt}.`,
 });

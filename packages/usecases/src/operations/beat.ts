@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { PLANNER_VERSION, planBeats, planByMoment, sectionsOf } from "@shorts-studio/domain/beats";
 import { Moment, MotionType } from "@shorts-studio/domain/direction";
 import { fail, type ShortsError } from "@shorts-studio/domain/errors";
-import type { Beat, Post, Word } from "@shorts-studio/domain/post";
+import { type Beat, mapBeats, type Post, type Word } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import type { Context } from "../context.ts";
 import { hashOf, readText } from "../files.ts";
@@ -62,64 +62,63 @@ export const beatPlan = defineOperation({
 	surface: "cli-and-mcp",
 	spends: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
-	run: (input, ctx) =>
-		Effect.gen(function* () {
-			const post = yield* readPost(ctx, input.post);
-			const inputHash = planInputHash(post);
-			if (post.audio === undefined || inputHash === undefined) {
+	run: Effect.fn("beat_plan")(function* (input, ctx) {
+		const post = yield* readPost(ctx, input.post);
+		const inputHash = planInputHash(post);
+		if (post.audio === undefined || inputHash === undefined) {
+			return yield* fail(
+				"not-found",
+				`${input.post} needs ${post.audio === undefined ? "audio" : "a transcript"} before beats can be planned.`,
+				post.audio === undefined
+					? `source import --post ${input.post} …`
+					: `audio transcribe --post ${input.post}`,
+			);
+		}
+		const existing = post.beats;
+		if (input.byMoment) {
+			if (existing === undefined || existing.items.every((b) => b.moment === undefined)) {
 				return yield* fail(
 					"not-found",
-					`${input.post} needs ${post.audio === undefined ? "audio" : "a transcript"} before beats can be planned.`,
-					post.audio === undefined
-						? `source import --post ${input.post} …`
-						: `audio transcribe --post ${input.post}`,
+					`${input.post} has no story moments to re-cut by.`,
+					`Plan beats, then mark moments: beat set --post ${input.post} --from moments.json`,
 				);
 			}
-			const existing = post.beats;
-			if (input.byMoment) {
-				if (existing === undefined || existing.items.every((b) => b.moment === undefined)) {
-					return yield* fail(
-						"not-found",
-						`${input.post} has no story moments to re-cut by.`,
-						`Plan beats, then mark moments: beat set --post ${input.post} --from moments.json`,
-					);
-				}
-				const sections = sectionsOf(existing.items);
-				const recutHash = hashOf("by-moment", inputHash, sections);
-				if (existing.inputHash === recutHash && !input.force) {
-					return { beats: existing.items.map(row), skipped: true, next: nextStep(post) };
-				}
-				if (existing.items.some((b) => b.prompt !== undefined) && !input.force) {
-					return yield* fail(
-						"stale",
-						`Re-cutting by moment drops the plan's ${existing.items.filter((b) => b.prompt).length} prompts.`,
-						`Run beat plan --post ${input.post} --by-moment --force, then set the prompts again.`,
-					);
-				}
-				const spans = planByMoment(yield* readWords(ctx, post), sections);
-				const items: ReadonlyArray<Beat> = spans.map((span) => ({ ...span }));
-				const updated = yield* updatePost(ctx, input.post, "beat plan", (current) =>
-					Effect.succeed({ ...current, beats: { inputHash: recutHash, items } }),
-				);
-				return { beats: items.map(row), skipped: false, next: nextStep(updated) };
-			}
-			if (existing !== undefined && existing.inputHash === inputHash && !input.force) {
+			const sections = sectionsOf(existing.items);
+			const recutHash = hashOf("by-moment", inputHash, sections);
+			if (existing.inputHash === recutHash && !input.force) {
 				return { beats: existing.items.map(row), skipped: true, next: nextStep(post) };
 			}
-			if (existing?.items.some((b) => b.prompt !== undefined) && !input.force) {
+			if (existing.items.some((b) => b.prompt !== undefined) && !input.force) {
 				return yield* fail(
 					"stale",
-					`The beat plan is out of date because the audio or transcript changed. Planning again drops its ${existing.items.filter((b) => b.prompt).length} prompts.`,
-					`Run beat plan --post ${input.post} --force, then set the prompts again.`,
+					`Re-cutting by moment drops the plan's ${existing.items.filter((b) => b.prompt).length} prompts.`,
+					`Run beat plan --post ${input.post} --by-moment --force, then set the prompts again.`,
 				);
 			}
-			const spans = planBeats(yield* readWords(ctx, post), post.audio.durationSec);
+			const spans = planByMoment(yield* readWords(ctx, post), sections);
 			const items: ReadonlyArray<Beat> = spans.map((span) => ({ ...span }));
 			const updated = yield* updatePost(ctx, input.post, "beat plan", (current) =>
-				Effect.succeed({ ...current, beats: { inputHash, items } }),
+				Effect.succeed({ ...current, beats: { inputHash: recutHash, items } }),
 			);
 			return { beats: items.map(row), skipped: false, next: nextStep(updated) };
-		}),
+		}
+		if (existing !== undefined && existing.inputHash === inputHash && !input.force) {
+			return { beats: existing.items.map(row), skipped: true, next: nextStep(post) };
+		}
+		if (existing?.items.some((b) => b.prompt !== undefined) && !input.force) {
+			return yield* fail(
+				"stale",
+				`The beat plan is out of date because the audio or transcript changed. Planning again drops its ${existing.items.filter((b) => b.prompt).length} prompts.`,
+				`Run beat plan --post ${input.post} --force, then set the prompts again.`,
+			);
+		}
+		const spans = planBeats(yield* readWords(ctx, post), post.audio.durationSec);
+		const items: ReadonlyArray<Beat> = spans.map((span) => ({ ...span }));
+		const updated = yield* updatePost(ctx, input.post, "beat plan", (current) =>
+			Effect.succeed({ ...current, beats: { inputHash, items } }),
+		);
+		return { beats: items.map(row), skipped: false, next: nextStep(updated) };
+	}),
 	render: (o) =>
 		[
 			o.skipped ? "Beat plan is up to date." : `Planned ${o.beats.length} beats.`,
@@ -197,67 +196,64 @@ export const beatSet = defineOperation({
 	surface: "cli-and-mcp",
 	spends: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
-	run: (input, ctx) =>
-		Effect.gen(function* () {
-			const patches =
-				input.from !== undefined
-					? yield* readPatches(input.from)
-					: input.beat !== undefined &&
-							(input.prompt !== undefined ||
-								input.moment !== undefined ||
-								input.motion !== undefined)
-						? [
-								{
-									beat: input.beat,
-									...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
-									...(input.moment !== undefined ? { moment: input.moment } : {}),
-									...(input.motion !== undefined ? { motion: input.motion } : {}),
-								},
-							]
-						: yield* fail(
-								"usage",
-								"Nothing to set.",
-								'Pass --beat N with --prompt "…", --moment or --motion, or --from beats.json.',
-							);
-			const post = yield* updatePost(ctx, input.post, "beat set", (current) => {
-				const beats = current.beats;
-				if (beats === undefined) {
-					return Effect.fail(
-						fail(
-							"not-found",
-							`${input.post} has no beats yet.`,
-							`Plan them first: beat plan --post ${input.post}`,
-						),
-					);
-				}
-				const unknown = patches.filter((patch) => !beats.items.some((b) => b.index === patch.beat));
-				if (unknown.length > 0) {
-					return Effect.fail(
-						fail(
+	run: Effect.fn("beat_set")(function* (input, ctx) {
+		const patches =
+			input.from !== undefined
+				? yield* readPatches(input.from)
+				: input.beat !== undefined &&
+						(input.prompt !== undefined || input.moment !== undefined || input.motion !== undefined)
+					? [
+							{
+								beat: input.beat,
+								...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
+								...(input.moment !== undefined ? { moment: input.moment } : {}),
+								...(input.motion !== undefined ? { motion: input.motion } : {}),
+							},
+						]
+					: yield* fail(
 							"usage",
-							`No beat ${unknown.map((u) => u.beat).join(", ")} (the plan has 0–${beats.items.length - 1}).`,
-							`See them with: beat plan --post ${input.post}`,
-						),
-					);
-				}
-				const byBeat = new Map(patches.map((patch) => [patch.beat, patch]));
-				const apply = (b: Beat): Beat => {
-					const patch = byBeat.get(b.index);
-					if (patch === undefined) return b;
-					return {
-						...b,
-						...(patch.prompt !== undefined ? { prompt: patch.prompt.trim() } : {}),
-						...(patch.moment !== undefined ? { moment: patch.moment } : {}),
-						...(patch.motion !== undefined ? { motion: patch.motion } : {}),
-					};
+							"Nothing to set.",
+							'Pass --beat N with --prompt "…", --moment or --motion, or --from beats.json.',
+						);
+		const post = yield* updatePost(ctx, input.post, "beat set", (current) => {
+			const beats = current.beats;
+			if (beats === undefined) {
+				return Effect.fail(
+					fail(
+						"not-found",
+						`${input.post} has no beats yet.`,
+						`Plan them first: beat plan --post ${input.post}`,
+					),
+				);
+			}
+			const unknown = patches.filter((patch) => !beats.items.some((b) => b.index === patch.beat));
+			if (unknown.length > 0) {
+				return Effect.fail(
+					fail(
+						"usage",
+						`No beat ${unknown.map((u) => u.beat).join(", ")} (the plan has 0–${beats.items.length - 1}).`,
+						`See them with: beat plan --post ${input.post}`,
+					),
+				);
+			}
+			const byBeat = new Map(patches.map((patch) => [patch.beat, patch]));
+			const apply = (b: Beat): Beat => {
+				const patch = byBeat.get(b.index);
+				if (patch === undefined) return b;
+				return {
+					...b,
+					...(patch.prompt !== undefined ? { prompt: patch.prompt.trim() } : {}),
+					...(patch.moment !== undefined ? { moment: patch.moment } : {}),
+					...(patch.motion !== undefined ? { motion: patch.motion } : {}),
 				};
-				return Effect.succeed({ ...current, beats: { ...beats, items: beats.items.map(apply) } });
-			});
-			const missing = (post.beats?.items ?? [])
-				.filter((b) => b.prompt === undefined)
-				.map((b) => b.index);
-			return { updated: patches.length, missing, next: nextStep(post) };
-		}),
+			};
+			return Effect.succeed(mapBeats(current, apply));
+		});
+		const missing = (post.beats?.items ?? [])
+			.filter((b) => b.prompt === undefined)
+			.map((b) => b.index);
+		return { updated: patches.length, missing, next: nextStep(post) };
+	}),
 	render: (o) =>
 		`Updated ${o.updated} beat${o.updated === 1 ? "" : "s"}.${o.missing.length > 0 ? ` Still without a prompt: ${o.missing.join(", ")}.` : ""}\nNext: ${o.next}`,
 });
