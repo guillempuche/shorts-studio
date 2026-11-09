@@ -69,6 +69,17 @@ export const mcpRegistrations = (operations: ReadonlyArray<Operation>, ctx: Cont
 	return McpServer.toolkit(toolkit).pipe(Layer.provide(toolkit.toLayer(handlers)));
 };
 
+/**
+ * The MCP versions the server speaks, newest first; the tests run on each. A 2026-07-28 client
+ * sends no `initialize`. A client that does gets the version it asks for if it's listed, and
+ * 2025-11-25 otherwise, whatever the order: `initialize` never picks the stateless 2026-07-28.
+ */
+export const MCP_PROTOCOLS = [
+	McpProtocol.v2026_07_28,
+	McpProtocol.v2025_11_25,
+	McpProtocol.v2025_06_18,
+] as const;
+
 export const mcpServerLayer = (
 	operations: ReadonlyArray<Operation>,
 	ctx: Context,
@@ -78,8 +89,6 @@ export const mcpServerLayer = (
 		name: "shorts-studio",
 		version,
 		instructions: SERVER_INSTRUCTIONS,
-		// Clients on the older version keep it: the server answers the version a client asks for,
-		// if listed, and the first one otherwise.
-		protocols: [McpProtocol.v2025_11_25, McpProtocol.v2025_06_18],
+		protocols: MCP_PROTOCOLS,
 		registrations: mcpRegistrations(operations, ctx),
 	}).pipe(Layer.provideMerge(Layer.succeed(Logger.LogToStderr, true)));

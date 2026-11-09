@@ -5,25 +5,44 @@ import { testContext } from "@shorts-studio/usecases/test/context";
 import { fakeImageMaker, fakePorts } from "@shorts-studio/usecases/test/fakes";
 import { readyForImages, seedPost } from "@shorts-studio/usecases/test/posts";
 import { Effect, Fiber, Layer } from "effect";
-import { McpProtocol, McpTest } from "effect/ai";
+import { McpTest } from "effect/ai";
 import { describe, expect, it, vi } from "vitest";
-import { mcpOperations, mcpRegistrations } from "./mcp.ts";
+import { MCP_PROTOCOLS, mcpOperations, mcpRegistrations } from "./mcp.ts";
 
-/** Connects an in-memory MCP client to the server and runs `use` with it. */
-const withClient = <A, E>(
-	ctx: Context,
-	ports: Layer.Layer<Ports>,
-	use: (client: McpTest.Client) => Effect.Effect<A, E>,
-) =>
-	Effect.runPromise(
-		Effect.scoped(
-			McpTest.makeClient(mcpRegistrations(operations, ctx).pipe(Layer.provide(ports)), {
-				protocols: [McpProtocol.v2025_11_25],
-			}).pipe(Effect.flatMap(use)),
-		),
-	);
+type Version = (typeof MCP_PROTOCOLS)[number]["protocolVersion"];
 
-describe("MCP tools", () => {
+const VERSIONS: ReadonlyArray<Version> = MCP_PROTOCOLS.map((protocol) => protocol.protocolVersion);
+
+// Every case runs once per version the server offers, against the server's own list.
+describe.each(VERSIONS)("MCP tools on %s", (version) => {
+	/** Connects an in-memory MCP client speaking `version` to the server and runs `use` with it. */
+	const withClient = <A, E>(
+		ctx: Context,
+		ports: Layer.Layer<Ports>,
+		use: (client: McpTest.Client) => Effect.Effect<A, E>,
+	) =>
+		Effect.runPromise(
+			Effect.scoped(
+				McpTest.makeClient(mcpRegistrations(operations, ctx).pipe(Layer.provide(ports)), {
+					protocols: MCP_PROTOCOLS,
+					protocolVersion: version,
+				}).pipe(Effect.flatMap(use)),
+			),
+		);
+
+	it("should answer the client in the version it speaks", async () => {
+		// GIVEN the server's list of versions
+		const ctx = testContext();
+
+		// WHEN a client speaking this version connects
+		const spoken = await withClient(ctx, fakePorts(), (client) =>
+			Effect.succeed(client.protocolVersion),
+		);
+
+		// THEN the server answers in that version
+		expect(spoken).toBe(version);
+	});
+
 	it("should offer every shared operation as a tool with the same parameters as the CLI", async () => {
 		// GIVEN the registry
 		const ctx = testContext();
