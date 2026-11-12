@@ -15,7 +15,7 @@ import { hashOf, readText, writeFileAtomic } from "../files.ts";
 import { requireUser } from "../inputs.ts";
 import { defineOperation, p } from "../operation.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
-import { nextStep } from "./post.ts";
+import { NextFields, nextOf } from "./post.ts";
 
 const SCRIPT_FILE = "script.md";
 
@@ -28,7 +28,7 @@ export const scriptSet = defineOperation({
 		file: p.string("Path to the Markdown script to save as the post's script.md"),
 		hook: p.optional(p.string("On-screen title for the draft's first seconds (3–7 words)")),
 	},
-	output: Schema.Struct({ file: Schema.String, approved: Schema.Boolean, next: Schema.String }),
+	output: Schema.Struct({ file: Schema.String, approved: Schema.Boolean, ...NextFields }),
 	surface: "cli-and-mcp",
 	spends: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
@@ -62,7 +62,7 @@ export const scriptSet = defineOperation({
 		return {
 			file: join(postDir(ctx, input.post), SCRIPT_FILE),
 			approved: isScriptApproved(post),
-			next: nextStep(post),
+			...nextOf(post),
 		};
 	}),
 	render: (o) =>
@@ -74,7 +74,7 @@ export const scriptApprove = defineOperation({
 	description:
 		"Approve the post's current script, audio and image prompts: the user's morning check, run in their own terminal. Image generation needs it.",
 	params: { post: p.string("Post slug") },
-	output: Schema.Struct({ approvedAt: Schema.String, next: Schema.String }),
+	output: Schema.Struct({ approvedAt: Schema.String, ...NextFields }),
 	surface: "cli-only",
 	spends: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
@@ -95,7 +95,7 @@ export const scriptApprove = defineOperation({
 						script: { ...post.script, ...approvalOf(post), approvedAt },
 					}),
 		);
-		return { approvedAt, next: nextStep(post) };
+		return { approvedAt, ...nextOf(post) };
 	}),
 	render: (o) => `Script approved.\nNext: ${o.next}`,
 });

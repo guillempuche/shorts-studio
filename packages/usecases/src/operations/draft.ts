@@ -20,7 +20,7 @@ import { defineOperation, p } from "../operation.ts";
 import { MediaTools } from "../ports.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
 import { readTranscript, TRANSCRIPT_FILE } from "./audio.ts";
-import { nextStep } from "./post.ts";
+import { NextFields, nextOf, nextStep } from "./post.ts";
 
 const DRAFT_FILE = "draft.mp4";
 
@@ -53,7 +53,7 @@ export const draftRender = defineOperation({
 		file: Schema.String,
 		durationSec: Schema.Finite,
 		skipped: Schema.Boolean,
-		next: Schema.String,
+		...NextFields,
 	}),
 	surface: "cli-and-mcp",
 	spends: false,
@@ -84,7 +84,7 @@ export const draftRender = defineOperation({
 				file: join(dir, post.draft.file),
 				durationSec: post.draft.durationSec,
 				skipped: true,
-				next: nextStep(post),
+				...nextOf(post),
 			};
 		}
 
@@ -134,7 +134,7 @@ export const draftRender = defineOperation({
 				},
 			}),
 		);
-		return { file: join(dir, DRAFT_FILE), durationSec, skipped: false, next: nextStep(updated) };
+		return { file: join(dir, DRAFT_FILE), durationSec, skipped: false, ...nextOf(updated) };
 	}),
 	render: (o) =>
 		`${o.skipped ? "Draft is up to date" : "Rendered"}: ${o.file} (${o.durationSec.toFixed(1)} s)\nNext: ${o.next}`,

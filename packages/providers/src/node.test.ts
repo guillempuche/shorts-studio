@@ -313,4 +313,15 @@ describe("makeContext", () => {
 		expect(String(key)).not.toContain("from-env");
 		expect(JSON.stringify({ key })).not.toContain("from-env");
 	});
+
+	it("should name the marker of the agent whose shell it runs in", () => {
+		// GIVEN an agent's marker in the environment, and another environment without it
+		// WHEN a context is made from each
+		const inAgent = makeContext({ SHORTS_DATA_DIR: "/d", CLAUDECODE: "1" });
+		const plain = makeContext({ SHORTS_DATA_DIR: "/d", CLAUDECODE: "" });
+
+		// THEN only the first names a marker
+		expect(inAgent.agentShell).toBe("CLAUDECODE");
+		expect(plain.agentShell).toBeUndefined();
+	});
 });

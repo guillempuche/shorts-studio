@@ -240,6 +240,15 @@ const timeZoneFrom = (env: NodeJS.ProcessEnv, warnings: Array<string>): DateTime
 	return DateTime.zoneMakeNamedUnsafe("UTC");
 };
 
+/**
+ * Variables a coding agent sets in every shell it runs. Add one only once it's known to be set in
+ * all of that agent's modes, or approvals would pass where it isn't.
+ */
+const AGENT_MARKERS: ReadonlyArray<string> = ["CLAUDECODE"];
+
+const agentShellFrom = (env: NodeJS.ProcessEnv): string | undefined =>
+	AGENT_MARKERS.find((variable) => (env[variable] ?? "") !== "");
+
 export const makeContext = (env: NodeJS.ProcessEnv = process.env): ProviderContext => {
 	const paths = resolvePaths(env);
 	const settingsIssues: Array<string> = [];
@@ -259,6 +268,7 @@ export const makeContext = (env: NodeJS.ProcessEnv = process.env): ProviderConte
 		timeZone: timeZoneFrom(env, settingsWarnings),
 		settingsWarnings,
 		interactive: process.stdin.isTTY === true,
+		agentShell: agentShellFrom(env),
 		log: (line) => process.stderr.write(`${line}\n`),
 	};
 };

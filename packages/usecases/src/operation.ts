@@ -77,6 +77,11 @@ export interface RunMode {
 	readonly dryRun: boolean;
 	/** Spending is confirmed. Always true over MCP, where the client's approval is the gate. */
 	readonly confirmed: boolean;
+	/**
+	 * What a batch dry run already planned to spend on earlier posts, so each post's budget counts
+	 * it toward the day and the month. Absent outside a batch.
+	 */
+	readonly plannedUsd?: number;
 }
 
 export interface Operation<P extends Params = Params, O = unknown> {
@@ -142,6 +147,23 @@ export const commandPath = (name: string): readonly [string, string] => {
 	return [noun, verb];
 };
 
+/** `text` as a regular expression that matches only itself. */
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * A field name other than these. A rest record checks every key its key schema accepts, declared
+ * fields included, so a plain string key would fail every field the tool does take.
+ */
+const otherThan = (names: ReadonlyArray<string>) =>
+	Schema.String.pipe(
+		Schema.check(Schema.isPattern(new RegExp(`^(?!(?:${names.map(escapeRegExp).join("|")})$)`))),
+	);
+
+/**
+ * A tool's input: its parameters, plus `dryRun` when it spends. A field it doesn't take fails,
+ * naming the fields it does: Effect would otherwise drop it, so a misspelt `dry_run` would be
+ * ignored and the call would spend.
+ */
 export const toolInputSchema = (op: Operation) => {
 	const fields: Record<string, Field> = {};
 	for (const [key, param] of Object.entries(op.params)) fields[key] = param.field;
@@ -150,5 +172,11 @@ export const toolInputSchema = (op: Operation) => {
 			"Describe the files and estimated cost without spending anything",
 		);
 	}
-	return Schema.Struct(fields);
+	const names = Object.keys(fields);
+	const unknownField = Schema.Never.annotate({
+		message: `This tool doesn't take this field. It takes: ${names.join(", ") || "nothing"}`,
+	});
+	return Schema.StructWithRest(Schema.Struct(fields), [
+		Schema.Record(otherThan(names), unknownField),
+	]);
 };

@@ -35,6 +35,9 @@ describe("config check (doctor)", () => {
 		);
 		// AND a warning alone doesn't block
 		expect(error.message).not.toContain("yt-dlp");
+		// AND the fix names where every check is listed as data, not rows printed above
+		expect(error.fix).toContain("config show --json");
+		expect(error.fix).not.toContain("above");
 	});
 
 	it("should report a settings file that couldn't be read", async () => {

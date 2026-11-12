@@ -13,12 +13,12 @@ import { Effect, Schema } from "effect";
 import type { Context } from "../context.ts";
 import { fileHash, hashOf, readJsonFile, writeJsonFile } from "../files.ts";
 import { checkLanguage, requireKey } from "../inputs.ts";
-import { paidCall } from "../ledger.ts";
+import { Budget, budgetFor, budgetLine, paidCall } from "../ledger.ts";
 import { chooseModel, costOf } from "../models.ts";
 import { defineOperation, p, type RunMode } from "../operation.ts";
 import { Transcriber } from "../ports.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
-import { nextStep } from "./post.ts";
+import { agentStep, NextFields, nextAfterDryRun, nextOf } from "./post.ts";
 
 export const TRANSCRIPT_FILE = "transcript.json";
 
@@ -48,7 +48,9 @@ export const audioTranscribe = defineOperation({
 		skipped: Schema.Boolean,
 		estimateUsd: Schema.Finite,
 		dryRun: Schema.Boolean,
-		next: Schema.String,
+		/** On a dry run: whether the estimate fits the caps, and what's left under each. */
+		budget: Schema.optionalKey(Budget),
+		...NextFields,
 	}),
 	surface: "cli-and-mcp",
 	spends: true,
@@ -85,12 +87,13 @@ export const audioTranscribe = defineOperation({
 				skipped: true,
 				estimateUsd: 0,
 				dryRun: mode.dryRun,
-				next: nextStep(post),
+				...nextOf(post),
 			};
 		}
 
 		const cost = costOf(model, audioAmount(model, post.audio.durationSec));
 		if (mode.dryRun) {
+			const budget = yield* budgetFor(ctx, { post: input.post, usd: cost.usd }, mode.plannedUsd);
 			return {
 				file,
 				language: input.language ?? "auto",
@@ -98,7 +101,16 @@ export const audioTranscribe = defineOperation({
 				skipped: false,
 				estimateUsd: cost.usd,
 				dryRun: true,
-				next: nextStep(post),
+				budget,
+				// The real run is the same call without `dryRun`; transcription needs no `--yes`.
+				...nextAfterDryRun(
+					budget,
+					agentStep("audio_transcribe", {
+						post: input.post,
+						...(input.language === undefined ? {} : { language: input.language }),
+						...(input.force ? { force: true } : {}),
+					}),
+				),
 			};
 		}
 
@@ -133,13 +145,13 @@ export const audioTranscribe = defineOperation({
 			skipped: false,
 			estimateUsd: cost.usd,
 			dryRun: false,
-			next: nextStep(updated),
+			...nextOf(updated),
 		};
 	}),
 	render: (o) =>
 		o.skipped
 			? `Transcript is up to date (${o.language}).\nNext: ${o.next}`
 			: o.dryRun
-				? `Would transcribe the audio (~$${o.estimateUsd.toFixed(3)}); nothing was spent.`
+				? `Would transcribe the audio (~$${o.estimateUsd.toFixed(3)}); nothing was spent.${o.budget === undefined ? "" : ` ${budgetLine(o.budget)}`}`
 				: `Transcribed ${o.words} words (${o.language}) to ${o.file}\nNext: ${o.next}`,
 });

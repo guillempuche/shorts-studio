@@ -17,7 +17,7 @@ import { ensureDir, fileHash, fileStep } from "../files.ts";
 import { defineOperation, p } from "../operation.ts";
 import { MediaTools } from "../ports.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
-import { nextStep } from "./post.ts";
+import { NextFields, nextOf } from "./post.ts";
 
 const AUDIO_FILE = join("audio", "audio.m4a");
 
@@ -34,7 +34,7 @@ export const sourceImport = defineOperation({
 			"speech (gets captions and beats from words) or music (beats on a grid)",
 		),
 	},
-	output: Schema.Struct({ file: Schema.String, durationSec: Schema.Finite, next: Schema.String }),
+	output: Schema.Struct({ file: Schema.String, durationSec: Schema.Finite, ...NextFields }),
 	surface: "cli-and-mcp",
 	spends: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
@@ -72,7 +72,7 @@ export const sourceImport = defineOperation({
 				},
 			}),
 		);
-		return { file: target, durationSec, next: nextStep(post) };
+		return { file: target, durationSec, ...nextOf(post) };
 	}),
 	render: (o) => `Imported ${o.durationSec.toFixed(1)} s of audio to ${o.file}\nNext: ${o.next}`,
 });

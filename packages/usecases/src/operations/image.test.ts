@@ -302,7 +302,7 @@ describe("image generate", () => {
 		const error = await runFailure(generate(ctx), ports);
 
 		// THEN it stops before the provider, asking for the user's approval
-		expect(error.code).toBe("needs-confirmation");
+		expect(error.code).toBe("needs-approval");
 		expect(maker.submits).toHaveLength(0);
 	});
 
@@ -329,7 +329,7 @@ describe("image generate", () => {
 		const error = await runFailure(generate(ctx), ports);
 
 		// THEN nothing reaches the provider, and the user is asked to approve the new prompt
-		expect(error.code).toBe("needs-confirmation");
+		expect(error.code).toBe("needs-approval");
 		expect(error.message).toContain("prompt of beat 1");
 		expect(error.fix).toContain("script approve");
 		expect(maker.submits).toHaveLength(0);
@@ -566,5 +566,21 @@ describe("image generate", () => {
 
 		// THEN the prompt sent ends with the style
 		expect(maker.submits.map((s) => s.prompt)).toEqual(["a red door, film grain"]);
+	});
+
+	it("should keep the seeds when a reroll is refused for a setting that can't be used", async () => {
+		// GIVEN a post ready for images, and a setting that couldn't be used
+		const ctx = testContext({
+			settingsIssues: ["/data/config.json: captions.fontSize: Expected number"],
+		});
+		await seedPost(ctx, SLUG, readyForImages());
+		const before = (await postOf(ctx)).beats?.items.map((b) => b.seed);
+
+		// WHEN beat 1 is rerolled
+		const error = await runFailure(generate(ctx, { beat: "1", reroll: true }), fakePorts());
+
+		// THEN it is refused, and no seed changed
+		expect(error.code).toBe("failed");
+		expect((await postOf(ctx)).beats?.items.map((b) => b.seed)).toEqual(before);
 	});
 });

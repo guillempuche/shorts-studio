@@ -69,6 +69,33 @@ describe("readPost", () => {
 		expect(error.code).toBe("not-found");
 		expect(error.fix).toContain("post list");
 	});
+
+	it("should name the post meant when it's the slug given with a date in front", async () => {
+		// GIVEN one post made as "ax-test", which got today's date in front
+		const ctx = testContext();
+		await seedPost(ctx, "2026-11-08-ax-test");
+		await seedPost(ctx, "2026-11-08-other");
+
+		// WHEN it is read without its date
+		const error = await Effect.runPromise(Effect.flip(readPost(ctx, "ax-test")));
+
+		// THEN it is not found, and the fix names the dated post
+		expect(error.code).toBe("not-found");
+		expect(error.fix).toContain("post show --post 2026-11-08-ax-test");
+	});
+
+	it("should not guess when the slug given matches posts from several days", async () => {
+		// GIVEN two posts named "ax-test" on different days
+		const ctx = testContext();
+		await seedPost(ctx, "2026-11-07-ax-test");
+		await seedPost(ctx, "2026-11-08-ax-test");
+
+		// WHEN it is read without a date
+		const error = await Effect.runPromise(Effect.flip(readPost(ctx, "ax-test")));
+
+		// THEN the fix lists the posts instead of picking one
+		expect(error.fix).toBe("List posts with: post list");
+	});
 });
 
 describe("createPost", () => {

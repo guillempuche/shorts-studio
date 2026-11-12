@@ -16,11 +16,12 @@ import { Effect, Schema } from "effect";
 import type { Context } from "../context.ts";
 import { ensureDir, fileStep, readText, writeFileAtomic, writeJsonFile } from "../files.ts";
 import { checkLanguage, requireKey } from "../inputs.ts";
-import { paidCall } from "../ledger.ts";
+import { Budget, budgetFor, budgetLine, paidCall, settingsRefusal } from "../ledger.ts";
 import { chooseModel, costOf } from "../models.ts";
 import { defineOperation, p, type RunMode } from "../operation.ts";
 import { Downloader, MediaTools, Transcriber } from "../ports.ts";
 import { postDir, readPost } from "../post-store.ts";
+import { NextStep } from "./post.ts";
 import { sourceImport } from "./source.ts";
 
 const COLLECTION_NAME = /^[a-z0-9][a-z0-9-]{0,99}$/;
@@ -72,6 +73,8 @@ export const sourceDownload = defineOperation({
 		failed: Schema.Boolean,
 		dir: Schema.String,
 		next: Schema.String,
+		/** The imported post's steps, when a URL was downloaded into a post. */
+		nextSteps: Schema.optionalKey(Schema.Array(NextStep)),
 	}),
 	surface: "cli-only",
 	spends: false,
@@ -137,7 +140,13 @@ export const sourceDownload = defineOperation({
 				ctx,
 				mode,
 			);
-			return { downloaded: 1, failed: false, dir, next: imported.next };
+			return {
+				downloaded: 1,
+				failed: false,
+				dir,
+				next: imported.next,
+				nextSteps: imported.nextSteps,
+			};
 		}
 
 		return yield* fail(
@@ -166,6 +175,8 @@ export const sourceTranscribe = defineOperation({
 		toTranscribe: Schema.Int,
 		estimateUsd: Schema.Finite,
 		dryRun: Schema.Boolean,
+		/** On a dry run: whether the estimate fits the caps, and what's left under each. */
+		budget: Schema.optionalKey(Budget),
 	}),
 	surface: "cli-and-mcp",
 	spends: true,
@@ -203,19 +214,23 @@ export const sourceTranscribe = defineOperation({
 
 		if (mode.dryRun) {
 			const costs = yield* Effect.forEach(todo, costOfFile);
+			const estimateUsd = costs.reduce((sum, cost) => sum + cost.usd, 0);
 			return {
 				transcribed: 0,
 				skipped: files.length - todo.length,
 				failed: [],
 				toTranscribe: todo.length,
-				estimateUsd: costs.reduce((sum, cost) => sum + cost.usd, 0),
+				estimateUsd,
 				dryRun: true,
+				budget: yield* budgetFor(ctx, { post: `saved/${name}`, usd: estimateUsd }, mode.plannedUsd),
 			};
 		}
 
 		yield* ensureDir(join(dir, "transcripts"));
 		if (todo.length > 0) {
-			// Fail on a missing key before anything is reserved.
+			// Fail on a setting that can't be used, or a missing key, before any file is tried.
+			const refusal = settingsRefusal(ctx);
+			if (refusal !== undefined) return yield* refusal;
 			yield* Effect.forEach(transcriber.keys, (key) => requireKey(ctx, key), { discard: true });
 		}
 
@@ -261,7 +276,7 @@ export const sourceTranscribe = defineOperation({
 	}),
 	render: (o) =>
 		o.dryRun
-			? `Would transcribe ${o.toTranscribe} file${o.toTranscribe === 1 ? "" : "s"} (~$${o.estimateUsd.toFixed(3)}), already done ${o.skipped}; nothing was spent.`
+			? `Would transcribe ${o.toTranscribe} file${o.toTranscribe === 1 ? "" : "s"} (~$${o.estimateUsd.toFixed(3)}), already done ${o.skipped}; nothing was spent.${o.budget === undefined ? "" : ` ${budgetLine(o.budget)}`}`
 			: [
 					`Transcribed ${o.transcribed}, already done ${o.skipped}, failed ${o.failed.length}.`,
 					...o.failed.map((line) => `  ✗ ${line}`),

@@ -160,7 +160,7 @@ export const configCheck = defineOperation({
 							fail(
 								"missing-tool",
 								`${blocking.length} blocking problem${blocking.length === 1 ? "" : "s"}:\n${renderChecks(blocking).join("\n")}`,
-								"Fix the rows above, then run it again.",
+								"Fix each problem listed, then run it again. `config show --json` lists every check with its status and fix.",
 							),
 						);
 			}),

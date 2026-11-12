@@ -82,6 +82,55 @@ describe.each(VERSIONS)("MCP tools on %s", (version) => {
 		expect(report).toMatchObject({ code: "not-found", fix: "List posts with: post list" });
 	});
 
+	it("should refuse a field the tool doesn't take, rather than drop it and spend", async () => {
+		// GIVEN a post ready for images
+		const ctx = testContext();
+		await seedPost(ctx, "2026-11-04-mcp", readyForImages());
+		const maker = fakeImageMaker();
+
+		// WHEN a client asks for images with dryRun misspelt as dry_run
+		const text = await withClient(ctx, fakePorts({ imageMaker: maker }), (client) =>
+			client
+				.callTool({ name: "image_generate", arguments: { post: "2026-11-04-mcp", dry_run: true } })
+				.pipe(
+					// 2025-06-18 answers with a protocol error, the newer versions with a tool error.
+					Effect.map((result) => {
+						expect(result.isError).toBe(true);
+						const [content] = result.content;
+						return content?.type === "text" ? content.text : "";
+					}),
+					Effect.catch((error) => Effect.succeed(error.message)),
+				),
+		);
+
+		// THEN nothing was sent to the provider
+		expect(maker.submits).toHaveLength(0);
+		// AND the error names the field and the fields the tool takes
+		expect(text).toContain("dry_run");
+		expect(text).toContain("dryRun");
+	});
+
+	it("should refuse a field on a tool that takes none", async () => {
+		// GIVEN the server
+		const ctx = testContext();
+
+		// WHEN a client calls config_show with a field it doesn't take
+		const text = await withClient(ctx, fakePorts(), (client) =>
+			client.callTool({ name: "config_show", arguments: { verbose: true } }).pipe(
+				Effect.map((result) => {
+					expect(result.isError).toBe(true);
+					const [content] = result.content;
+					return content?.type === "text" ? content.text : "";
+				}),
+				Effect.catch((error) => Effect.succeed(error.message)),
+			),
+		);
+
+		// THEN the error names the field and says the tool takes nothing
+		expect(text).toContain("verbose");
+		expect(text).toContain("It takes: nothing");
+	});
+
 	it("should spend without --yes, since the client's approval is the gate, and honour dryRun", async () => {
 		// GIVEN a post ready for images
 		const ctx = testContext();

@@ -28,18 +28,29 @@ export const requireKey = (
 
 /**
  * Fails unless a person is at the terminal. Approving a script or a draft is the user's
- * decision, and an agent's shell has no terminal, however it writes the command.
+ * decision. An agent's shell has no terminal, however it writes the command, and one that opens
+ * a pseudo-terminal still carries its agent's marker.
  */
-export const requireUser = (ctx: Context, command: string): Effect.Effect<void, ShortsError> =>
-	ctx.interactive
+export const requireUser = (ctx: Context, command: string): Effect.Effect<void, ShortsError> => {
+	if (ctx.agentShell !== undefined) {
+		return Effect.fail(
+			fail(
+				"needs-approval",
+				`${command} records the user's decision, and this runs in an agent's shell (${ctx.agentShell} is set).`,
+				`The user runs it in their own terminal, outside the agent: ${command}`,
+			),
+		);
+	}
+	return ctx.interactive
 		? Effect.void
 		: Effect.fail(
 				fail(
-					"needs-confirmation",
+					"needs-approval",
 					`${command} records the user's decision, and no one is at a terminal.`,
 					`The user runs it in their own terminal: ${command}`,
 				),
 			);
+};
 
 /**
  * A language code to force on transcription, or undefined to detect it. Checked before the

@@ -27,9 +27,8 @@ export const SERVER_INSTRUCTIONS = [
 export const mcpOperations = (operations: ReadonlyArray<Operation>): ReadonlyArray<Operation> =>
 	operations.filter((op) => op.surface === "cli-and-mcp");
 
-// MCP requires a tool's parameters to be an object, and an empty Struct doesn't encode to one.
-const parametersOf = (op: Operation) =>
-	Object.keys(op.params).length === 0 && !op.spends ? Tool.EmptyParams : toolInputSchema(op);
+// Every tool, one with no parameters too, refuses a field it doesn't take (see toolInputSchema).
+const parametersOf = (op: Operation) => toolInputSchema(op);
 
 const toTool = (op: Operation) =>
 	Tool.make(op.name, {

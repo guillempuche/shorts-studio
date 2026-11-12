@@ -40,6 +40,7 @@ export const testContext = (
 		now: () => NOW,
 		timeZone: DateTime.zoneMakeNamedUnsafe("UTC"),
 		interactive: true,
+		agentShell: undefined,
 		log: () => {},
 		...rest,
 	};

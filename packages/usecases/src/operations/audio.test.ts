@@ -224,4 +224,45 @@ describe("audio transcribe", () => {
 		expect(await ledgerOf(ctx)).toHaveLength(0);
 		expect(transcriber.calls).toHaveLength(0);
 	});
+
+	it("should make the real run the next step after a dry run that fits", async () => {
+		// GIVEN two minutes of speech and room under every cap
+		const { ctx, ports } = await ready();
+
+		// WHEN it is planned with a dry run
+		const planned = await run(
+			audioTranscribe.run({ post: SLUG, language: undefined, force: false }, ctx, {
+				dryRun: true,
+				confirmed: false,
+			}),
+			ports,
+		);
+
+		// THEN the budget fits, and the next step is the same call without dryRun
+		expect(planned.budget?.fits).toBe(true);
+		expect(planned.nextSteps[0]).toMatchObject({
+			by: "agent",
+			tool: "audio_transcribe",
+			args: { post: SLUG },
+		});
+	});
+
+	it("should leave it to the user when a dry run doesn't fit the caps", async () => {
+		// GIVEN two minutes of speech and a per-post cap below their price
+		const { ctx, ports } = await ready(testContext({ config: { caps: { postUsd: 0.0001 } } }));
+
+		// WHEN it is planned with a dry run
+		const planned = await run(
+			audioTranscribe.run({ post: SLUG, language: undefined, force: false }, ctx, {
+				dryRun: true,
+				confirmed: false,
+			}),
+			ports,
+		);
+
+		// THEN the next step is the user's, naming the cap, not a run that would be refused
+		expect(planned.nextSteps[0]?.by).toBe("user");
+		expect(planned.nextSteps[0]?.note).toContain("per-post cap");
+		expect(planned.nextSteps[0]?.tool).toBeUndefined();
+	});
 });

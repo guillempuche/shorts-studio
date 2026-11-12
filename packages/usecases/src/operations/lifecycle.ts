@@ -15,7 +15,7 @@ import { parseBeatList, requireUser } from "../inputs.ts";
 import { defineOperation, p } from "../operation.ts";
 import { MediaTools } from "../ports.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
-import { nextStep } from "./post.ts";
+import { NextFields, nextOf, nextStep } from "./post.ts";
 
 /** `"3:too dark;5:wrong face"` → per-beat notes. */
 const parseBeatNotes = (
@@ -51,7 +51,7 @@ export const postReview = defineOperation({
 		beatNotes: p.optional(p.string('Notes per beat: "3:too dark;5:wrong face"')),
 		animate: p.optional(p.string("Beats to turn into AI video later, comma-separated (e.g. 0,7)")),
 	},
-	output: Schema.Struct({ stage: Stage, next: Schema.String }),
+	output: Schema.Struct({ stage: Stage, ...NextFields }),
 	surface: "cli-only",
 	spends: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
@@ -90,7 +90,7 @@ export const postReview = defineOperation({
 				},
 			});
 		});
-		return { stage: stageOf(post), next: nextStep(post) };
+		return { stage: stageOf(post), ...nextOf(post) };
 	}),
 	render: (o) => `Review recorded: ${o.stage}.\nNext: ${o.next}`,
 });
@@ -103,7 +103,7 @@ export const postFinalize = defineOperation({
 		post: p.string("Post slug"),
 		file: p.string("Path to the finished video"),
 	},
-	output: Schema.Struct({ file: Schema.String, durationSec: Schema.Finite, next: Schema.String }),
+	output: Schema.Struct({ file: Schema.String, durationSec: Schema.Finite, ...NextFields }),
 	surface: "cli-and-mcp",
 	spends: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
@@ -119,7 +119,7 @@ export const postFinalize = defineOperation({
 		const before = yield* readPost(ctx, input.post);
 		if (stageOf(before) !== "approved" && stageOf(before) !== "final") {
 			return yield* fail(
-				"needs-confirmation",
+				"needs-approval",
 				`${input.post} is at "${stageOf(before)}", not approved.`,
 				`The user reviews the draft first: post review --post ${input.post} --decision approve`,
 			);
@@ -136,7 +136,7 @@ export const postFinalize = defineOperation({
 		const post = yield* updatePost(ctx, input.post, "post finalize", (current) =>
 			Effect.succeed({ ...current, final: { file, hash, at: ctx.now().toISOString() } }),
 		);
-		return { file: target, durationSec, next: nextStep(post) };
+		return { file: target, durationSec, ...nextOf(post) };
 	}),
 	render: (o) => `Final video saved: ${o.file} (${o.durationSec.toFixed(1)} s)\nNext: ${o.next}`,
 });
@@ -149,7 +149,7 @@ export const postPublish = defineOperation({
 		platform: p.literals(Platform.literals, "Where it was published"),
 		url: p.string("The post's public URL"),
 	},
-	output: Schema.Struct({ platforms: Schema.Array(Platform), next: Schema.String }),
+	output: Schema.Struct({ platforms: Schema.Array(Platform), ...NextFields }),
 	surface: "cli-and-mcp",
 	spends: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
@@ -173,7 +173,7 @@ export const postPublish = defineOperation({
 		});
 		return {
 			platforms: (post.published ?? []).map((entry) => entry.platform),
-			next: nextStep(post),
+			...nextOf(post),
 		};
 	}),
 	render: (o) => `Published on: ${o.platforms.join(", ")}.\nNext: ${o.next}`,

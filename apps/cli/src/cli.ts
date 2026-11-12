@@ -21,6 +21,7 @@ import {
 	p,
 	type RunMode,
 } from "@shorts-studio/usecases/operation";
+import { configCheck, configShow } from "@shorts-studio/usecases/operations/config";
 import { listSlugs, readPost } from "@shorts-studio/usecases/post-store";
 import { Console, Effect, Layer, Result, Schema } from "effect";
 import { CliOutput, Command, Flag } from "effect/cli";
@@ -175,7 +176,7 @@ const confirmationError = (label: string) =>
 	fail(
 		"needs-confirmation",
 		`${label} spends money; nothing was spent.`,
-		"Check the estimate above, then run the same command with --yes.",
+		"Check the estimate and its budget above; if it fits, run the same command with --yes.",
 	);
 
 interface SharedFlags {
@@ -226,8 +227,15 @@ const leaf = (op: Operation, ctx: Context, name?: string) => {
 		}
 
 		// One post after another: each prints as it finishes, and a failure doesn't stop the rest.
+		// A dry run counts what it planned for earlier posts, so their budgets add up as one run.
+		let plannedUsd = 0;
 		const results = yield* Effect.forEach(posts, (post) =>
-			Effect.result(op.run({ ...input, post }, ctx, mode)).pipe(
+			Effect.result(op.run({ ...input, post }, ctx, { ...mode, plannedUsd })).pipe(
+				Effect.tap((outcome) =>
+					Effect.sync(() => {
+						if (mode.dryRun && Result.isSuccess(outcome)) plannedUsd += estimateOf(outcome.success);
+					}),
+				),
 				Effect.tap((outcome) =>
 					shared.json
 						? Effect.void
@@ -268,6 +276,7 @@ const leaf = (op: Operation, ctx: Context, name?: string) => {
 		flags,
 		Effect.fn(label)(function* (raw) {
 			const shared = yield* root;
+			if (!SHOWS_SETTINGS.has(op.name)) yield* warnSettings(ctx);
 			const { fields, error } = yield* attempt(
 				raw as Record<string, unknown> & Selection,
 				shared,
@@ -280,8 +289,29 @@ const leaf = (op: Operation, ctx: Context, name?: string) => {
 	).pipe(Command.withDescription(op.description));
 };
 
+/** Commands that list the settings' problems themselves, so a warning would say it twice. */
+const SHOWS_SETTINGS = new Set([configCheck.name, configShow.name]);
+
+/** A spending result's estimate, or 0 for one that has none. */
+const estimateOf = (result: unknown): number => {
+	const estimate = (result as { readonly estimateUsd?: unknown } | null)?.estimateUsd;
+	return typeof estimate === "number" && Number.isFinite(estimate) ? estimate : 0;
+};
+
+/**
+ * Names, on stderr, each setting that couldn't be used. Its default applies, so a command that
+ * runs anyway, such as `budget show`, may show the default caps rather than the user's.
+ */
+const warnSettings = (ctx: Context) =>
+	Effect.forEach(
+		ctx.settingsIssues,
+		(issue) => Console.error(`! A setting can't be used, so its default applies: ${issue}`),
+		{ discard: true },
+	);
+
 const NOUNS: Record<string, string> = {
 	config: "Settings, folders, keys and tool checks",
+	models: "Image and transcription models, their prices, and the one each job uses",
 	post: "Create, list, review and publish posts",
 	script: "The story the user approves before anything is spent",
 	source: "Bring audio into a post, and download or transcribe saved collections",

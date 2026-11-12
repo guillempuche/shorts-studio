@@ -255,6 +255,78 @@ describe("spending on the CLI", () => {
 		expect(output.error.code).toBe("needs-confirmation");
 	});
 
+	it("should name a setting that can't be used on stderr, and still run a command that spends nothing", async () => {
+		// GIVEN a config.json setting that couldn't be used
+		const issue = '/data/config.json: captions.fontSize: Expected a number, got "big"';
+		const ctx = testContext({ settingsIssues: [issue] });
+
+		// WHEN the budget is shown as JSON
+		const run = await runCli(ctx, ["budget", "show", "--json"]);
+
+		// THEN it runs, and stdout still holds only its one object
+		expect(run.ok).toBe(true);
+		expect(JSON.parse(run.out).ok).toBe(true);
+		// AND stderr names the file and the problem
+		expect(run.err).toContain(issue);
+	});
+
+	it("should add up a batch dry run, so the posts that together pass the cap don't all fit", async () => {
+		// GIVEN two posts ready for images ($0.02 each) and a $0.03 daily cap, which fits one
+		const ctx = testContext({ config: { caps: { dailyUsd: 0.03, postUsd: 1 } } });
+		await seedPost(ctx, "2026-11-04-one", readyForImages());
+		await seedPost(ctx, "2026-11-04-two", readyForImages());
+
+		// WHEN both are planned in one dry run
+		const run = await runCli(ctx, [
+			"image",
+			"generate",
+			"--post",
+			"2026-11-04-one,2026-11-04-two",
+			"--dry-run",
+			"--json",
+		]);
+
+		// THEN the first fits, and the second doesn't, counting what the first planned
+		const fits = JSON.parse(run.out).results.map(
+			(r: { result: { budget: { fits: boolean } } }) => r.result.budget.fits,
+		);
+		expect(fits).toEqual([true, false]);
+	});
+
+	it("should not warn about settings on doctor, which lists them itself", async () => {
+		// GIVEN a setting that couldn't be used
+		const ctx = testContext({
+			settingsIssues: ["/data/config.json: captions.fontSize: Expected number"],
+		});
+
+		// WHEN doctor runs
+		const run = await runCli(ctx, ["doctor", "--json"]);
+
+		// THEN stderr carries no warning line, since doctor's own result names the setting
+		expect(run.err).not.toContain("A setting can't be used");
+	});
+
+	it("should say a dry run won't fit today's cap, and still succeed, since it spent nothing", async () => {
+		// GIVEN a post ready for images, and a daily cap below what they cost
+		const ctx = testContext({ config: { caps: { dailyUsd: 0.001 } } });
+		await seedPost(ctx, "2026-11-04-spend", readyForImages());
+
+		// WHEN images are planned with --dry-run
+		const run = await runCli(ctx, [
+			"image",
+			"generate",
+			"--post",
+			"2026-11-04-spend",
+			"--dry-run",
+			"--json",
+		]);
+
+		// THEN it succeeds, and its budget says the estimate doesn't fit, naming the daily cap
+		expect(run.ok).toBe(true);
+		const output = JSON.parse(run.out);
+		expect(output.result.budget).toMatchObject({ fits: false, stoppedBy: "caps.dailyUsd" });
+	});
+
 	it("should spend once --yes is given", async () => {
 		// GIVEN a post ready for images
 		const ctx = testContext();

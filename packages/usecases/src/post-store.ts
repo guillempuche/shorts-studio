@@ -33,14 +33,38 @@ export const checkSlug = (slug: string): Effect.Effect<string, ShortsError> =>
 				),
 			);
 
+/** A slug that starts with its post's date, as `post create` makes them: 2026-11-04-morning. */
+export const DATED = /^\d{4}-\d{2}-\d{2}-/;
+
 /** A valid slug whose post exists; checked before taking its lock, which needs the folder. */
 const existingPost = (ctx: Context, slug: string): Effect.Effect<string, ShortsError> =>
 	checkSlug(slug).pipe(
-		Effect.filterOrFail(
-			() => existsSync(manifestPath(ctx, slug)),
-			() =>
-				fail("not-found", `No post "${slug}" in ${minePath(ctx)}.`, "List posts with: post list"),
+		Effect.flatMap((checked) =>
+			existsSync(manifestPath(ctx, slug)) ? Effect.succeed(checked) : notFound(ctx, slug),
 		),
+	);
+
+/**
+ * A post that isn't there. `post create` puts the date in front of a slug, so when exactly one
+ * post is the given slug with a date in front, the fix names it.
+ */
+const notFound = (ctx: Context, slug: string): Effect.Effect<never, ShortsError> =>
+	listSlugs(ctx).pipe(
+		// A folder that can't be listed only loses the suggestion; the post is still not found.
+		Effect.catch(() => Effect.succeed<ReadonlyArray<string>>([])),
+		Effect.flatMap((slugs) => {
+			const dated = slugs.filter((name) => DATED.test(name) && name.replace(DATED, "") === slug);
+			const [meant] = dated;
+			return Effect.fail(
+				fail(
+					"not-found",
+					`No post "${slug}" in ${minePath(ctx)}.`,
+					dated.length === 1 && meant !== undefined
+						? `Did you mean ${meant}? Show it with: post show --post ${meant}`
+						: "List posts with: post list",
+				),
+			);
+		}),
 	);
 
 const decodePost = Schema.decodeUnknownEffect(Schema.fromJsonString(Post), { errors: "all" });

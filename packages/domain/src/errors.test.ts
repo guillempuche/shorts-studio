@@ -18,9 +18,10 @@ describe("fail", () => {
 		// GIVEN one failure of each code
 		const exitCode = (code: typeof ErrorCode.Type) => fail(code, "m", "f")[Runtime.errorExitCode];
 
-		// THEN calling it wrong exits 2, needing confirmation 3, passing a cap 4
+		// THEN calling it wrong exits 2, needing --yes or the user's approval 3, passing a cap 4
 		expect(exitCode("usage")).toBe(2);
 		expect(exitCode("needs-confirmation")).toBe(3);
+		expect(exitCode("needs-approval")).toBe(3);
 		expect(exitCode("over-budget")).toBe(4);
 		// AND everything else exits 1
 		expect(exitCode("not-found")).toBe(1);

@@ -60,8 +60,22 @@ describe("script approve", () => {
 		const error = await runFailure(scriptApprove.run({ post: SLUG }, ctx, MODE));
 
 		// THEN it stays unapproved, and the user is asked to run it themselves
-		expect(error.code).toBe("needs-confirmation");
+		expect(error.code).toBe("needs-approval");
 		expect(error.fix).toContain("terminal");
+		expect((await postOf(ctx)).script?.approvedHash).toBeUndefined();
+	});
+
+	it("should approve nothing in an agent's shell, even when it has a terminal", async () => {
+		// GIVEN a post waiting for approval, and an agent's pseudo-terminal that carries its marker
+		const ctx = testContext({ interactive: true, agentShell: "CLAUDECODE" });
+		await waitingForApproval(ctx);
+
+		// WHEN the script is approved
+		const error = await runFailure(scriptApprove.run({ post: SLUG }, ctx, MODE));
+
+		// THEN it stays unapproved, and the user is asked to use a terminal outside the agent
+		expect(error.code).toBe("needs-approval");
+		expect(error.fix).toContain("outside the agent");
 		expect((await postOf(ctx)).script?.approvedHash).toBeUndefined();
 	});
 });

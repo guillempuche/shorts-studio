@@ -18,7 +18,7 @@ import { hashOf, readText } from "../files.ts";
 import { defineOperation, p } from "../operation.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
 import { readTranscript, TRANSCRIPT_FILE } from "./audio.ts";
-import { nextStep } from "./post.ts";
+import { NextFields, nextOf } from "./post.ts";
 
 /** The words to cut beats from: none for music, or before there's a transcript. */
 const readWords = (ctx: Context, post: Post): Effect.Effect<ReadonlyArray<Word>, ShortsError> =>
@@ -57,7 +57,7 @@ export const beatPlan = defineOperation({
 	output: Schema.Struct({
 		beats: Schema.Array(BeatRow),
 		skipped: Schema.Boolean,
-		next: Schema.String,
+		...NextFields,
 	}),
 	surface: "cli-and-mcp",
 	spends: false,
@@ -86,7 +86,7 @@ export const beatPlan = defineOperation({
 			const sections = sectionsOf(existing.items);
 			const recutHash = hashOf("by-moment", inputHash, sections);
 			if (existing.inputHash === recutHash && !input.force) {
-				return { beats: existing.items.map(row), skipped: true, next: nextStep(post) };
+				return { beats: existing.items.map(row), skipped: true, ...nextOf(post) };
 			}
 			if (existing.items.some((b) => b.prompt !== undefined) && !input.force) {
 				return yield* fail(
@@ -100,10 +100,10 @@ export const beatPlan = defineOperation({
 			const updated = yield* updatePost(ctx, input.post, "beat plan", (current) =>
 				Effect.succeed({ ...current, beats: { inputHash: recutHash, items } }),
 			);
-			return { beats: items.map(row), skipped: false, next: nextStep(updated) };
+			return { beats: items.map(row), skipped: false, ...nextOf(updated) };
 		}
 		if (existing !== undefined && existing.inputHash === inputHash && !input.force) {
-			return { beats: existing.items.map(row), skipped: true, next: nextStep(post) };
+			return { beats: existing.items.map(row), skipped: true, ...nextOf(post) };
 		}
 		if (existing?.items.some((b) => b.prompt !== undefined) && !input.force) {
 			return yield* fail(
@@ -117,7 +117,7 @@ export const beatPlan = defineOperation({
 		const updated = yield* updatePost(ctx, input.post, "beat plan", (current) =>
 			Effect.succeed({ ...current, beats: { inputHash, items } }),
 		);
-		return { beats: items.map(row), skipped: false, next: nextStep(updated) };
+		return { beats: items.map(row), skipped: false, ...nextOf(updated) };
 	}),
 	render: (o) =>
 		[
@@ -191,7 +191,7 @@ export const beatSet = defineOperation({
 	output: Schema.Struct({
 		updated: Schema.Int,
 		missing: Schema.Array(Schema.Int),
-		next: Schema.String,
+		...NextFields,
 	}),
 	surface: "cli-and-mcp",
 	spends: false,
@@ -252,7 +252,7 @@ export const beatSet = defineOperation({
 		const missing = (post.beats?.items ?? [])
 			.filter((b) => b.prompt === undefined)
 			.map((b) => b.index);
-		return { updated: patches.length, missing, next: nextStep(post) };
+		return { updated: patches.length, missing, ...nextOf(post) };
 	}),
 	render: (o) =>
 		`Updated ${o.updated} beat${o.updated === 1 ? "" : "s"}.${o.missing.length > 0 ? ` Still without a prompt: ${o.missing.join(", ")}.` : ""}\nNext: ${o.next}`,

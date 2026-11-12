@@ -63,7 +63,7 @@ describe("capcut export", () => {
 		const error = await runFailure(capcutExport.run({ post: SLUG, mute: false }, ctx, MODE));
 
 		// THEN it waits for the user's approval
-		expect(error.code).toBe("needs-confirmation");
+		expect(error.code).toBe("needs-approval");
 		expect(existsSync(join(dir, "capcut"))).toBe(false);
 	});
 
@@ -144,7 +144,7 @@ describe("capcut export", () => {
 		const error = await runFailure(capcutExport.run({ post: SLUG, mute: false }, ctx, MODE));
 
 		// THEN nothing is exported, and the fix renders the draft again for a new review
-		expect(error.code).toBe("needs-confirmation");
+		expect(error.code).toBe("stale");
 		expect(error.fix).toContain("draft render");
 		expect(existsSync(join(dir, "capcut"))).toBe(false);
 	});

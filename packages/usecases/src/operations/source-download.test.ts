@@ -113,4 +113,42 @@ describe("source transcribe", () => {
 		expect(existsSync(join(dir, "transcripts", "a.json"))).toBe(true);
 		expect(existsSync(join(dir, "transcripts", "b.json"))).toBe(false);
 	});
+
+	it("should refuse before trying any file while a setting can't be used", async () => {
+		// GIVEN a setting that couldn't be used, and a collection with one file
+		const ctx = testContext({
+			settingsIssues: ["/data/config.json: captions.fontSize: Expected number"],
+		});
+		seedCollection(ctx, ["a.mp3"]);
+		const transcriber = fakeTranscriber();
+
+		// WHEN the collection is transcribed
+		const error = await runFailure(
+			transcribeCollection(ctx),
+			fakePorts({ transcriber, mediaTools: fakeMediaTools({ durationSec: 90 }) }),
+		);
+
+		// THEN it fails with the settings refusal, and no file reached the transcriber
+		expect(error.code).toBe("failed");
+		expect(error.fix).toContain("doctor");
+		expect(transcriber.calls).toHaveLength(0);
+	});
+
+	it("should say on a dry run whether the files fit the caps", async () => {
+		// GIVEN two 90-second files ($0.009 each) and a daily cap of $0.01, which fits one
+		const ctx = testContext({ config: { caps: { dailyUsd: 0.01 } } });
+		seedCollection(ctx, ["a.mp3", "b.mp3"]);
+
+		// WHEN the collection is planned with a dry run
+		const planned = await run(
+			sourceTranscribe.run({ collection: "sm-awareness", language: undefined }, ctx, {
+				dryRun: true,
+				confirmed: false,
+			}),
+			ninetySeconds(),
+		);
+
+		// THEN its budget says the estimate doesn't fit, naming the daily cap
+		expect(planned.budget).toMatchObject({ fits: false, stoppedBy: "caps.dailyUsd" });
+	});
 });

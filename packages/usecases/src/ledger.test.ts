@@ -4,7 +4,16 @@ import { DateTime, Effect, Exit } from "effect";
 import { describe, expect, it } from "vitest";
 import { daysNow } from "./days.ts";
 import { takeLock } from "./files.ts";
-import { type PaidCall, paidCall, readLedger, release, reserve, settle, spent } from "./ledger.ts";
+import {
+	budgetFor,
+	type PaidCall,
+	paidCall,
+	readLedger,
+	release,
+	reserve,
+	settle,
+	spent,
+} from "./ledger.ts";
 import { testContext } from "./test/context.ts";
 
 /** A ledger line as commands write it, at `at`, for `usd`. */
@@ -147,6 +156,9 @@ describe("reserve", () => {
 		expect(error.message).toContain("per-post cap");
 		expect(error.fix).toContain("caps.postUsd");
 		expect(error.fix).not.toContain("Wait");
+		// AND raising it is left to the user, not given as the next step
+		expect(error.fix).toContain("is the user's decision");
+		expect(error.fix).not.toMatch(/^Raise/);
 	});
 
 	it("should say nothing can be spent when a cap is 0, rather than to wait", async () => {
@@ -194,6 +206,64 @@ describe("reserve", () => {
 		expect(whileHeld).toHaveLength(0);
 		// AND the reservation went through once it was free
 		expect(await Effect.runPromise(readLedger(ctx))).toHaveLength(1);
+	});
+});
+
+describe("budgetFor", () => {
+	it("should say what's left under each cap and that a call fits", async () => {
+		// GIVEN $1 a day, $10 a month and $2 a post, with $0.40 spent on post a today
+		const ctx = testContext({ config: { caps: { dailyUsd: 1, monthlyUsd: 10, postUsd: 2 } } });
+		await Effect.runPromise(reserve(ctx, call("a", 0.4)));
+
+		// WHEN a $0.20 call for post a is checked
+		const budget = await Effect.runPromise(budgetFor(ctx, { post: "a", usd: 0.2 }));
+
+		// THEN it fits, and what's left is each cap minus what's spent
+		expect(budget).toEqual({
+			fits: true,
+			leftTodayUsd: 0.6,
+			leftThisMonthUsd: 9.6,
+			leftOnPostUsd: 1.6,
+		});
+	});
+
+	it.each([
+		["caps.postUsd", { dailyUsd: 10, monthlyUsd: 10, postUsd: 0.5 }],
+		["caps.monthlyUsd", { dailyUsd: 10, monthlyUsd: 0.5, postUsd: 10 }],
+		["caps.dailyUsd", { dailyUsd: 0.5, monthlyUsd: 10, postUsd: 10 }],
+	])("should name %s as what stops a call, as the reservation would", async (cap, caps) => {
+		// GIVEN a $0.50 cap and $0.40 already spent on post a
+		const ctx = testContext({ config: { caps } });
+		await Effect.runPromise(reserve(ctx, call("a", 0.4)));
+
+		// WHEN a $0.20 call for post a is checked, then reserved
+		const budget = await Effect.runPromise(budgetFor(ctx, { post: "a", usd: 0.2 }));
+		const error = await Effect.runPromise(Effect.flip(reserve(ctx, call("a", 0.2))));
+
+		// THEN the check says it doesn't fit, naming that cap with the reservation's own message
+		expect(budget.fits).toBe(false);
+		expect(budget.stoppedBy).toBe(cap);
+		expect(budget.why).toBe(error.message);
+	});
+});
+
+describe("settings that can't be used", () => {
+	it("should reserve nothing, since the caps may be the defaults rather than the user's", async () => {
+		// GIVEN a setting that couldn't be used
+		const issue = 'config.json: captions.fontSize: Expected a number, got "big"';
+		const ctx = testContext({ settingsIssues: [issue] });
+
+		// WHEN a call is reserved, and a dry run checks one
+		const error = await Effect.runPromise(Effect.flip(reserve(ctx, call("a", 0.01))));
+		const budget = await Effect.runPromise(budgetFor(ctx, { post: "a", usd: 0.01 }));
+
+		// THEN the call fails before anything is written, naming the setting and doctor
+		expect(error.code).toBe("failed");
+		expect(error.message).toContain(issue);
+		expect(error.fix).toContain("doctor");
+		expect(await Effect.runPromise(readLedger(ctx))).toEqual([]);
+		// AND the dry run says it doesn't fit, for the same reason
+		expect(budget).toMatchObject({ fits: false, stoppedBy: "settings" });
 	});
 });
 
@@ -376,5 +446,31 @@ describe("paidCall", () => {
 		const entries = await Effect.runPromise(readLedger(ctx));
 		expect(entries.map((entry) => entry.type)).toEqual(["reserve"]);
 		expect(spent(entries, { post: "a" })).toBeCloseTo(0.1);
+	});
+
+	describe("budgetFor, for nothing to spend and for a batch", () => {
+		it("should say a call of $0 fits, even while a setting can't be used", async () => {
+			// GIVEN a setting that couldn't be used
+			const ctx = testContext({
+				settingsIssues: ["/data/config.json: captions.fontSize: Expected number"],
+			});
+
+			// WHEN a call with nothing to spend is checked
+			const budget = await Effect.runPromise(budgetFor(ctx, { post: "a", usd: 0 }));
+
+			// THEN it fits
+			expect(budget.fits).toBe(true);
+		});
+
+		it("should count what a batch planned for earlier posts toward the day", async () => {
+			// GIVEN a $1 daily cap and nothing spent
+			const ctx = testContext({ config: { caps: { dailyUsd: 1, postUsd: 10 } } });
+
+			// WHEN a $0.40 call is checked after $0.70 planned for earlier posts in the same dry run
+			const budget = await Effect.runPromise(budgetFor(ctx, { post: "c", usd: 0.4 }, 0.7));
+
+			// THEN it doesn't fit today's cap
+			expect(budget).toMatchObject({ fits: false, stoppedBy: "caps.dailyUsd" });
+		});
 	});
 });

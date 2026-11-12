@@ -24,12 +24,21 @@ import { Effect, Schema } from "effect";
 import type { Context } from "../context.ts";
 import { ensureDir, hashBytes, hashOf, writeFileAtomic } from "../files.ts";
 import { parseBeatList, requireKey } from "../inputs.ts";
-import { release, releaseIfNothingBilled, reserve, settle } from "../ledger.ts";
+import {
+	Budget,
+	budgetFor,
+	budgetLine,
+	release,
+	releaseIfNothingBilled,
+	reserve,
+	settingsRefusal,
+	settle,
+} from "../ledger.ts";
 import { chooseModel, costOf, type NamedModel } from "../models.ts";
 import { defineOperation, p, type RunMode } from "../operation.ts";
 import { ImageMaker, type ImageRequest } from "../ports.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
-import { nextStep } from "./post.ts";
+import { agentStep, NextFields, nextAfterDryRun, nextOf, nextStep } from "./post.ts";
 
 type Maker = ImageMaker["Service"];
 
@@ -199,6 +208,26 @@ const generateOne = Effect.fn("generateOne")(function* (
 const withBeat = (post: Post, index: number, change: (beat: Beat) => Beat): Post =>
 	mapBeats(post, (b) => (b.index === index ? change(b) : b));
 
+/** The real run of what a dry run planned: the same call without `dryRun`, and `--yes` on the CLI. */
+const realRunOf = (
+	slug: string,
+	input: {
+		readonly beat?: string | undefined;
+		readonly reroll: boolean;
+		readonly model?: string | undefined;
+	},
+) =>
+	agentStep(
+		"image_generate",
+		{
+			post: slug,
+			...(input.beat === undefined ? {} : { beat: input.beat }),
+			...(input.reroll ? { reroll: true } : {}),
+			...(input.model === undefined ? {} : { model: input.model }),
+		},
+		{ yes: true, note: "once the user has seen the estimate" },
+	);
+
 export const imageGenerate = defineOperation({
 	name: "image_generate",
 	description:
@@ -218,7 +247,9 @@ export const imageGenerate = defineOperation({
 		planned: Schema.Array(Planned),
 		estimateUsd: Schema.Finite,
 		dryRun: Schema.Boolean,
-		next: Schema.String,
+		/** On a dry run: whether the estimate fits the caps, and what's left under each. */
+		budget: Schema.optionalKey(Budget),
+		...NextFields,
 	}),
 	surface: "cli-and-mcp",
 	spends: true,
@@ -231,7 +262,7 @@ export const imageGenerate = defineOperation({
 		if (!isScriptApproved(post)) {
 			const changed = changesSinceApproval(post);
 			return yield* fail(
-				"needs-confirmation",
+				"needs-approval",
 				changed.length === 0
 					? `${input.post}'s script isn't approved, so nothing will be spent on images yet.`
 					: `${input.post} changed since the user approved it (${changed.join(", ")}), so nothing will be spent on images yet.`,
@@ -254,8 +285,10 @@ export const imageGenerate = defineOperation({
 		}
 
 		if (!mode.dryRun) {
-			// Fail on a missing key before anything changes: --reroll saves new seeds, and
-			// sending reserves money.
+			// Fail on a setting that can't be used or a missing key before anything changes:
+			// --reroll saves new seeds, and sending reserves money.
+			const refusal = settingsRefusal(ctx);
+			if (refusal !== undefined) return yield* refusal;
 			yield* Effect.forEach(maker.keys, (key) => requireKey(ctx, key), { discard: true });
 		}
 
@@ -314,12 +347,20 @@ export const imageGenerate = defineOperation({
 			});
 			post = yield* readPost(ctx, input.post);
 		}
+		const budget = mode.dryRun
+			? yield* budgetFor(ctx, { post: post.slug, usd: total }, mode.plannedUsd)
+			: undefined;
 		return {
 			model: model.name,
 			planned,
 			estimateUsd: total,
 			dryRun: mode.dryRun,
-			next: nextStep(post),
+			...(budget === undefined ? {} : { budget }),
+			// After a dry run that would make images, the next step is the real run (or the user's
+			// call when it won't fit), not another dry run.
+			...(budget !== undefined && planned.some((item) => item.action !== "skip")
+				? nextAfterDryRun(budget, realRunOf(post.slug, input))
+				: nextOf(post)),
 		};
 	}),
 	render: (o) => {
@@ -328,6 +369,7 @@ export const imageGenerate = defineOperation({
 		const head = o.dryRun
 			? `Would generate ${counts.generate} image${counts.generate === 1 ? "" : "s"} with ${o.model} (~$${o.estimateUsd.toFixed(3)}), resume ${counts.resume}, skip ${counts.skip} up to date.`
 			: `Generated ${counts.generate}, resumed ${counts.resume}, skipped ${counts.skip} (~$${o.estimateUsd.toFixed(3)} with ${o.model}).`;
-		return `${head}\nNext: ${o.next}`;
+		const budget = o.budget === undefined ? "" : `\n${budgetLine(o.budget)}`;
+		return `${head}${budget}\nNext: ${o.next}`;
 	},
 });

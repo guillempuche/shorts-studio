@@ -44,7 +44,7 @@ describe("post review", () => {
 		const error = await runFailure(review(ctx, "approve"));
 
 		// THEN no review is recorded, and the user is asked to run it themselves
-		expect(error.code).toBe("needs-confirmation");
+		expect(error.code).toBe("needs-approval");
 		expect(error.fix).toContain("terminal");
 		expect((await postOf(ctx)).review).toBeUndefined();
 	});
@@ -118,7 +118,7 @@ describe("post finalize", () => {
 		const error = await runFailure(postFinalize.run({ post: SLUG, file: video }, ctx, MODE));
 
 		// THEN it waits for the user's approval
-		expect(error.code).toBe("needs-confirmation");
+		expect(error.code).toBe("needs-approval");
 		expect((await postOf(ctx)).final).toBeUndefined();
 	});
 

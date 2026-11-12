@@ -175,18 +175,143 @@ export interface PaidCall {
 const passes = (spentUsd: number, usd: number, capUsd: number): boolean =>
 	Math.round((spentUsd + usd) * 1e6) > Math.round(capUsd * 1e6);
 
-/** What to do about a cap: waiting helps for a day or a month, never for a post, nor at $0. */
-const capFix = (setting: string, capUsd: number, wait: string | undefined, configFile: string) =>
-	capUsd === 0
-		? `${setting} is 0, so nothing can be spent. Raise it in ${configFile}.`
-		: wait === undefined
-			? `Raise ${setting} in ${configFile} if this post is worth more.`
-			: `${wait}, or raise ${setting} in ${configFile}.`;
+/**
+ * What to do about a cap: waiting helps for a day or a month, never for a post, nor at $0.
+ * Raising one is left to the user, since an agent reads this fix as its next step.
+ */
+const capFix = (setting: string, capUsd: number, wait: string | undefined, configFile: string) => {
+	const raise = `Raising ${setting} in ${configFile} is the user's decision.`;
+	if (capUsd === 0) return `${setting} is 0, so nothing can be spent. ${raise}`;
+	return wait === undefined ? raise : `${wait}. ${raise}`;
+};
 
 /**
- * Reserves `call.usd`, or fails with `over-budget` when a cap would be passed. When several
- * would be, it names the one that waiting would fix last: the post's, then the month's, then the
- * day's.
+ * What a call would leave under each cap, and whether it fits. A dry run reports it, so an agent
+ * learns a call won't fit before the real run fails. `stoppedBy` names what stops it.
+ */
+export const Budget = Schema.Struct({
+	fits: Schema.Boolean,
+	leftTodayUsd: Schema.Finite,
+	leftThisMonthUsd: Schema.Finite,
+	leftOnPostUsd: Schema.Finite,
+	stoppedBy: Schema.optionalKey(
+		Schema.Literals(["settings", "caps.postUsd", "caps.monthlyUsd", "caps.dailyUsd"]),
+	),
+	why: Schema.optionalKey(Schema.String),
+});
+export type Budget = typeof Budget.Type;
+
+/** A dry run's sentence about the caps, for text output. */
+export const budgetLine = (budget: Budget): string =>
+	budget.fits
+		? `It fits the caps: $${budget.leftTodayUsd.toFixed(2)} left today, $${budget.leftOnPostUsd.toFixed(2)} on this post.`
+		: `It wouldn't fit: ${budget.why ?? budget.stoppedBy}`;
+
+/** What's left of a cap in dollars, never below 0, rounded to millionths like `passes`. */
+const left = (capUsd: number, spentUsd: number): number =>
+	Math.max(0, Math.round((capUsd - spentUsd) * 1e6) / 1e6);
+
+/**
+ * Why nothing may be spent while a setting can't be used, or undefined when every setting can be:
+ * the caps may then be the defaults rather than the user's.
+ */
+export const settingsRefusal = (ctx: Context): ShortsError | undefined => {
+	const [issue, ...more] = ctx.settingsIssues;
+	if (issue === undefined) return undefined;
+	const others = more.length === 0 ? "" : ` (and ${more.length} more)`;
+	return fail(
+		"failed",
+		`A setting can't be used, so the caps may be the defaults rather than yours, and nothing was spent: ${issue}${others}`,
+		// An MCP server reads the settings once, when it starts.
+		"Run doctor and fix the settings it names, then run this again. A running MCP server keeps the settings it started with, so restart it after the fix.",
+	);
+};
+
+/**
+ * Checks a call against the caps: the dry run's answer and, under the lock, the reservation's.
+ * Settings that couldn't be used come first, since the caps may then be the defaults rather than
+ * the user's. Then the cap that waiting would fix last: the post's, the month's, the day's.
+ */
+const checkCaps = (
+	ctx: Context,
+	entries: ReadonlyArray<LedgerEntry>,
+	call: Pick<PaidCall, "post" | "usd">,
+	days: ReturnType<typeof daysNow>,
+	plannedUsd = 0,
+): { readonly budget: Budget; readonly failure?: ShortsError } => {
+	const live = amounts(entries);
+	const { dailyUsd, monthlyUsd, postUsd } = caps(ctx);
+	// A batch dry run counts what it planned for earlier posts toward the day and the month.
+	const spentToday = total(live, { since: days.startOfToday }) + plannedUsd;
+	const spentThisMonth = total(live, { since: days.startOfMonth }) + plannedUsd;
+	const spentOnPost = total(live, { post: call.post });
+	const room = {
+		leftTodayUsd: left(dailyUsd, spentToday),
+		leftThisMonthUsd: left(monthlyUsd, spentThisMonth),
+		leftOnPostUsd: left(postUsd, spentOnPost),
+	};
+	const stop = (stoppedBy: NonNullable<Budget["stoppedBy"]>, failure: ShortsError) => ({
+		budget: { fits: false, ...room, stoppedBy, why: failure.message },
+		failure,
+	});
+	const configFile = join(ctx.paths.data, "config.json");
+	const cost = `This call (~$${call.usd.toFixed(3)})`;
+
+	// Nothing to spend fits, whatever the settings or the caps say.
+	if (call.usd <= 0) return { budget: { fits: true, ...room } };
+	const refusal = settingsRefusal(ctx);
+	if (refusal !== undefined) return stop("settings", refusal);
+	if (passes(spentOnPost, call.usd, postUsd)) {
+		return stop(
+			"caps.postUsd",
+			fail(
+				"over-budget",
+				`${cost} would pass the per-post cap: $${spentOnPost.toFixed(2)} of $${postUsd.toFixed(2)} spent on ${call.post}.`,
+				capFix("caps.postUsd", postUsd, undefined, configFile),
+			),
+		);
+	}
+	if (passes(spentThisMonth, call.usd, monthlyUsd)) {
+		return stop(
+			"caps.monthlyUsd",
+			fail(
+				"over-budget",
+				`${cost} would pass this month's cap: $${spentThisMonth.toFixed(2)} of $${monthlyUsd.toFixed(2)} spent in ${days.month}.`,
+				capFix("caps.monthlyUsd", monthlyUsd, "Wait until next month", configFile),
+			),
+		);
+	}
+	if (passes(spentToday, call.usd, dailyUsd)) {
+		return stop(
+			"caps.dailyUsd",
+			fail(
+				"over-budget",
+				`${cost} would pass today's cap: $${spentToday.toFixed(2)} of $${dailyUsd.toFixed(2)} spent.`,
+				capFix("caps.dailyUsd", dailyUsd, "Wait until tomorrow", configFile),
+			),
+		);
+	}
+	return { budget: { fits: true, ...room } };
+};
+
+/**
+ * Whether a call of `usd` for `post` would fit the caps now, for a dry run, after `plannedUsd`
+ * that a batch dry run planned for earlier posts. Read without the lock, so another command may
+ * spend before the real run, which checks again under it.
+ */
+export const budgetFor = (
+	ctx: Context,
+	call: Pick<PaidCall, "post" | "usd">,
+	plannedUsd = 0,
+): Effect.Effect<Budget, ShortsError> =>
+	Effect.map(
+		readLedgerFile(ctx),
+		({ entries }) => checkCaps(ctx, entries, call, daysNow(ctx), plannedUsd).budget,
+	);
+
+/**
+ * Reserves `call.usd`, or fails before reserving: with `failed` while a setting can't be used,
+ * or with `over-budget` when a cap would be passed (see `checkCaps` for which one it names).
  */
 export const reserve = (ctx: Context, call: PaidCall): Effect.Effect<string, ShortsError> =>
 	withLedgerLock(
@@ -202,36 +327,10 @@ export const reserve = (ctx: Context, call: PaidCall): Effect.Effect<string, Sho
 			}
 
 			const ledger = yield* readLedgerFile(ctx);
-			const live = amounts(ledger.entries);
-			const { dailyUsd, monthlyUsd, postUsd } = caps(ctx);
+			// One clock reading for the day the call counts toward and the time it's written with.
 			const days = daysNow(ctx);
-			const spentToday = total(live, { since: days.startOfToday });
-			const spentThisMonth = total(live, { since: days.startOfMonth });
-			const spentOnPost = total(live, { post: call.post });
-			const configFile = join(ctx.paths.data, "config.json");
-			const cost = `This call (~$${call.usd.toFixed(3)})`;
-
-			if (passes(spentOnPost, call.usd, postUsd)) {
-				return yield* fail(
-					"over-budget",
-					`${cost} would pass the per-post cap: $${spentOnPost.toFixed(2)} of $${postUsd.toFixed(2)} spent on ${call.post}.`,
-					capFix("caps.postUsd", postUsd, undefined, configFile),
-				);
-			}
-			if (passes(spentThisMonth, call.usd, monthlyUsd)) {
-				return yield* fail(
-					"over-budget",
-					`${cost} would pass this month's cap: $${spentThisMonth.toFixed(2)} of $${monthlyUsd.toFixed(2)} spent in ${days.month}.`,
-					capFix("caps.monthlyUsd", monthlyUsd, "Wait until next month", configFile),
-				);
-			}
-			if (passes(spentToday, call.usd, dailyUsd)) {
-				return yield* fail(
-					"over-budget",
-					`${cost} would pass today's cap: $${spentToday.toFixed(2)} of $${dailyUsd.toFixed(2)} spent.`,
-					capFix("caps.dailyUsd", dailyUsd, "Wait until tomorrow", configFile),
-				);
-			}
+			const { failure } = checkCaps(ctx, ledger.entries, call, days);
+			if (failure !== undefined) return yield* failure;
 
 			const id = randomUUID();
 			yield* append(ctx, ledger, { id, at: days.at, type: "reserve", ...call });

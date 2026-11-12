@@ -130,6 +130,11 @@ export interface Context {
 	 * so the user's own decisions check it.
 	 */
 	readonly interactive: boolean;
+	/**
+	 * The variable that marks this shell as a coding agent's (`CLAUDECODE`), or undefined. An agent
+	 * with a pseudo-terminal passes `interactive`, so the user's decisions check this too.
+	 */
+	readonly agentShell: string | undefined;
 	/** Progress and diagnostics: always stderr, since stdout carries results and MCP messages. */
 	readonly log: (line: string) => void;
 }

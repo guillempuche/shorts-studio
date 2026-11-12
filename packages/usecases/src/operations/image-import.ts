@@ -11,7 +11,7 @@ import { Effect, Schema } from "effect";
 import { ensureDir, fileHash, fileStep, hashOf } from "../files.ts";
 import { defineOperation, p } from "../operation.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
-import { nextStep } from "./post.ts";
+import { NextFields, nextOf } from "./post.ts";
 
 const IMAGE = /^\.(jpe?g|png|webp)$/i;
 
@@ -24,7 +24,7 @@ export const imageImport = defineOperation({
 		beat: p.int("Beat index"),
 		file: p.string("Path to a JPEG, PNG or WebP image"),
 	},
-	output: Schema.Struct({ file: Schema.String, next: Schema.String }),
+	output: Schema.Struct({ file: Schema.String, ...NextFields }),
 	surface: "cli-and-mcp",
 	spends: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
@@ -77,7 +77,7 @@ export const imageImport = defineOperation({
 		const post = yield* updatePost(ctx, input.post, "image import", (current) =>
 			Effect.succeed(mapBeats(current, attach)),
 		);
-		return { file: join(dir, file), next: nextStep(post) };
+		return { file: join(dir, file), ...nextOf(post) };
 	}),
 	render: (o) => `Imported ${o.file}\nNext: ${o.next}`,
 });

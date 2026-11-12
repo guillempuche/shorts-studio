@@ -13,6 +13,7 @@ export const ErrorCode = Schema.Literals([
 	"failed",
 	"usage",
 	"needs-confirmation",
+	"needs-approval",
 	"over-budget",
 	"not-found",
 	"conflict",
@@ -27,10 +28,13 @@ const said = { message: Schema.String, fix: Schema.String };
 
 export class Failed extends Schema.TaggedError<Failed>()("Failed", said) {}
 export class Usage extends Schema.TaggedError<Usage>()("Usage", said) {}
+/** Check the estimate, then run it again with `--yes`: the agent may do that. */
 export class NeedsConfirmation extends Schema.TaggedError<NeedsConfirmation>()(
 	"NeedsConfirmation",
 	said,
 ) {}
+/** The step waits on the user's own decision (an approval): the agent stops and asks. */
+export class NeedsApproval extends Schema.TaggedError<NeedsApproval>()("NeedsApproval", said) {}
 export class OverBudget extends Schema.TaggedError<OverBudget>()("OverBudget", said) {}
 export class NotFound extends Schema.TaggedError<NotFound>()("NotFound", said) {}
 export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", said) {}
@@ -48,6 +52,7 @@ export const Reason = Schema.Union([
 	Failed,
 	Usage,
 	NeedsConfirmation,
+	NeedsApproval,
 	OverBudget,
 	NotFound,
 	Conflict,
@@ -64,6 +69,7 @@ const CODE: Readonly<Record<Reason["_tag"], ErrorCode>> = {
 	Failed: "failed",
 	Usage: "usage",
 	NeedsConfirmation: "needs-confirmation",
+	NeedsApproval: "needs-approval",
 	OverBudget: "over-budget",
 	NotFound: "not-found",
 	Conflict: "conflict",
@@ -85,6 +91,7 @@ const REASON: Readonly<Record<ErrorCode, new (said: Said) => Reason>> = {
 	failed: Failed,
 	usage: Usage,
 	"needs-confirmation": NeedsConfirmation,
+	"needs-approval": NeedsApproval,
 	"over-budget": OverBudget,
 	"not-found": NotFound,
 	conflict: Conflict,
@@ -100,6 +107,7 @@ export const exitCodeOf = (code: ErrorCode): number => {
 		case "usage":
 			return 2;
 		case "needs-confirmation":
+		case "needs-approval":
 			return 3;
 		case "over-budget":
 			return 4;
