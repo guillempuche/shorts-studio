@@ -118,24 +118,26 @@ A reservation is freed only when the failure proves nothing was billed (`nothing
 
 ## Agent interface
 
-Results go to stdout. Progress and log messages go to stderr. With `--json`, stdout holds exactly one object, even when a command is given a flag or value it doesn't take: `{ ok: true, outputVersion, command, result }` or `{ ok: false, outputVersion, command, error: { code, message, fix } }`. A run that selects more than one post (`--post a,b`, or `--day` or `--in-stage` matching several) holds `results`, one per post, in place of `result`. A failed MCP call returns the same error object with `isError: true`. Arguments that don't match a tool's Schema get the MCP library's own error instead: a JSON-RPC error on 2025-11-25 and 2025-06-18, and a result with `isError: true` on 2026-07-28.
+Results go to stdout. Progress and log messages go to stderr. With `--json`, stdout holds exactly one object, even when a command is given a flag or value it doesn't take: `{ ok: true, outputVersion, command, result }` or `{ ok: false, outputVersion, command, error: { code, message, fix } }`. A run that selects more than one post (`--post a,b`, or `--day` or `--in-stage` matching several) holds `results`, one per post, in place of `result`. A failed MCP call returns the same error object with `isError: true`. Arguments that don't match a tool's Schema, including a field the tool doesn't take (a misspelt `dry_run`), get the MCP library's own error instead, naming the field and the fields the tool takes: a JSON-RPC error on 2025-06-18, and a result with `isError: true` on 2025-11-25 and 2026-07-28.
+
+Every result that moves a post on holds `next`, the command as text, and `nextSteps`, the same steps as data (`nextStepsOf` in `packages/usecases/src/operations/post.ts`). Each step says whether it's the agent's or the user's (`by`). An agent's step has its MCP tool and arguments (`tool`, `args`) and its CLI command (`cli`); a user's step, such as an approval, has no tool. A placeholder the agent fills in first, such as `<final.mp4>`, is listed in the step's `fill`. A spending step is its dry run first, and that dry run's next step is the real run, or the user's call when the estimate doesn't fit the caps.
 
 `mcp serve` speaks MCP 2026-07-28, where each request carries its own version, and 2025-11-25 and 2025-06-18 for clients that start with `initialize` (`MCP_PROTOCOLS` in `apps/mcp/src/mcp.ts`).
 
-When a spending command runs without `--yes`, that one object holds both the estimate (`result`) and the request for confirmation (`error`).
+When a spending command runs without `--yes`, that one object holds both the estimate (`result`) and the request for confirmation (`error`). A dry run's result also holds `budget`: what's left today, this month and on the post, whether the estimate fits, and if not, what stops it (`stoppedBy`). A batch dry run counts what it planned for earlier posts. While a setting in `config.json`, `brand.json` or a `SHORTS_*` variable can't be used, the caps may be the defaults, so a paid call fails before it reserves anything and other CLI commands name the setting on stderr. An MCP server reads the settings when it starts, so it needs a restart after they're fixed.
 
-Spending commands take `--dry-run` and need `--yes` on the CLI, except transcription, which costs under a cent a post and runs before there is a script to approve. Over MCP they take `dryRun` instead, and the client's approval prompt does the job of `--yes`. `script approve` and `post review` refuse to run unless stdin is a terminal, so an agent can't record the user's decisions.
+Spending commands take `--dry-run` and need `--yes` on the CLI, except transcription, which costs under a cent a post and runs before there is a script to approve. Over MCP they take `dryRun` instead, and the client's approval prompt does the job of `--yes`. `script approve` and `post review` refuse to run unless stdin is a terminal, and in a shell where an agent's marker is set (`CLAUDECODE`), so an agent can't record the user's decisions.
 
 ### Exit codes
 
-| Code | Meaning                              | Error codes                                                                           |
-| ---- | ------------------------------------ | ------------------------------------------------------------------------------------- |
-| 0    | Success, including `--dry-run`       |                                                                                       |
-| 1    | Failed                               | `failed`, `not-found`, `conflict`, `stale`, `missing-tool`, `missing-key`, `provider` |
-| 2    | Usage error                          | `usage`, and unknown flags or commands                                                |
-| 3    | Needs `--yes` or the user's approval | `needs-confirmation`                                                                  |
-| 4    | A spending cap would be passed       | `over-budget`                                                                         |
-| 130  | Interrupted (Ctrl-C or `kill`)       |                                                                                       |
+| Code | Meaning                              | Error codes                                                                            |
+| ---- | ------------------------------------ | -------------------------------------------------------------------------------------- |
+| 0    | Success, including `--dry-run`       |                                                                                        |
+| 1    | Failed                               | `failed`, `not-found`, `conflict`, `stale`, `missing-tool`, `missing-key`, `provider`  |
+| 2    | Usage error                          | `usage`, and unknown flags or commands                                                 |
+| 3    | Needs `--yes` or the user's approval | `needs-confirmation` (check the estimate, then `--yes`), `needs-approval` (the user's) |
+| 4    | A spending cap would be passed       | `over-budget`                                                                          |
+| 130  | Interrupted (Ctrl-C or `kill`)       |                                                                                        |
 
 ## Key decisions
 

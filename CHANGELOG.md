@@ -17,9 +17,17 @@ Notable changes, newest first. The release workflow publishes each version's sec
 - `doctor` warns when the price in use was checked more than 90 days ago, or when a model in config.json belongs to no provider in use, and fails when a job's model can't be used.
 - CI builds the Linux, macOS and Windows binaries and runs them through `scripts/smoke-binary.ts`, and the release runs it before publishing, since the binaries run on Bun while the tests run on Node.
 - The MCP server speaks MCP 2026-07-28, so a client on the newest version is served instead of getting an internal error. Clients on 2025-11-25 and 2025-06-18 keep their version.
+- Every result that moves a post on has `nextSteps` next to `next`: each step's MCP tool and arguments, its CLI command, and whether it's the agent's or the user's.
+- A dry run says whether its estimate fits the caps (`budget`), and which cap stops it if not. A batch dry run counts the posts before it, and a dry run that won't fit leaves the next step to you.
+- A post not found by a slug that's one post's slug without its date suggests that post.
 
 ### Changed
 
+- **BREAKING:** a step that waits on the user's approval fails with the new code `needs-approval`, still exit 3: `script approve` and `post review` from an agent, `image generate` on an unapproved script, `capcut export` and `post finalize` on an unapproved draft. `needs-confirmation` now only means "check the estimate, then run it again with `--yes`". A CapCut export of a draft that changed after approval fails with `stale`.
+- `script approve` and `post review` also refuse in an agent's shell (`CLAUDECODE` set), even with a terminal.
+- `next` points images at `image generate --dry-run` first, instead of straight at `--yes`.
+- The over-budget fix says where waiting helps and that raising a cap is the user's decision, instead of telling the reader to raise it.
+- `doctor`'s fix names `config show --json`, which lists every check with its status and fix.
 - `script approve` covers the audio and every image prompt, not just the script: changing any of them needs approving again, and `next` says what changed. Posts approved before need approving again.
 - `script approve` and `post review` run only from a terminal, so no agent can record your decision. The Claude Code and Codex rules also catch them with flags placed first.
 - `audio transcribe` and `source transcribe` take `--dry-run` and show their cost. They still run without `--yes`, and the agent settings ask before them.
@@ -38,6 +46,9 @@ Notable changes, newest first. The release workflow publishes each version's sec
 
 ### Fixed
 
+- A `config.json`, `brand.json` or `SHORTS_*` setting that can't be used no longer lets a paid call spend against the default caps, which can be higher than yours: it fails before reserving anything, and other commands name the setting on stderr.
+- An MCP tool call with a field the tool doesn't take, such as `dry_run` for `dryRun`, fails and names the fields it takes, instead of dropping the field and spending.
+- `--help` describes `models`.
 - A `SHORTS_*` variable whose name starts like another setting's, such as `SHORTS_CAPTIONS_FONT_SIZE`, no longer makes config.json unreadable, which had put the spending caps back to their defaults. A variable with a value that isn't valid is reported by `doctor` and left out; config.json and the other variables still apply, and valid variables apply even when config.json isn't valid. A number or yes/no written as text in config.json (`"dailyUsd": "1"`) is still read as that value. A `SHORTS_MODELS_*` variable no longer replaces config.json's models.
 - With `--json` (or `--json=true`), a command called wrong, or a group of commands given no command such as `post`, prints one JSON error object instead of help, and a run on several posts where some failed ends with the error object too. `doctor --json` names itself `doctor`.
 - A file that can't be read or written (a folder in its place, no permission, a full disk) fails with a fix, instead of a stack trace and, with `--json`, no JSON at all. An unexpected failure ends the same way, with its trace on stderr. An image that was paid for but couldn't be saved is fetched again, free, on the next run.

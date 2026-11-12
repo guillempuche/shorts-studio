@@ -21,7 +21,7 @@ The MCP tests build their client with `McpTest.makeClient(..., { protocols: [Mcp
 
 **Non-Goals:**
 
-- Changing how a tool's bad arguments come back. Effect decides that per version: 2025-11-25 and 2025-06-18 return a JSON-RPC `-32602` error, and 2026-07-28 returns a tool result with `isError: true` and Effect's own text, as the 2026-07-28 spec asks. Neither is the `{ code, message, fix }` object.
+- Changing how a tool's bad arguments come back. Effect decides that per version: 2025-06-18 returns a JSON-RPC `-32602` error, and 2025-11-25 and 2026-07-28 return a tool result with `isError: true` and Effect's own text, as SEP-1303 asks from 2025-11-25 on. Neither is the `{ code, message, fix }` object.
 
 ## Decisions
 

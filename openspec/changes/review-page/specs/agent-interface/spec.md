@@ -2,7 +2,7 @@
 
 ### Requirement: The review page SHALL only show posts and take notes
 
-`post watch` SHALL be CLI-only and SHALL refuse with code `needs-confirmation` when stdin isn't an interactive terminal. It SHALL listen only on 127.0.0.1, require the token in its address, reject a `Host` other than its own, and serve only the selected posts' files. The page SHALL write nothing but notes, and SHALL offer no way to approve, fix or reject.
+`post watch` SHALL be CLI-only and SHALL refuse with code `needs-approval` when stdin isn't an interactive terminal or an agent's marker is set. It SHALL listen only on 127.0.0.1, require the token in its address, reject a `Host` other than its own, and serve only the selected posts' files. The page SHALL write nothing but notes, and SHALL offer no way to approve, fix or reject.
 
 #### Scenario: Another site tries to read it
 

@@ -7,7 +7,7 @@
 #### Scenario: An unmarked beat
 
 - **WHEN** `clip animate` is asked for a beat not marked in review
-- **THEN** it refuses with code `needs-confirmation`
+- **THEN** it refuses with code `needs-approval`
 
 #### Scenario: Marks after a new render
 
@@ -17,7 +17,7 @@
 #### Scenario: A beat cut differently
 
 - **WHEN** beat 7 was marked and a re-cut changes beat 7's frames
-- **THEN** `clip animate --beat 7` refuses with code `needs-confirmation`
+- **THEN** `clip animate --beat 7` refuses with code `needs-approval`
 
 ### Requirement: Voice and music SHALL reserve their cost
 

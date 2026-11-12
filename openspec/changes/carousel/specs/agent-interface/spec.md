@@ -2,7 +2,7 @@
 
 ### Requirement: Carousels SHALL be reviewed by the user
 
-`carousel review --platform <p> --decision approve|fix|reject` SHALL be CLI-only, and SHALL refuse with code `needs-confirmation`, recording nothing, when stdin isn't an interactive terminal. It SHALL need rendered slides for that platform, SHALL record each PNG's hash, and SHALL take in notes per slide and the slide notes waiting from the review page.
+`carousel review --platform <p> --decision approve|fix|reject` SHALL be CLI-only, and SHALL refuse with code `needs-approval`, recording nothing, when stdin isn't an interactive terminal or an agent's marker is set. It SHALL need rendered slides for that platform, SHALL record each PNG's hash, and SHALL take in notes per slide and the slide notes waiting from the review page.
 
 #### Scenario: An agent tries to approve
 
