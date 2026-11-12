@@ -114,11 +114,18 @@ Each caption SHALL show at most 4 words, about 42 characters and about 17 charac
 - **WHEN** the clips are placed back to back
 - **THEN** they have as many frames as the draft
 
+#### Scenario: A draft that isn't approved
+
+- **WHEN** the CapCut export runs on a draft the user hasn't approved
+- **THEN** nothing is exported
+- **AND** it fails with code `needs-approval`
+
 #### Scenario: Beats changed after approval
 
 - **WHEN** a beat's story moment changes after the draft was approved
 - **AND** the CapCut export runs
 - **THEN** nothing is exported
+- **AND** it fails with code `stale`
 - **AND** the fix names `draft render`
 
 ### Requirement: Imported images SHALL be kept

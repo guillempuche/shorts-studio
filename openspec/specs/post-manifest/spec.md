@@ -79,4 +79,4 @@ Each beat MAY record a story moment (`hook`, `setup`, `tension`, `twist`, `vulne
 #### Scenario: Finalizing before approval
 
 - **WHEN** a final video is recorded for a draft that isn't approved
-- **THEN** the command refuses with `needs-confirmation`
+- **THEN** the command refuses with `needs-approval`

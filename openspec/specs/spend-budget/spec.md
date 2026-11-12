@@ -35,7 +35,7 @@ A command SHALL save the provider's request id and result URLs in `post.json` be
 
 ### Requirement: A dry run SHALL spend nothing
 
-With `--dry-run`, or without `--yes` on a CLI command that needs it, a spending command SHALL report what it would make and the estimated cost. It SHALL change nothing. Transcription SHALL take a dry run, but SHALL NOT need `--yes`.
+With `--dry-run`, or without `--yes` on a CLI command that needs it, a spending command SHALL report what it would make, the estimated cost, and whether the estimate fits the caps, counting what a batch dry run planned for earlier posts; when it doesn't, it SHALL name the cap that stops it. It SHALL change nothing. Transcription SHALL take a dry run, but SHALL NOT need `--yes`.
 
 #### Scenario: Without --yes
 
@@ -49,6 +49,13 @@ With `--dry-run`, or without `--yes` on a CLI command that needs it, a spending 
 - **THEN** it prints the price of 2 minutes
 - **AND** nothing is reserved or sent
 
+#### Scenario: A dry run that wouldn't fit
+
+- **WHEN** `image generate --dry-run` estimates more than is left of today's cap
+- **THEN** its result says the estimate doesn't fit
+- **AND** it names `caps.dailyUsd`
+- **AND** it exits 0
+
 ### Requirement: Spending SHALL be easy to see
 
 `budget show` SHALL report today's spending against the daily cap, this month's against the monthly cap, and each post's total against the per-post cap. Reservations that are not settled yet SHALL count at their estimate.
@@ -60,7 +67,7 @@ With `--dry-run`, or without `--yes` on a CLI command that needs it, a spending 
 
 ### Requirement: Images SHALL be made only from what the user approved
 
-`script approve` SHALL record the script's hash, the audio's hash and every beat's image prompt. `image generate` SHALL refuse with code `needs-confirmation` while any of them differs from what was approved, and SHALL send nothing. Transcription is the only paid call allowed before approval.
+`script approve` SHALL record the script's hash, the audio's hash and every beat's image prompt. `image generate` SHALL refuse with code `needs-approval` while any of them differs from what was approved, and SHALL send nothing. Transcription is the only paid call allowed before approval.
 
 #### Scenario: Script edited after approval
 
@@ -186,13 +193,14 @@ A total exactly on a cap SHALL fit it, whatever floating-point sums make of it. 
 
 ### Requirement: The error SHALL name the cap that waiting fixes last
 
-When a call would pass several caps, the error SHALL name the post's cap first, then the month's, then the day's. It SHALL tell the user to wait only for a day's or a month's cap above $0.
+When a call would pass several caps, the error SHALL name the post's cap first, then the month's, then the day's. It SHALL tell the user to wait only for a day's or a month's cap above $0, and SHALL say that raising a cap is the user's decision, not tell the reader to raise it.
 
 #### Scenario: Every cap would be passed
 
 - **WHEN** a call would pass the daily, monthly and per-post caps
 - **THEN** it fails with `over-budget`
 - **AND** the fix names `caps.postUsd` and doesn't say to wait
+- **AND** the fix says raising it is the user's decision
 
 ### Requirement: The ledger SHALL be read strictly
 
@@ -222,3 +230,20 @@ Each check on a sent request SHALL give up after 30 seconds, and downloading its
 - **WHEN** the provider stops answering while an image's status is checked
 - **THEN** the run fails with code `provider` within about 30 seconds
 - **AND** the next run checks on the same request
+
+### Requirement: Spending SHALL stop while the settings aren't valid
+
+When `config.json`, `brand.json` or a `SHORTS_*` variable can't be used, a paid call SHALL fail before it reserves or sends anything, since its caps aren't known, and a dry run SHALL say its estimate doesn't fit. Other commands SHALL still run, with a warning on stderr that names the problem.
+
+#### Scenario: A bad setting next to lowered caps
+
+- **WHEN** config.json sets `caps.dailyUsd` to 0.5 and `captions.fontSize` to `"big"`
+- **AND** `audio transcribe` runs
+- **THEN** nothing is reserved or sent
+- **AND** the fix names `doctor`
+
+#### Scenario: A command that spends nothing
+
+- **WHEN** `budget show` runs with the same config.json
+- **THEN** it runs
+- **AND** stderr names config.json and the problem

@@ -2,7 +2,7 @@
 
 ### Requirement: The setup check SHALL fail with the fixes
 
-`config check` and its alias `doctor` SHALL check ffmpeg (with libass), ffprobe, yt-dlp and the API keys. It SHALL also check that Takumi loads: a failure when `render.text` is `takumi`, a warning otherwise, because slides, covers and previews need it. When something blocks the work, it SHALL fail with code `missing-tool` and name each blocking problem with its fix.
+`config check` and its alias `doctor` SHALL check ffmpeg (with libass), ffprobe, yt-dlp and the API keys. It SHALL also check that Takumi loads: a failure when `render.text` is `takumi`, a warning otherwise, because slides, covers and previews need it. When something blocks the work, it SHALL fail with code `missing-tool`, name each blocking problem with its fix, and name `config show --json`, which lists every check with its status and fix.
 
 #### Scenario: No ffmpeg
 
@@ -13,8 +13,14 @@
 #### Scenario: A broken settings file
 
 - **WHEN** config.json or brand.json isn't valid
-- **THEN** every command still starts, using the defaults
+- **THEN** every command still starts, using the defaults and any valid `SHORTS_*` variables
 - **AND** `doctor` fails, naming the file and the problem
+
+#### Scenario: The checks as data
+
+- **WHEN** `doctor --json` fails
+- **THEN** its fix names `config show --json`
+- **AND** it doesn't refer to rows printed above
 
 #### Scenario: Takumi doesn't load
 
