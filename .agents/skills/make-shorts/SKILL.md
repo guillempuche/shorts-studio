@@ -41,4 +41,6 @@ Voice generation isn't built yet (openspec/changes/voice-music-animate). Until i
 
 ## When something fails
 
-Every error has a `fix`: do what it says. `over-budget` means stop and ask the user; never raise caps yourself. `needs-confirmation` means the step is the user's.
+Every error has a `fix`: do what it says. `over-budget` means stop and ask the user; never raise caps yourself. `needs-approval` means the step is the user's: stop and ask them. `needs-confirmation` means show the user the estimate, then run the same command with `--yes`. A `failed` error that names a setting means stop and tell the user: their caps may not apply until `doctor` passes.
+
+`nextSteps` in every result says what comes next as data: run a step whose `by` is `agent` (its `tool` and `args` over MCP, its `cli` in a shell), and hand the user each step whose `by` is `user`.
