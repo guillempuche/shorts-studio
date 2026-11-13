@@ -41,7 +41,7 @@ Requests in flight to one provider SHALL stay within its `parallel` limit (3 by 
 
 ### Requirement: A failed request SHALL stop new ones for its post
 
-When one of a post's beats fails in `image generate`, no other beat of that post SHALL start. Beats already started SHALL finish, and their images SHALL be saved. The run SHALL then fail with that first failure's error, unchanged.
+When one of a post's beats fails in `image generate`, no other beat of that post SHALL start. Beats already started SHALL finish, and their images SHALL be saved. The run SHALL then fail with that first failure's code.
 
 #### Scenario: The provider is down
 
