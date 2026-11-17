@@ -2,7 +2,7 @@
 
 ### Requirement: Imported images SHALL be kept
 
-When `image import` attaches an image to a beat, `image generate` SHALL keep that image, unless the beat is rerolled. `image import` SHALL refuse, with `conflict`, a beat whose paid request is saved but not fetched, and while `image generate` runs on the post. Its fix SHALL say how to fetch the paid image first, at no cost.
+When `image import` attaches an image to a beat, `image generate` SHALL keep that image, unless the beat is rerolled. `image import` SHALL refuse, with `conflict`, a beat whose paid request is saved but not fetched, and while `image generate` runs on the post. Its fix SHALL say how to fetch the paid image first, with the model that sent it, and SHALL say when that run also pays for a new image because the beat changed since its request.
 
 #### Scenario: Generating the other beats
 
@@ -15,4 +15,4 @@ When `image import` attaches an image to a beat, `image generate` SHALL keep tha
 - **AND** `image import --beat 1` runs
 - **THEN** it fails with `conflict`
 - **AND** beat 1's saved request is still there
-- **AND** the fix names `image generate --post <slug> --beat 1`
+- **AND** the fix names `image generate --post <slug> --beat 1 --model <the model that sent it>`
