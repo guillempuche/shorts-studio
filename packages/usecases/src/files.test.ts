@@ -14,6 +14,10 @@ const take = (lockFile: string, command: string): Promise<Lock> =>
 const busy = (holder: LockHolder | undefined) =>
 	fail("conflict", `Held by ${holder?.command}.`, "Wait for it.");
 
+/** A lock file's contents, naming process `pid` running `command` since `since` (ms). */
+const lockOf = (pid: number, command: string, since: number): string =>
+	JSON.stringify({ pid, command, since: new Date(since).toISOString() });
+
 describe("takeLock", () => {
 	it("should take over a lock whose process is gone", async () => {
 		// GIVEN a lock file left by a process that no longer exists
@@ -147,7 +151,7 @@ describe("withLock", () => {
 
 		// WHEN a command waits for it for 200 ms
 		const error = await Effect.runPromise(
-			Effect.flip(withLock(lockFile, "test", busy, Effect.void, 200)),
+			Effect.flip(withLock(lockFile, "test", busy, Effect.void, { waitMs: 200 })),
 		);
 
 		// THEN it gives up, naming the holder
@@ -170,6 +174,52 @@ describe("withLock", () => {
 		// AND the other command's lock is untouched
 		expect(JSON.parse(readFileSync(lockFile, "utf8")).command).toBe("other command");
 		held.release();
+	});
+
+	it("should take over a lock whose process number went to a program started after it", async () => {
+		// GIVEN a lock taken ten minutes ago that names a running process, which started a minute ago
+		const lockFile = join(tempDir(), "post.json.lock");
+		writeFileSync(lockFile, lockOf(process.pid, "gone", Date.now() - 10 * 60_000));
+		const processStartedAt = async () => new Date(Date.now() - 60_000);
+
+		// WHEN a command asks for the lock
+		const holder = await Effect.runPromise(
+			withLock(
+				lockFile,
+				"test",
+				busy,
+				Effect.sync(() => JSON.parse(readFileSync(lockFile, "utf8")).command),
+				{ processStartedAt },
+			),
+		);
+
+		// THEN it takes the lock over instead of waiting for a command that no longer exists
+		expect(holder).toBe("test");
+	});
+
+	it.each([
+		["an hour before the lock was taken", -60 * 60_000],
+		["30 seconds after it, within the clock's slack", 30_000],
+	])("should keep a lock whose process started %s", async (_, startedAfterLock) => {
+		// GIVEN a lock taken just now that names a running process, and when that process started
+		const lockFile = join(tempDir(), "post.json.lock");
+		const since = Date.now();
+		writeFileSync(lockFile, lockOf(process.pid, "live", since));
+		let asked = 0;
+		const processStartedAt = async () => {
+			asked += 1;
+			return new Date(since + startedAfterLock);
+		};
+
+		// WHEN a command waits for it for 300 ms
+		const error = await Effect.runPromise(
+			Effect.flip(withLock(lockFile, "test", busy, Effect.void, { waitMs: 300, processStartedAt })),
+		);
+
+		// THEN it gives up, naming the holder
+		expect(error.message).toBe("Held by live.");
+		// AND it asked when the holder started only once, not on every try
+		expect(asked).toBe(1);
 	});
 
 	it("should release the lock however the work ends", async () => {

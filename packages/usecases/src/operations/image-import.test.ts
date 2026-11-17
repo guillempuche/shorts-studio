@@ -5,12 +5,39 @@ import { describe, expect, it } from "vitest";
 import type { Context } from "../context.ts";
 import { postDir, readPost } from "../post-store.ts";
 import { testContext } from "../test/context.ts";
-import { run, runFailure } from "../test/fakes.ts";
+import { fakePorts, run, runFailure } from "../test/fakes.ts";
+import { failurePastLockWait } from "../test/lock.ts";
 import { readyForImages, seedPost } from "../test/posts.ts";
 import { imageImport } from "./image-import.ts";
 
 const SLUG = "2026-11-04-import";
 const MODE = { dryRun: false, confirmed: true } as const;
+
+/** Beat 1's image request, sent and paid for, as `image generate` saves it before fetching. */
+const SAVED_REQUEST = {
+	provider: "fake-images",
+	model: "fake-fast",
+	requestId: "req-1",
+	statusUrl: "memory://req-1/status",
+	responseUrl: "memory://req-1",
+	inputHash: "h1",
+	seed: 1,
+	ledgerId: "l1",
+};
+
+/** A post ready for images, with beat 1's request saved and not fetched yet. */
+const withSavedRequest = () => {
+	const ready = readyForImages();
+	return {
+		...ready,
+		...(ready.beats && {
+			beats: {
+				...ready.beats,
+				items: ready.beats.items.map((b) => (b.index === 1 ? { ...b, pending: SAVED_REQUEST } : b)),
+			},
+		}),
+	};
+};
 
 /** A file the user made elsewhere, outside the posts folder. */
 const ownImage = (ctx: Context, name: string): string => {
@@ -83,5 +110,58 @@ describe("image import", () => {
 
 		// THEN it is not found
 		expect(error.code).toBe("not-found");
+	});
+
+	it("should refuse a beat whose request is paid for and not fetched, keeping the request", async () => {
+		// GIVEN beat 1's image request sent and saved, and not fetched yet
+		const ctx = testContext();
+		await seedPost(ctx, SLUG, withSavedRequest());
+		const png = ownImage(ctx, "mine.png");
+
+		// WHEN an image is imported for beat 1
+		const error = await runFailure(imageImport.run({ post: SLUG, beat: 1, file: png }, ctx, MODE));
+
+		// THEN it fails with conflict, and nothing is copied
+		expect(error.code).toBe("conflict");
+		expect(existsSync(join(postDir(ctx, SLUG), "images"))).toBe(false);
+		// AND beat 1's saved request is still there
+		const beat = (await Effect.runPromise(readPost(ctx, SLUG))).beats?.items[1];
+		expect(beat?.pending).toEqual(SAVED_REQUEST);
+		expect(beat?.image).toBeUndefined();
+		// AND the fix names fetching it first, at no cost
+		expect(error.fix).toContain(
+			`Run image generate --post ${SLUG} --beat 1 first: it fetches the image already paid for, at no cost.`,
+		);
+	});
+
+	it("should refuse while image generate runs on the post", async () => {
+		// GIVEN a post whose images a running image generate holds
+		const ctx = testContext();
+		await seedPost(ctx, SLUG, readyForImages());
+		const lockFile = join(postDir(ctx, SLUG), "images.lock");
+		// Taken now, not at the test clock's date: a lock from before the machine started is stale.
+		writeFileSync(
+			lockFile,
+			JSON.stringify({
+				pid: process.pid,
+				command: "image generate",
+				since: new Date().toISOString(),
+			}),
+		);
+		const png = ownImage(ctx, "mine.png");
+
+		// WHEN an image is imported, and the lock stays busy past the wait
+		const error = await failurePastLockWait(
+			imageImport
+				.run({ post: SLUG, beat: 0, file: png }, ctx, MODE)
+				.pipe(Effect.provide(fakePorts())),
+		);
+
+		// THEN it fails with conflict, naming image generate and its lock file
+		expect(error.code).toBe("conflict");
+		expect(error.message).toContain('"image generate"');
+		expect(error.message).toContain(lockFile);
+		// AND beat 0 has no image
+		expect((await Effect.runPromise(readPost(ctx, SLUG))).beats?.items[0]?.image).toBeUndefined();
 	});
 });

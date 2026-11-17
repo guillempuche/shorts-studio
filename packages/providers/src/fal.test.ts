@@ -8,30 +8,32 @@ import { Effect } from "effect";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { withEnv } from "./env.ts";
 import { FAL_MODELS, falLayer } from "./fal.ts";
-import { providerContext } from "./test/context.ts";
+import { closedUrl, providerContext } from "./test/context.ts";
 import { type FakeFalOptions, startFakeFal } from "./test/fal-server.ts";
 
-/**
- * FAL's provider talking to a local fake of FAL's queue, with FAL_KEY set unless `secrets`
- * says otherwise.
- */
+/** FAL's provider talking to `url`, with FAL_KEY set unless `secrets` says otherwise. */
+const falAt = (url: string, secrets: Readonly<Record<string, string>> = { FAL_KEY: "test-key" }) =>
+	Effect.runPromise(
+		Effect.gen(function* () {
+			return yield* ImageMaker;
+		}).pipe(
+			Effect.provide(withEnv(falLayer, providerContext({ endpoints: { fal: url }, secrets }))),
+		),
+	);
+
+/** FAL's provider talking to a local fake of FAL's queue. */
 const withFakeFal = async (
 	options: FakeFalOptions = {},
-	secrets: Readonly<Record<string, string>> = { FAL_KEY: "test-key" },
+	secrets?: Readonly<Record<string, string>>,
 ) => {
 	const fake = await startFakeFal(options);
 	onTestFinished(() => fake.close());
-	const ctx = providerContext({ endpoints: { fal: fake.url }, secrets });
-	const fal = await Effect.runPromise(
-		Effect.gen(function* () {
-			return yield* ImageMaker;
-		}).pipe(Effect.provide(withEnv(falLayer, ctx))),
-	);
-	return { fake, fal };
+	return { fake, fal: await falAt(fake.url, secrets) };
 };
 
 imageMakerContract("FAL", {
 	make: async ({ answer, withKey }) => {
+		if (answer === "unreachable") return falAt(await closedUrl(), withKey ? undefined : {});
 		const { fal } = await withFakeFal(
 			answer === "ended"
 				? { finalStatus: "FAILED" }
@@ -112,25 +114,33 @@ describe("FAL submit", () => {
 		});
 	});
 
-	it("should leave a dropped connection as an unknown outcome, saying why it dropped", async () => {
+	it("should report a refused connection as never sent, saying why", async () => {
 		// GIVEN FAL at an address where nothing listens any more
-		const gone = await startListener();
-		await gone.close();
-		const ctx = providerContext({ endpoints: { fal: gone.url }, secrets: { FAL_KEY: "test-key" } });
-		const fal = await Effect.runPromise(
-			Effect.gen(function* () {
-				return yield* ImageMaker;
-			}).pipe(Effect.provide(withEnv(falLayer, ctx))),
-		);
+		const fal = await falAt(await closedUrl());
 
 		// WHEN an image is submitted
 		const error = await Effect.runPromise(Effect.flip(fal.submit(schnell, "a red door", 7)));
 
-		// THEN it is a provider failure, not a refusal
+		// THEN it is a provider failure that sent nothing, so the ledger frees it
 		expect(error.code).toBe("provider");
-		expect(error.reason._tag).toBe("ProviderFailed");
-		// AND it says why, so "check your connection" has something to go on
+		expect(error.reason._tag).toBe("NotSent");
+		// AND it says why, so the user has something to go on
 		expect(error.message).toContain("ECONNREFUSED");
+	});
+
+	it("should leave a connection dropped after sending as an unknown outcome", async () => {
+		// GIVEN FAL that reads the request, then drops the connection without answering
+		const server = createServer((req) => req.socket.destroy());
+		await new Promise<void>((listening) => server.listen(0, "127.0.0.1", () => listening()));
+		onTestFinished(() => new Promise<void>((closed) => server.close(() => closed())));
+		const fal = await falAt(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
+
+		// WHEN an image is submitted
+		const error = await Effect.runPromise(Effect.flip(fal.submit(schnell, "a red door", 7)));
+
+		// THEN its outcome is unknown, so its cost stays counted
+		expect(error.reason._tag).toBe("ProviderFailed");
+		expect(error.fix).toContain("its cost stays counted");
 	});
 
 	it("should fail with missing-key, before sending anything, when FAL_KEY isn't set", async () => {
@@ -197,6 +207,41 @@ describe("FAL submit", () => {
 		});
 		// AND options that don't change the bill still apply
 		expect(fake.submits[0]?.extra["output_format"]).toBe("png");
+	});
+});
+
+describe("FAL's fixes", () => {
+	it.each([
+		[401, "FAL refused the request, so nothing was counted.", "FAL_KEY"],
+		[429, "FAL refused the request, so nothing was counted.", "wait a minute"],
+		[502, "The outcome is unknown, so its cost stays counted.", "pays for a new request"],
+	])(
+		"should say whether an HTTP %i was counted, and what to do next",
+		async (status, first, next) => {
+			// GIVEN FAL answering every submit with that status
+			const { fal } = await withFakeFal({ submitStatus: status });
+
+			// WHEN an image is submitted
+			const error = await Effect.runPromise(Effect.flip(fal.submit(schnell, "a red door", 7)));
+
+			// THEN the fix starts by saying whether it was counted, then what to do
+			expect(error.fix.slice(0, first.length)).toBe(first);
+			expect(error.fix).toContain(next);
+		},
+	);
+
+	it("should say a refused connection sent nothing, and to tell the user", async () => {
+		// GIVEN FAL at an address where nothing listens any more
+		const fal = await falAt(await closedUrl());
+
+		// WHEN an image is submitted
+		const error = await Effect.runPromise(Effect.flip(fal.submit(schnell, "a red door", 7)));
+
+		// THEN the fix says nothing was counted, that FAL can't be reached, and to tell the user
+		const first = "Nothing was sent, so nothing was counted.";
+		expect(error.fix.slice(0, first.length)).toBe(first);
+		expect(error.fix).toContain("FAL can't be reached");
+		expect(error.fix).toContain("Tell the user");
 	});
 });
 

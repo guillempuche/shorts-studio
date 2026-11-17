@@ -14,10 +14,11 @@ export interface ImageMakerHarness {
 	/**
 	 * The provider, with its service answering every request with an image, by giving up on it,
 	 * by refusing it with an HTTP 4xx, or without saying whether it took it on (a 5xx, or a
-	 * dropped connection), and with or without its API key set.
+	 * dropped connection), or out of reach (a local port that was just closed), and with or
+	 * without its API key set.
 	 */
 	readonly make: (setup: {
-		readonly answer: "image" | "ended" | "refused" | "unknown";
+		readonly answer: "image" | "ended" | "refused" | "unknown" | "unreachable";
 		readonly withKey: boolean;
 	}) => Promise<ImageMaker["Service"]>;
 }
@@ -97,6 +98,20 @@ export const imageMakerContract = (name: string, harness: ImageMakerHarness): vo
 
 			// THEN it fails with reason ProviderFailed, so its reservation stays counted
 			expect(error.reason._tag).toBe("ProviderFailed");
+			expect(error.code).toBe("provider");
+		});
+
+		it("should report a service that can't be reached as NotSent, which billed nothing", async () => {
+			// GIVEN a provider whose service can't be reached from this machine
+			const maker = await harness.make({ answer: "unreachable", withKey: true });
+
+			// WHEN an image is submitted
+			const error = await Effect.runPromise(
+				Effect.flip(maker.submit(defaultModelOf(maker), "a red door", 7)),
+			);
+
+			// THEN it fails with reason NotSent, a provider failure, so its reservation is freed
+			expect(error.reason._tag).toBe("NotSent");
 			expect(error.code).toBe("provider");
 		});
 

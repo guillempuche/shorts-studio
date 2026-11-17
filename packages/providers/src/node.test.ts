@@ -1,9 +1,11 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir } from "@shorts-studio/usecases/test/context";
 import { DateTime, Redacted } from "effect";
-import { describe, expect, it } from "vitest";
-import { makeContext } from "./node.ts";
+import { describe, expect, it, onTestFinished } from "vitest";
+import { elapsedSeconds, makeContext, processStartedAt } from "./node.ts";
 
 describe("makeContext", () => {
 	it("should keep the defaults when config.json is invalid, and record why", () => {
@@ -17,9 +19,18 @@ describe("makeContext", () => {
 
 		// THEN nothing crashed and the defaults apply
 		expect(ctx.config).toEqual({});
-		// AND the problem names the file, for doctor to report
+		// AND the problem names the file, for doctor to report, with the caps at risk
 		expect(ctx.settingsIssues).toHaveLength(1);
-		expect(ctx.settingsIssues[0]).toContain(join(data, "config.json"));
+		expect(ctx.settingsIssues[0]).toMatchObject({
+			source: join(data, "config.json"),
+			risk: "caps",
+		});
+		// AND each cap is its default
+		expect(ctx.capsFrom).toEqual({
+			dailyUsd: "default",
+			monthlyUsd: "default",
+			postUsd: "default",
+		});
 	});
 
 	it("should refuse a negative cap, naming it, and keep the default", () => {
@@ -33,7 +44,7 @@ describe("makeContext", () => {
 
 		// THEN the defaults apply, and the problem names the cap
 		expect(ctx.config).toEqual({});
-		expect(ctx.settingsIssues[0]).toContain("dailyUsd");
+		expect(ctx.settingsIssues[0]?.text).toContain("dailyUsd");
 	});
 
 	it("should follow the time zone TZ names", () => {
@@ -126,6 +137,12 @@ describe("makeContext", () => {
 			caps: { dailyUsd: 7, postUsd: 1 },
 		});
 		expect(ctx.settingsIssues).toEqual([]);
+		// AND each cap says where it was set
+		expect(ctx.capsFrom).toEqual({
+			dailyUsd: "SHORTS_CAPS_DAILY_USD",
+			monthlyUsd: "default",
+			postUsd: join(data, "config.json"),
+		});
 	});
 
 	it("should report a SHORTS_* variable that isn't valid, and still use the file and the other variables", () => {
@@ -143,9 +160,29 @@ describe("makeContext", () => {
 
 		// THEN the file's cap and the valid variable apply, and only the bad variable is dropped
 		expect(ctx.config).toEqual({ caps: { dailyUsd: 1 }, captions: { fontSize: 64 } });
-		// AND the problem names that variable, for doctor to report
+		// AND the problem names that variable, for doctor to report, with the caps at risk
 		expect(ctx.settingsIssues).toHaveLength(1);
-		expect(ctx.settingsIssues[0]).toContain("SHORTS_CAPS_POST_USD");
+		expect(ctx.settingsIssues[0]).toMatchObject({ source: "SHORTS_CAPS_POST_USD", risk: "caps" });
+		// AND it names the setting that variable sets
+		expect(ctx.settingsIssues[0]?.setting).toBe("caps.postUsd");
+	});
+
+	it("should report a variable that isn't valid and isn't a cap as putting one setting at risk", () => {
+		// GIVEN no settings file
+		// WHEN the caption size is set to a word in the environment
+		const ctx = makeContext({
+			SHORTS_DATA_DIR: join(tempDir(), "data"),
+			SHORTS_CAPTIONS_FONT_SIZE: "big",
+		});
+
+		// THEN only that setting is at risk
+		expect(ctx.settingsIssues).toEqual([
+			expect.objectContaining({
+				source: "SHORTS_CAPTIONS_FONT_SIZE",
+				risk: "setting",
+				setting: "captions.fontSize",
+			}),
+		]);
 	});
 
 	it.each([
@@ -169,7 +206,7 @@ describe("makeContext", () => {
 			Object.keys(vars).length === 0 ? {} : { captions: { fontSize: 64 } },
 		);
 		expect(ctx.settingsIssues).toHaveLength(1);
-		expect(ctx.settingsIssues[0]).toContain(join(data, "config.json"));
+		expect(ctx.settingsIssues[0]?.source).toBe(join(data, "config.json"));
 	});
 
 	it("should read a number or yes/no written as text in config.json, as earlier versions did", () => {
@@ -204,7 +241,7 @@ describe("makeContext", () => {
 		// THEN the cap from the environment holds, and the file is reported
 		expect(ctx.config).toEqual({ caps: { postUsd: 0.5 } });
 		expect(ctx.settingsIssues).toHaveLength(1);
-		expect(ctx.settingsIssues[0]).toContain(join(data, "config.json"));
+		expect(ctx.settingsIssues[0]?.source).toBe(join(data, "config.json"));
 	});
 
 	it("should keep the rest of config.json when a variable sets a setting whose name starts like another's", () => {
@@ -256,7 +293,104 @@ describe("makeContext", () => {
 		expect(ctx.config.models).toEqual({
 			"flux-dev": { usdPerUnit: 0.03, options: { steps: "28" } },
 		});
+		// AND the variable is reported, saying models are set in config.json only
+		expect(ctx.settingsIssues).toHaveLength(1);
+		expect(ctx.settingsIssues[0]).toMatchObject({ source: "SHORTS_MODELS_MINE_PROVIDER" });
+		expect(ctx.settingsIssues[0]?.text).toContain("models are set in config.json only");
+	});
+
+	it("should report a key that names no setting with the closest one, and still apply the rest of the file", () => {
+		// GIVEN a config.json setting caps.daily, which names no setting, and caps.postUsd
+		const data = join(tempDir(), "data");
+		mkdirSync(data, { recursive: true });
+		writeFileSync(join(data, "config.json"), '{ "caps": { "daily": 0.5, "postUsd": 1 } }');
+
+		// WHEN the settings are loaded
+		const ctx = makeContext({ SHORTS_DATA_DIR: data });
+
+		// THEN the per-post cap still applies
+		expect(ctx.config).toEqual({ caps: { postUsd: 1 } });
+		// AND the unknown key is reported, naming the cap it most likely meant, with the caps at risk
+		expect(ctx.settingsIssues).toEqual([
+			{
+				source: join(data, "config.json"),
+				risk: "caps",
+				text: "caps.daily isn't a setting; the closest is caps.dailyUsd.",
+				setting: "caps.dailyUsd",
+			},
+		]);
+	});
+
+	it("should list the group's settings for an unknown key that's near none of them", () => {
+		// GIVEN a config.json with a top-level key no setting is near
+		const data = join(tempDir(), "data");
+		mkdirSync(data, { recursive: true });
+		writeFileSync(join(data, "config.json"), '{ "limits": { "daily": 1 } }');
+
+		// WHEN the settings are loaded
+		const ctx = makeContext({ SHORTS_DATA_DIR: data });
+
+		// THEN it's reported with the file's settings listed, and one setting at risk
+		expect(ctx.settingsIssues).toHaveLength(1);
+		expect(ctx.settingsIssues[0]?.risk).toBe("setting");
+		expect(ctx.settingsIssues[0]?.text).toBe(
+			"limits isn't a setting; the file has caps, transcribe, image, models, download and captions.",
+		);
+	});
+
+	it("should report an unknown key in brand.json as putting the brand's style at risk", () => {
+		// GIVEN a brand.json with the style under a key that names no setting
+		const data = join(tempDir(), "data");
+		mkdirSync(data, { recursive: true });
+		writeFileSync(join(data, "brand.json"), '{ "imagePrompt": { "sufix": "film grain" } }');
+
+		// WHEN the settings are loaded
+		const ctx = makeContext({ SHORTS_DATA_DIR: data });
+
+		// THEN it names the setting it meant, with the brand at risk
+		expect(ctx.settingsIssues).toEqual([
+			expect.objectContaining({
+				source: join(data, "brand.json"),
+				risk: "brand",
+				setting: "imagePrompt.suffix",
+			}),
+		]);
+	});
+
+	it("should report a SHORTS_* variable that names no setting, with the closest one", () => {
+		// GIVEN the daily cap's variable without its unit
+		// WHEN the context is made
+		const ctx = makeContext({ SHORTS_DATA_DIR: join(tempDir(), "data"), SHORTS_CAPS_DAILY: "1" });
+
+		// THEN it names the variable it meant, with the caps at risk
+		expect(ctx.settingsIssues).toEqual([
+			{
+				source: "SHORTS_CAPS_DAILY",
+				risk: "caps",
+				text: "not a setting; the closest is SHORTS_CAPS_DAILY_USD.",
+				setting: "caps.dailyUsd",
+			},
+		]);
+		// AND the default daily cap applies
+		expect(ctx.capsFrom.dailyUsd).toBe("default");
+	});
+
+	it("should not report the variables that aren't settings: folders, addresses and the installer's", () => {
+		// GIVEN the folders, a provider's address and the installer's variables
+		// WHEN the context is made
+		const ctx = makeContext({
+			SHORTS_DATA_DIR: join(tempDir(), "data"),
+			SHORTS_POSTS_DIR: join(tempDir(), "posts"),
+			SHORTS_FAL_URL: "http://127.0.0.1:9",
+			SHORTS_FISH_AUDIO_URL: "http://127.0.0.1:9",
+			SHORTS_INSTALL_DIR: "/opt/shorts-studio",
+			SHORTS_VERSION: "0.1.0",
+		});
+
+		// THEN nothing is reported
 		expect(ctx.settingsIssues).toEqual([]);
+		// AND the folders say which variable chose them
+		expect(ctx.pathsFrom).toEqual({ data: "SHORTS_DATA_DIR", posts: "SHORTS_POSTS_DIR" });
 	});
 
 	it("should read brand overrides from SHORTS_BRAND_* variables", () => {
@@ -323,5 +457,100 @@ describe("makeContext", () => {
 		// THEN only the first names a marker
 		expect(inAgent.agentShell).toBe("CLAUDECODE");
 		expect(plain.agentShell).toBeUndefined();
+	});
+});
+
+describe("processStartedAt", () => {
+	it.skipIf(process.platform === "win32")(
+		"should tell when a process started during the test began",
+		async () => {
+			// GIVEN a process started now, still running
+			const before = Date.now();
+			const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 10_000)"]);
+			onTestFinished(() => {
+				child.kill();
+			});
+			await once(child, "spawn");
+
+			// WHEN the context is asked when it started
+			const started = await makeContext({ SHORTS_DATA_DIR: tempDir() }).processStartedAt(
+				child.pid ?? 0,
+			);
+
+			// THEN it is that moment, to the whole second ps counts in
+			expect(started).toBeInstanceOf(Date);
+			expect(started?.getTime()).toBeGreaterThanOrEqual(before - 2_000);
+			expect(started?.getTime()).toBeLessThanOrEqual(Date.now());
+		},
+	);
+
+	it.skipIf(process.platform === "win32")(
+		"should say nothing for a process number no process has",
+		async () => {
+			// GIVEN the number of a process that has ended
+			const child = spawn(process.execPath, ["-e", ""]);
+			await once(child, "exit");
+
+			// WHEN it is asked when that process started
+			const started = await processStartedAt(child.pid ?? 0);
+
+			// THEN there's no answer, so a lock naming it is judged as before
+			expect(started).toBeUndefined();
+		},
+	);
+
+	it("should not run ps on Windows", async () => {
+		// GIVEN a program runner that records what it's asked to run
+		const ran: Array<string> = [];
+		const run = async (file: string) => {
+			ran.push(file);
+			return { code: 0, stdout: "00:05", stderr: "" };
+		};
+
+		// WHEN it is asked on Windows when this process started
+		const started = await processStartedAt(process.pid, run, "win32");
+
+		// THEN there's no answer, and nothing was run
+		expect(started).toBeUndefined();
+		expect(ran).toEqual([]);
+	});
+
+	it("should say nothing when ps can't run or fails", async () => {
+		// GIVEN a ps that isn't installed, and one that exits with an error
+		const missing = async (): Promise<never> => {
+			throw new Error("spawn ps ENOENT");
+		};
+		const failing = async () => ({ code: 1, stdout: "", stderr: "ps: bad option" });
+
+		// WHEN each is asked when this process started
+		// THEN neither answers
+		expect(await processStartedAt(process.pid, missing, "linux")).toBeUndefined();
+		expect(await processStartedAt(process.pid, failing, "linux")).toBeUndefined();
+	});
+});
+
+describe("elapsedSeconds", () => {
+	it.each([
+		["minutes and seconds", "05:07", 5 * 60 + 7],
+		["hours, minutes and seconds", "02:05:07", (2 * 60 + 5) * 60 + 7],
+		["days, hours, minutes and seconds", "3-02:05:07", ((3 * 24 + 2) * 60 + 5) * 60 + 7],
+		["a process started this second, padded as ps pads it", "      00:00\n", 0],
+	])("should read %s", (_, etime, seconds) => {
+		// GIVEN ps's elapsed time in one of its forms
+		// WHEN it is read
+		// THEN it is the seconds since the process started
+		expect(elapsedSeconds(etime)).toBe(seconds);
+	});
+
+	it.each([
+		["nothing", ""],
+		["a header", "ELAPSED"],
+		["days without hours", "1-05:07"],
+		["seconds alone", "7"],
+	])("should read %s as no answer", (_, etime) => {
+		// GIVEN output that isn't an elapsed time
+		// WHEN it is read
+		// THEN there's no answer, rather than a wrong start
+		expect(elapsedSeconds(etime)).toBeUndefined();
 	});
 });

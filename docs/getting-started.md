@@ -28,7 +28,7 @@ Two optional files in the data folder hold your settings: `config.json` (provide
 }
 ```
 
-Any setting can also come from the environment, which wins over the file: `SHORTS_` and the setting's path in capitals, such as `SHORTS_IMAGE_MODEL=flux-dev` or `SHORTS_CAPS_DAILY_USD=10`. brand.json's settings use `SHORTS_BRAND_`, such as `SHORTS_BRAND_IMAGE_PROMPT_SUFFIX`. A command's flags win over both. `doctor` names any setting it can't read; the built-in defaults apply until you fix it.
+Any setting can also come from the environment, which wins over the file: `SHORTS_` and the setting's path in capitals, such as `SHORTS_IMAGE_MODEL=flux-dev` or `SHORTS_CAPS_DAILY_USD=10`. brand.json's settings use `SHORTS_BRAND_`, such as `SHORTS_BRAND_IMAGE_PROMPT_SUFFIX`. A command's flags win over both. `doctor` names any setting it can't read, and any key or `SHORTS_*` variable that names no setting, with the closest one (`caps.daily` → `caps.dailyUsd`). The built-in defaults apply until you fix it, and nothing is spent meanwhile. `budget show` says where each cap was set. A running MCP server keeps the settings and environment it started with, so restart it after a fix; a key added to the macOS Keychain needs no restart.
 
 ## Downloading saved reels
 

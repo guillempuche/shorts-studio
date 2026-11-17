@@ -23,7 +23,7 @@ The order of the steps. The rules behind them are in [AGENTS.md](../../../AGENTS
 5. Write the story to `script.md` (hook in the first 3 s, the turn, the CTA): concrete subjects, one idea per image, the brand style is added for you.
 6. `script set --post <slug> --file script.md --hook "3 to 7 words"`, then `beat set --post <slug> --from beats.json`.
 7. **Stop.** Ask the user to read the script and the prompts, and run `script approve --post <slug>` in their own terminal. Never approve it: it refuses without a terminal anyway. Changing a prompt or the audio afterwards needs approving again.
-8. `image generate --post <slug> --dry-run`, show the estimate, then run it for real (the CLI needs `--yes`; over MCP the user's approval prompt is the gate).
+8. `image generate --post <slug> --dry-run`, show the estimate, then run it for real (the CLI needs `--yes` when it costs money; over MCP the user's approval prompt is the gate).
 9. `draft render --post <slug>`, then give the user the path to `draft.mp4` for the evening check.
 10. **Stop.** The user reviews it with `post review --post <slug> --decision approve|fix|reject` (CLI only). For `fix`, read `post show` for their notes, change what they name (`beat set`, `image generate --beat N --reroll`, `image import`), and render again. A new prompt needs the user's `script approve` before `image generate`.
 11. Once approved: `capcut export --post <slug>`; the user polishes in CapCut desktop (steps in `capcut/README.txt`). Then `post finalize --post <slug> --file <final.mp4>`, `post publish` once per platform, and `post archive` when it's done.
@@ -41,6 +41,10 @@ Voice generation isn't built yet (openspec/changes/voice-music-animate). Until i
 
 ## When something fails
 
-Every error has a `fix`: do what it says. `over-budget` means stop and ask the user; never raise caps yourself. `needs-approval` means the step is the user's: stop and ask them. `needs-confirmation` means show the user the estimate, then run the same command with `--yes`. A `failed` error that names a setting means stop and tell the user: their caps may not apply until `doctor` passes.
+Every error has a `fix`: do what it says. `over-budget` means stop and ask the user; never raise caps yourself. `needs-approval` means the step is the user's: stop and ask them. `missing-key` means stop and ask the user to set the key it names. `needs-confirmation` means the run could go ahead: show the user the estimate, then run the same command with `--yes`. A `failed` error that names a setting means stop and tell the user: their caps may not apply until `doctor` passes.
+
+Without `--yes`, a run that can't go ahead fails as the real run would (`over-budget`, `missing-key`, or `failed` for a setting), not with `needs-confirmation`. A run that spends nothing, such as fetching images already paid for, runs without `--yes`.
+
+A dry run never fails for these: its `budget` says whether the real run could go ahead, and if not, `stoppedBy` says what stops it (`settings`, `missing-key`, or a cap such as `caps.dailyUsd`). Its `nextSteps` then start with the user's step for that. When some beats' images are already paid for, a later step fetches them at no cost (`image generate --post <slug> --beat <n,…>`, without `--yes`): run it.
 
 `nextSteps` in every result says what comes next as data: run a step whose `by` is `agent` (its `tool` and `args` over MCP, its `cli` in a shell), and hand the user each step whose `by` is `user`.
