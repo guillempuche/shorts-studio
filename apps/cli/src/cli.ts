@@ -12,8 +12,9 @@
 
 import { fail, reportOf, type ShortsError } from "@shorts-studio/domain/errors";
 import { Stage, stageOf } from "@shorts-studio/domain/post";
-import type { Context } from "@shorts-studio/usecases/context";
+import { type Context, settingsIssueLine } from "@shorts-studio/usecases/context";
 import { daysNow } from "@shorts-studio/usecases/days";
+import { Budget } from "@shorts-studio/usecases/ledger";
 import {
 	commandPath,
 	flagName,
@@ -172,11 +173,45 @@ const selectPosts = Effect.fn("selectPosts")(function* (ctx: Context, input: Sel
 	return yield* fail("not-found", "No posts match.", "Check the selection with: post list");
 });
 
+/**
+ * What an interrupted run fails with: the command to run again. A command that saves its requests
+ * picks them up without paying again, as long as `--reroll` doesn't pick new seeds; any other paid
+ * call cut off stays counted.
+ */
+const interruptedError = (op: Operation, label: string) => {
+	const again = `Run the same ${label} command again to pick up where it stopped.`;
+	const paid =
+		op.params["reroll"] !== undefined
+			? " Requests already sent are saved and fetched without paying again; leave out --reroll."
+			: op.spends
+				? " A paid call it cut off stays counted, since the provider may have billed it."
+				: "";
+	return fail("interrupted", `${label} was interrupted.`, `${again}${paid}`);
+};
+
 const confirmationError = (label: string) =>
 	fail(
 		"needs-confirmation",
 		`${label} spends money; nothing was spent.`,
-		"Check the estimate and its budget above; if it fits, run the same command with --yes.",
+		"Check the estimate above; it fits the caps. To spend it, run the same command with --yes.",
+	);
+
+/** A spending result's budget, or undefined for one that has none. */
+const budgetOf = (result: unknown): Budget | undefined => {
+	const budget = (result as { readonly budget?: unknown } | null)?.budget;
+	return Schema.is(Budget)(budget) ? budget : undefined;
+};
+
+/** The error the real run would fail with, from what stopped its dry run. */
+const refusalOf = (budget: Budget): ShortsError =>
+	fail(
+		budget.stoppedBy === "settings"
+			? "failed"
+			: budget.stoppedBy === "missing-key"
+				? "missing-key"
+				: "over-budget",
+		budget.why ?? "The real run can't go ahead; nothing was spent.",
+		budget.fix ?? "Run the same command with --dry-run to see what stops it.",
 	);
 
 interface SharedFlags {
@@ -211,31 +246,62 @@ const leaf = (op: Operation, ctx: Context, name?: string) => {
 				"Run it without --dry-run; only spending commands such as image generate take it.",
 			);
 		}
-		// Without --yes a spending command still runs as a dry run, so the user sees the estimate,
-		// then fails asking for --yes. With --json, both go in the one object stdout holds. A
+		// Without --yes a spending command still runs as a dry run, so the user sees the estimate.
+		// With --json, it goes in the one object stdout holds, with the error that follows. A
 		// command with `needsYes: false` runs for real without --yes.
 		const needsConfirmation = op.spends && op.needsYes !== false && !shared.yes && !shared.dryRun;
-		const confirmation = needsConfirmation ? confirmationError(label) : undefined;
 		const mode: RunMode = { dryRun: shared.dryRun || needsConfirmation, confirmed: shared.yes };
 		const posts = batchable ? yield* selectPosts(ctx, input) : undefined;
 
+		/**
+		 * What the dry run standing in for a missing --yes leads to. One that can't go ahead fails as
+		 * the real run would, so the reader learns what stops it, not that --yes is missing. One that
+		 * spends nothing, such as fetching saved requests, runs for real: --yes confirms spending,
+		 * and there's none. Any other asks for --yes.
+		 */
+		const afterDryRun = Effect.fnUntraced(function* (
+			postInput: Record<string, unknown>,
+			planned: unknown,
+		) {
+			const outcome = (result: unknown, error?: ShortsError) => ({ result, error });
+			if (!needsConfirmation) return outcome(planned);
+			const budget = budgetOf(planned);
+			if (budget?.fits === false) return outcome(planned, refusalOf(budget));
+			if (estimateOf(planned) === 0) {
+				// Not confirmed: the real run refuses anything that turned out to cost money.
+				return outcome(yield* op.run(postInput, ctx, { dryRun: false, confirmed: false }));
+			}
+			return outcome(planned, confirmationError(label));
+		});
+
 		if (posts === undefined || posts.length === 1) {
 			const single = posts === undefined ? input : { ...input, post: posts[0] };
-			const result = yield* op.run(single, ctx, mode);
+			const { result, error } = yield* afterDryRun(single, yield* op.run(single, ctx, mode));
 			if (!shared.json) yield* Console.log(render(result));
-			return { fields: () => ({ result: encode(result) }), error: confirmation };
+			return { fields: () => ({ result: encode(result) }), error };
 		}
 
 		// One post after another: each prints as it finishes, and a failure doesn't stop the rest.
 		// A dry run counts what it planned for earlier posts, so their budgets add up as one run.
 		let plannedUsd = 0;
+		let unconfirmed = 0;
 		const results = yield* Effect.forEach(posts, (post) =>
-			Effect.result(op.run({ ...input, post }, ctx, { ...mode, plannedUsd })).pipe(
-				Effect.tap((outcome) =>
+			op.run({ ...input, post }, ctx, { ...mode, plannedUsd }).pipe(
+				Effect.tap((planned) =>
 					Effect.sync(() => {
-						if (mode.dryRun && Result.isSuccess(outcome)) plannedUsd += estimateOf(outcome.success);
+						// A post that can't go ahead won't spend, so it doesn't count.
+						if (mode.dryRun && fitsOf(planned)) plannedUsd += estimateOf(planned);
 					}),
 				),
+				Effect.flatMap((planned) => afterDryRun({ ...input, post }, planned)),
+				Effect.flatMap(({ result, error }) => {
+					if (error === undefined) return Effect.succeed(result);
+					if (error.code !== "needs-confirmation") return Effect.fail(error);
+					// Not this post's failure: the batch asks for --yes once, after the last post.
+					unconfirmed++;
+					return Effect.succeed(result);
+				}),
+				Effect.result,
 				Effect.tap((outcome) =>
 					shared.json
 						? Effect.void
@@ -260,16 +326,29 @@ const leaf = (op: Operation, ctx: Context, name?: string) => {
 				),
 			}),
 			error:
-				confirmation ??
-				(failed === 0
-					? undefined
-					: fail(
-							"failed",
-							`${failed} of ${posts.length} posts failed.`,
-							"Each post's error is listed with it; run the command again to retry them.",
-						)),
+				unconfirmed > 0
+					? confirmationError(label)
+					: failed === 0
+						? undefined
+						: fail(
+								"failed",
+								`${failed} of ${posts.length} posts failed.`,
+								"Each post's error is listed with it; run the command again to retry them.",
+							),
 		};
 	});
+
+	/** The one place a run's outcome is printed: one JSON object, or the error on stderr. */
+	const report = (
+		shared: SharedFlags,
+		fields: () => Readonly<Record<string, unknown>>,
+		error: ShortsError | undefined,
+	) =>
+		shared.json
+			? Console.log(envelope(label, fields(), error))
+			: error === undefined
+				? Effect.void
+				: Console.error(textError(error));
 
 	return Command.make(
 		name ?? commandPath(op.name)[1],
@@ -280,10 +359,13 @@ const leaf = (op: Operation, ctx: Context, name?: string) => {
 			const { fields, error } = yield* attempt(
 				raw as Record<string, unknown> & Selection,
 				shared,
-			).pipe(Effect.catch((error) => Effect.succeed({ fields: () => ({}), error })));
-			// The one place a run's outcome is printed: one JSON object, or the error on stderr.
-			if (shared.json) yield* Console.log(envelope(label, fields(), error));
-			else if (error !== undefined) yield* Console.error(textError(error));
+			).pipe(
+				Effect.catch((error) => Effect.succeed({ fields: () => ({}), error })),
+				// Ctrl-C still prints the one object `--json` promises. The run stays interrupted, so
+				// it exits 130.
+				Effect.onInterrupt(() => report(shared, () => ({}), interruptedError(op, label))),
+			);
+			yield* report(shared, fields, error);
 			if (error !== undefined) return yield* error;
 		}),
 	).pipe(Command.withDescription(op.description));
@@ -298,6 +380,9 @@ const estimateOf = (result: unknown): number => {
 	return typeof estimate === "number" && Number.isFinite(estimate) ? estimate : 0;
 };
 
+/** Whether a dry run's result says its real run could go ahead; true when it has no budget. */
+const fitsOf = (result: unknown): boolean => budgetOf(result)?.fits !== false;
+
 /**
  * Names, on stderr, each setting that couldn't be used. Its default applies, so a command that
  * runs anyway, such as `budget show`, may show the default caps rather than the user's.
@@ -305,7 +390,10 @@ const estimateOf = (result: unknown): number => {
 const warnSettings = (ctx: Context) =>
 	Effect.forEach(
 		ctx.settingsIssues,
-		(issue) => Console.error(`! A setting can't be used, so its default applies: ${issue}`),
+		(issue) =>
+			Console.error(
+				`! A setting can't be used, so its default applies: ${settingsIssueLine(issue)}`,
+			),
 		{ discard: true },
 	);
 

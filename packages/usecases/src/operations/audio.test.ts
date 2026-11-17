@@ -123,6 +123,58 @@ describe("audio transcribe", () => {
 		expect(existsSync(join(postDir(ctx, SLUG), "transcript.json"))).toBe(false);
 	});
 
+	it("should say a dry run without the transcriber's key can't go ahead, naming the key", async () => {
+		// GIVEN a post with audio, and a transcriber whose key isn't set
+		const keys = [{ env: "FAKE_TRANSCRIBE_KEY", keychain: "fake-transcribe" }];
+		const { ctx, transcriber, ports } = await ready(
+			testContext(),
+			fakeTranscriber(undefined, { keys }),
+		);
+
+		// WHEN its audio is transcribed as a dry run
+		const result = await run(
+			audioTranscribe.run({ post: SLUG, language: undefined, force: false }, ctx, {
+				dryRun: true,
+				confirmed: false,
+			}),
+			ports,
+		);
+
+		// THEN it says the real run is stopped by the missing key, and the user's step names it
+		expect(result.budget).toMatchObject({ fits: false, stoppedBy: "missing-key" });
+		expect(result.nextSteps[0]?.by).toBe("user");
+		expect(result.nextSteps[0]?.note).toContain("FAKE_TRANSCRIBE_KEY");
+		// AND nothing was sent
+		expect(transcriber.calls).toHaveLength(0);
+	});
+
+	it("should show a sub-cent estimate to its first digits, not as $0.000", async () => {
+		// GIVEN a post with 3 seconds of audio, at $0.006 a minute: $0.0003
+		const ctx = testContext();
+		await seedPost(ctx, SLUG, {
+			audio: {
+				file: "audio/audio.m4a",
+				hash: "a",
+				origin: "mine",
+				kind: "speech",
+				durationSec: 3,
+				source: "talk.m4a",
+			},
+		});
+
+		// WHEN its audio is transcribed as a dry run
+		const result = await run(
+			audioTranscribe.run({ post: SLUG, language: undefined, force: false }, ctx, {
+				dryRun: true,
+				confirmed: false,
+			}),
+		);
+
+		// THEN the estimate is $0.0003, and it reads as ~$0.0003
+		expect(result.estimateUsd).toBe(0.0003);
+		expect(audioTranscribe.render?.(result)).toContain("(~$0.0003)");
+	});
+
 	it("should not pay again for a transcript that's up to date", async () => {
 		// GIVEN a post whose audio was transcribed
 		const { ctx, transcriber, ports } = await ready();
@@ -170,6 +222,26 @@ describe("audio transcribe", () => {
 		const entries = await ledgerOf(ctx);
 		expect(entries.map((e) => e.type)).toEqual(["reserve"]);
 		expect(spent(entries, { post: SLUG })).toBeCloseTo(0.012);
+	});
+
+	it("should count nothing when the provider can't be reached, however often it runs", async () => {
+		// GIVEN a post with audio, and a provider that can't be reached from this machine
+		const { ctx, ports } = await ready(
+			testContext(),
+			fakeTranscriber(undefined, { answer: "unreachable" }),
+		);
+
+		// WHEN its audio is transcribed three times
+		const errors = [
+			await runFailure(transcribe(ctx), ports),
+			await runFailure(transcribe(ctx), ports),
+			await runFailure(transcribe(ctx), ports),
+		];
+
+		// THEN each run fails as a provider error
+		expect(errors.map((error) => error.code)).toEqual(["provider", "provider", "provider"]);
+		// AND nothing stays counted
+		expect(spent(await ledgerOf(ctx), { post: SLUG })).toBe(0);
 	});
 
 	it("should keep a transcript it paid for when the ledger can't be closed", async () => {

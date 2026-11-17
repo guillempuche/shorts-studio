@@ -21,6 +21,7 @@ export const ErrorCode = Schema.Literals([
 	"missing-tool",
 	"missing-key",
 	"provider",
+	"interrupted",
 ]);
 export type ErrorCode = typeof ErrorCode.Type;
 
@@ -47,6 +48,13 @@ export class ProviderFailed extends Schema.TaggedError<ProviderFailed>()("Provid
 export class Refused extends Schema.TaggedError<Refused>()("Refused", said) {}
 /** The provider gave up on a request: waiting for it again never succeeds. */
 export class RequestEnded extends Schema.TaggedError<RequestEnded>()("RequestEnded", said) {}
+/**
+ * The request never left this machine: the connection was refused, the name didn't resolve, or
+ * the TLS handshake failed. The provider saw nothing, so it billed nothing.
+ */
+export class NotSent extends Schema.TaggedError<NotSent>()("NotSent", said) {}
+/** Ctrl-C or a signal stopped the run. Only the CLI builds it, to say how to resume. */
+export class Interrupted extends Schema.TaggedError<Interrupted>()("Interrupted", said) {}
 
 export const Reason = Schema.Union([
 	Failed,
@@ -62,6 +70,8 @@ export const Reason = Schema.Union([
 	ProviderFailed,
 	Refused,
 	RequestEnded,
+	NotSent,
+	Interrupted,
 ]);
 export type Reason = typeof Reason.Type;
 
@@ -79,13 +89,16 @@ const CODE: Readonly<Record<Reason["_tag"], ErrorCode>> = {
 	ProviderFailed: "provider",
 	Refused: "provider",
 	RequestEnded: "provider",
+	NotSent: "provider",
+	Interrupted: "interrupted",
 };
 
 type Said = { readonly message: string; readonly fix: string };
 
 /**
  * The reason `fail` builds for each code. `provider` builds `ProviderFailed`, the outcome-unknown
- * reason that keeps a reservation counted: a refusal or an ended request needs `failBecause`.
+ * reason that keeps a reservation counted: a refusal, an ended request or one never sent needs
+ * `failBecause`.
  */
 const REASON: Readonly<Record<ErrorCode, new (said: Said) => Reason>> = {
 	failed: Failed,
@@ -99,6 +112,7 @@ const REASON: Readonly<Record<ErrorCode, new (said: Said) => Reason>> = {
 	"missing-tool": MissingTool,
 	"missing-key": MissingKey,
 	provider: ProviderFailed,
+	interrupted: Interrupted,
 };
 
 /** Process exit code per error code; see docs/architecture.md#exit-codes. */
@@ -111,6 +125,9 @@ export const exitCodeOf = (code: ErrorCode): number => {
 			return 3;
 		case "over-budget":
 			return 4;
+		// What a shell gives a program stopped by Ctrl-C (128 + SIGINT).
+		case "interrupted":
+			return 130;
 		default:
 			return 1;
 	}

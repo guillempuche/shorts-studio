@@ -224,20 +224,46 @@ export const nextOf = (post: Post): { next: string; nextSteps: ReadonlyArray<Nex
 };
 
 /**
- * What follows a dry run: the real run when its estimate fits the caps. When it doesn't, the real
- * run would be refused (over a cap, or with a setting that can't be used), so it's the user's call.
+ * Who clears what stops a dry run: the user first, whatever it is, since an agent may neither
+ * fix the user's settings, set a key, nor decide about a cap. After a settings fix, the agent's
+ * `config_check` lists any setting still in the way.
+ */
+const clearTheWay = (budget: Budget): ReadonlyArray<NextStep> => {
+	const why = budget.why ?? budget.stoppedBy;
+	// The fix names the key and where to set it, or the cap and where it was set.
+	const whyAndFix = budget.fix === undefined ? why : `${why} ${budget.fix}`;
+	switch (budget.stoppedBy) {
+		case "settings":
+			return [
+				userStep(undefined, `the user fixes the setting: ${why}`),
+				agentStep(
+					"config_check",
+					{},
+					{ note: "lists every setting that can't be used; run it after the fix" },
+				),
+			];
+		case "missing-key":
+			return [userStep(undefined, `the user sets the key: ${whyAndFix}`)];
+		default:
+			return [userStep(undefined, `the estimate doesn't fit, so ask the user: ${whyAndFix}`)];
+	}
+};
+
+/**
+ * What follows a dry run: the real run when it could go ahead. When it couldn't, the user's step
+ * for what stops it, then `fetchFree`, if given: fetching what's already paid for spends nothing,
+ * so neither a cap nor a setting stops it, but a missing key does.
  */
 export const nextAfterDryRun = (
 	budget: Budget,
 	realRun: NextStep,
+	fetchFree?: NextStep,
 ): { next: string; nextSteps: ReadonlyArray<NextStep> } => {
 	const nextSteps = budget.fits
 		? [realRun]
 		: [
-				userStep(
-					undefined,
-					`the estimate doesn't fit, so ask the user: ${budget.why ?? budget.stoppedBy}`,
-				),
+				...clearTheWay(budget),
+				...(fetchFree === undefined || budget.stoppedBy === "missing-key" ? [] : [fetchFree]),
 			];
 	return { next: nextText(nextSteps), nextSteps };
 };

@@ -1,6 +1,14 @@
 import { Cause, Result, Runtime, Schema } from "effect";
 import { describe, expect, it } from "vitest";
-import { ErrorCode, fail, failBecause, issueLine, RequestEnded, reportOf } from "./errors.ts";
+import {
+	ErrorCode,
+	fail,
+	failBecause,
+	issueLine,
+	NotSent,
+	RequestEnded,
+	reportOf,
+} from "./errors.ts";
 
 describe("fail", () => {
 	it("should keep the code, the message and the fix", () => {
@@ -18,11 +26,13 @@ describe("fail", () => {
 		// GIVEN one failure of each code
 		const exitCode = (code: typeof ErrorCode.Type) => fail(code, "m", "f")[Runtime.errorExitCode];
 
-		// THEN calling it wrong exits 2, needing --yes or the user's approval 3, passing a cap 4
+		// THEN calling it wrong exits 2, needing --yes or the user's approval 3, passing a cap 4,
+		// and being interrupted 130, as a shell reports Ctrl-C
 		expect(exitCode("usage")).toBe(2);
 		expect(exitCode("needs-confirmation")).toBe(3);
 		expect(exitCode("needs-approval")).toBe(3);
 		expect(exitCode("over-budget")).toBe(4);
+		expect(exitCode("interrupted")).toBe(130);
 		// AND everything else exits 1
 		expect(exitCode("not-found")).toBe(1);
 		expect(exitCode("provider")).toBe(1);
@@ -89,6 +99,23 @@ describe("failBecause", () => {
 		// AND the reason's message and fix are the failure's
 		expect(error.message).toBe("Request req-1 failed.");
 		expect(error.fix).toBe("Submit a new request.");
+	});
+
+	it("should report a request that never left the machine as a provider failure, exiting 1", () => {
+		// GIVEN a request whose connection was refused before it was sent
+		const reason = new NotSent({
+			message: "connect ECONNREFUSED 127.0.0.1:9",
+			fix: "Nothing was sent, so nothing was counted.",
+		});
+
+		// WHEN it becomes a failure
+		const error = failBecause(reason);
+
+		// THEN scripts see the provider code and exit 1, as for any provider failure
+		expect(error.code).toBe("provider");
+		expect(error[Runtime.errorExitCode]).toBe(1);
+		// AND code can still tell it apart from an unknown outcome
+		expect(error.reason._tag).toBe("NotSent");
 	});
 });
 

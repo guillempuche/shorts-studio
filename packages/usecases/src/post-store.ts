@@ -148,6 +148,7 @@ export const updatePost = <E>(
 					yield* writePost(ctx, slug, written);
 					return written;
 				}),
+				{ processStartedAt: ctx.processStartedAt },
 			),
 		),
 	);

@@ -6,6 +6,7 @@
 
 import { Job, Unit } from "@shorts-studio/domain/models";
 import { Effect, Schema } from "effect";
+import { SettingsIssue } from "../context.ts";
 import { daysBetween, daysNow } from "../days.ts";
 import { jobOffers, modelNameFor, readModels, STALE_PRICE_DAYS } from "../models.ts";
 import { defineOperation } from "../operation.ts";
@@ -26,13 +27,15 @@ const ModelRow = Schema.Struct({
 export const modelsList = defineOperation({
 	name: "models_list",
 	description:
-		"List each job's models: the provider in use's own and those config.json adds or changes, with the price per unit, the day each price was checked, and which model is in use.",
+		"List each job's models: the provider in use's own and those config.json adds or changes, with the price per unit, the day each price was checked, which model is in use, and every setting that can't be used.",
 	params: {},
 	output: Schema.Struct({
 		models: Schema.Array(ModelRow),
 		staleAfterDays: Schema.Int,
 		/** Entries in config.json that aren't whole models, each with what to fix. */
 		problems: Schema.Array(Schema.Struct({ message: Schema.String, fix: Schema.String })),
+		/** Settings that can't be used, so a model or price may be the default; MCP shows no stderr. */
+		settingsIssues: Schema.Array(SettingsIssue),
 	}),
 	surface: "cli-and-mcp",
 	spends: false,
@@ -68,6 +71,7 @@ export const modelsList = defineOperation({
 			models: jobs.flatMap(({ rows }) => rows),
 			staleAfterDays: STALE_PRICE_DAYS,
 			problems: [...problems.values()],
+			settingsIssues: ctx.settingsIssues,
 		};
 	}),
 	render: (o) => {

@@ -13,11 +13,21 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fail, type Reason, type ShortsError } from "@shorts-studio/domain/errors";
 import { Unit } from "@shorts-studio/domain/models";
-import { Effect, Schema } from "effect";
-import { type Context, DEFAULT_CAPS } from "./context.ts";
+import { Effect, Result, Schema } from "effect";
+import {
+	type Context,
+	capSetBy,
+	DEFAULT_CAPS,
+	type KeySpec,
+	MCP_RESTART,
+	type SettingsIssue,
+	settingsIssueLine,
+} from "./context.ts";
 import { daysNow } from "./days.ts";
 import { appendText, ensureDir, readText } from "./files.ts";
-import { withLock } from "./lock.ts";
+import { requireKey } from "./inputs.ts";
+import { lockBusy, withLock } from "./lock.ts";
+import { roundUsd, usd, usdOf } from "./money.ts";
 
 /**
  * An instant written exactly as `toISOString` writes it (2026-11-04T09:00:00.000Z). `spent`
@@ -52,7 +62,7 @@ export const LedgerEntry = Schema.Struct({
 });
 export type LedgerEntry = typeof LedgerEntry.Type;
 
-const ledgerFile = (ctx: Context): string => join(ctx.paths.data, "ledger.jsonl");
+export const ledgerFile = (ctx: Context): string => join(ctx.paths.data, "ledger.jsonl");
 const EntryLine = Schema.fromJsonString(LedgerEntry);
 const decodeEntry = Schema.decodeUnknownEffect(EntryLine);
 
@@ -73,6 +83,21 @@ const readLedgerFile = (ctx: Context): Effect.Effect<LedgerFile, ShortsError> =>
 	).pipe(Effect.flatMap((text) => parseLedger(file, text)));
 };
 
+/**
+ * A line cut off mid-write: the last one, with no line end and not even JSON. A reservation's
+ * line is written before its request is sent, and a cut-off settle or release leaves its
+ * reservation counted in full, so removing it can't make the caps count less than was spent.
+ */
+const CUT_OFF_FIX =
+	"A command was cut off while writing this line. Remove it: nothing was sent for it, and removing it can't make the caps count less than was spent.";
+
+/** Any other bad line, such as a hand edit: the caps are checked against it, so it's not ours to change. */
+const BAD_LINE_FIX =
+	"This file is the record of what was spent, and the caps are checked against it, so what to do with that line is the user's decision.";
+
+const isJson = (line: string): boolean =>
+	Result.isSuccess(Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Unknown))(line));
+
 const parseLedger = (file: string, text: string): Effect.Effect<LedgerFile, ShortsError> => {
 	// Some editors save a byte-order mark first; it isn't part of the first line's JSON.
 	// Numbered before blank lines are dropped, so an error names the line an editor shows.
@@ -81,17 +106,19 @@ const parseLedger = (file: string, text: string): Effect.Effect<LedgerFile, Shor
 		.split("\n")
 		.map((line, i) => ({ line, number: i + 1 }))
 		.filter(({ line }) => line.trim() !== "");
+	const endsMidLine = text !== "" && !text.endsWith("\n");
+	const last = lines.at(-1)?.number;
 	return Effect.forEach(lines, ({ line, number }) =>
 		decodeEntry(line).pipe(
 			Effect.mapError((error) =>
 				fail(
 					"failed",
 					`${file} line ${number} is corrupt:\n${error.message}`,
-					"Fix or remove that line; commands only append to this file.",
+					number === last && endsMidLine && !isJson(line) ? CUT_OFF_FIX : BAD_LINE_FIX,
 				),
 			),
 		),
-	).pipe(Effect.map((entries) => ({ entries, endsMidLine: text !== "" && !text.endsWith("\n") })));
+	).pipe(Effect.map((entries) => ({ entries, endsMidLine })));
 };
 
 /** Every entry. A corrupt line fails the read, since the caps can't be trusted past it. */
@@ -138,20 +165,13 @@ const append = (ctx: Context, ledger: LedgerFile, entry: LedgerEntry) => {
 	return appendText(ledgerFile(ctx), `${lead}${Schema.encodeSync(EntryLine)(entry)}\n`);
 };
 
-const withLedgerLock = <A>(ctx: Context, use: Effect.Effect<A, ShortsError>) =>
+/** `command` is what the lock file says its holder is doing, which a busy error names. */
+const withLedgerLock = <A>(ctx: Context, command: string, use: Effect.Effect<A, ShortsError>) =>
 	Effect.andThen(
 		ensureDir(ctx.paths.data),
-		withLock(
-			join(ctx.paths.data, "ledger.lock"),
-			"ledger",
-			() =>
-				fail(
-					"conflict",
-					"The spend ledger is busy.",
-					"Another command is updating it; run this one again.",
-				),
-			use,
-		),
+		withLock(join(ctx.paths.data, "ledger.lock"), command, lockBusy("The spend ledger"), use, {
+			processStartedAt: ctx.processStartedAt,
+		}),
 	);
 
 export const caps = (ctx: Context) => ({ ...DEFAULT_CAPS, ...ctx.config.caps });
@@ -175,19 +195,25 @@ export interface PaidCall {
 const passes = (spentUsd: number, usd: number, capUsd: number): boolean =>
 	Math.round((spentUsd + usd) * 1e6) > Math.round(capUsd * 1e6);
 
+/** Where a cap was set (`capsFrom`), as the over-budget fix names it: a default says where to set it. */
+const capSource = (from: string, configFile: string): string =>
+	from === "default" ? `its default; it's set in ${configFile}` : capSetBy(from);
+
 /**
  * What to do about a cap: waiting helps for a day or a month, never for a post, nor at $0.
- * Raising one is left to the user, since an agent reads this fix as its next step.
+ * Raising one is left to the user, since an agent reads this fix as its next step. It names
+ * where the cap was set, since a variable wins over config.json.
  */
-const capFix = (setting: string, capUsd: number, wait: string | undefined, configFile: string) => {
-	const raise = `Raising ${setting} in ${configFile} is the user's decision.`;
+const capFix = (setting: string, capUsd: number, wait: string | undefined, source: string) => {
+	const raise = `Raising ${setting} (${source}) is the user's decision.`;
 	if (capUsd === 0) return `${setting} is 0, so nothing can be spent. ${raise}`;
 	return wait === undefined ? raise : `${wait}. ${raise}`;
 };
 
 /**
- * What a call would leave under each cap, and whether it fits. A dry run reports it, so an agent
- * learns a call won't fit before the real run fails. `stoppedBy` names what stops it.
+ * What a call would leave under each cap, and whether the real run could go ahead. A dry run
+ * reports it, so an agent learns a call won't go ahead before the real run fails. `stoppedBy`
+ * names what stops it; `why` and `fix` are the message and fix the real run would fail with.
  */
 export const Budget = Schema.Struct({
 	fits: Schema.Boolean,
@@ -195,49 +221,85 @@ export const Budget = Schema.Struct({
 	leftThisMonthUsd: Schema.Finite,
 	leftOnPostUsd: Schema.Finite,
 	stoppedBy: Schema.optionalKey(
-		Schema.Literals(["settings", "caps.postUsd", "caps.monthlyUsd", "caps.dailyUsd"]),
+		Schema.Literals([
+			"settings",
+			"missing-key",
+			"caps.postUsd",
+			"caps.monthlyUsd",
+			"caps.dailyUsd",
+		]),
 	),
 	why: Schema.optionalKey(Schema.String),
+	fix: Schema.optionalKey(Schema.String),
 });
 export type Budget = typeof Budget.Type;
 
-/** A dry run's sentence about the caps, for text output. */
-export const budgetLine = (budget: Budget): string =>
-	budget.fits
-		? `It fits the caps: $${budget.leftTodayUsd.toFixed(2)} left today, $${budget.leftOnPostUsd.toFixed(2)} on this post.`
-		: `It wouldn't fit: ${budget.why ?? budget.stoppedBy}`;
+/** A dry run's sentence about whether the real run could go ahead, for text output. */
+export const budgetLine = (budget: Budget): string => {
+	if (budget.fits) {
+		return `It fits the caps: ${usd(budget.leftTodayUsd)} left today, ${usd(budget.leftOnPostUsd)} on this post.`;
+	}
+	const why = budget.why ?? budget.stoppedBy;
+	return budget.stoppedBy?.startsWith("caps.") === true
+		? `It wouldn't fit: ${why}`
+		: `The real run can't go ahead: ${why}`;
+};
 
 /** What's left of a cap in dollars, never below 0, rounded to millionths like `passes`. */
-const left = (capUsd: number, spentUsd: number): number =>
-	Math.max(0, Math.round((capUsd - spentUsd) * 1e6) / 1e6);
+const left = (capUsd: number, spentUsd: number): number => Math.max(0, roundUsd(capUsd - spentUsd));
+
+/** Which settings problem leads a refusal: the one that puts the most at risk. */
+const RISK_ORDER: ReadonlyArray<SettingsIssue["risk"]> = ["caps", "brand", "setting"];
+
+const atRisk = (issue: SettingsIssue): string => {
+	switch (issue.risk) {
+		case "caps":
+			return "the caps may be the defaults rather than yours";
+		case "brand":
+			return "images would be made without your brand's style";
+		case "setting":
+			return `${issue.setting ?? "that setting"} would be its default`;
+	}
+};
 
 /**
- * Why nothing may be spent while a setting can't be used, or undefined when every setting can be:
- * the caps may then be the defaults rather than the user's.
+ * Why nothing may be spent while a setting can't be used, or undefined when every setting can be.
+ * The message says what's at risk: caps that may be the defaults, images without the brand's
+ * style, or one setting at its default. Each is money spent on what the user didn't ask for.
  */
 export const settingsRefusal = (ctx: Context): ShortsError | undefined => {
-	const [issue, ...more] = ctx.settingsIssues;
-	if (issue === undefined) return undefined;
-	const others = more.length === 0 ? "" : ` (and ${more.length} more)`;
+	const leading = [...ctx.settingsIssues].sort(
+		(a, b) => RISK_ORDER.indexOf(a.risk) - RISK_ORDER.indexOf(b.risk),
+	)[0];
+	if (leading === undefined) return undefined;
+	const more = ctx.settingsIssues.length - 1;
+	const others = more === 0 ? "" : ` (and ${more} more)`;
 	return fail(
 		"failed",
-		`A setting can't be used, so the caps may be the defaults rather than yours, and nothing was spent: ${issue}${others}`,
-		// An MCP server reads the settings once, when it starts.
-		"Run doctor and fix the settings it names, then run this again. A running MCP server keeps the settings it started with, so restart it after the fix.",
+		`A setting can't be used, so ${atRisk(leading)}, and nothing was spent: ${settingsIssueLine(leading)}${others}`,
+		`Run doctor (\`config_check\` over MCP) and fix the settings it names, then run this again. ${MCP_RESTART}`,
 	);
 };
 
 /**
  * Checks a call against the caps: the dry run's answer and, under the lock, the reservation's.
- * Settings that couldn't be used come first, since the caps may then be the defaults rather than
- * the user's. Then the cap that waiting would fix last: the post's, the month's, the day's.
+ * Settings that couldn't be used come first when there's something to pay for, since the caps may
+ * then be the defaults rather than the user's. Then a key the dry run found missing, even for $0:
+ * fetching what's paid for needs it too. Then the cap that waiting would fix last: the post's,
+ * the month's, the day's.
  */
 const checkCaps = (
 	ctx: Context,
 	entries: ReadonlyArray<LedgerEntry>,
 	call: Pick<PaidCall, "post" | "usd">,
 	days: ReturnType<typeof daysNow>,
-	plannedUsd = 0,
+	{
+		plannedUsd = 0,
+		missingKey,
+	}: {
+		readonly plannedUsd?: number | undefined;
+		readonly missingKey?: ShortsError | undefined;
+	} = {},
 ): { readonly budget: Budget; readonly failure?: ShortsError } => {
 	const live = amounts(entries);
 	const { dailyUsd, monthlyUsd, postUsd } = caps(ctx);
@@ -251,23 +313,27 @@ const checkCaps = (
 		leftOnPostUsd: left(postUsd, spentOnPost),
 	};
 	const stop = (stoppedBy: NonNullable<Budget["stoppedBy"]>, failure: ShortsError) => ({
-		budget: { fits: false, ...room, stoppedBy, why: failure.message },
+		budget: { fits: false, ...room, stoppedBy, why: failure.message, fix: failure.fix },
 		failure,
 	});
 	const configFile = join(ctx.paths.data, "config.json");
-	const cost = `This call (~$${call.usd.toFixed(3)})`;
+	const source = (cap: keyof typeof DEFAULT_CAPS) => capSource(ctx.capsFrom[cap], configFile);
+	const cost = `This call (~${usd(call.usd)})`;
+	/** What's spent against a cap, in words that tell the two apart. */
+	const ofCap = (spentUsd: number, capUsd: number) => usdOf(spentUsd, capUsd).join(" of ");
 
-	// Nothing to spend fits, whatever the settings or the caps say.
-	if (call.usd <= 0) return { budget: { fits: true, ...room } };
-	const refusal = settingsRefusal(ctx);
+	// Nothing to spend needs no settings and fits any cap, but fetching it still needs the key.
+	const refusal = call.usd > 0 ? settingsRefusal(ctx) : undefined;
 	if (refusal !== undefined) return stop("settings", refusal);
+	if (missingKey !== undefined) return stop("missing-key", missingKey);
+	if (call.usd <= 0) return { budget: { fits: true, ...room } };
 	if (passes(spentOnPost, call.usd, postUsd)) {
 		return stop(
 			"caps.postUsd",
 			fail(
 				"over-budget",
-				`${cost} would pass the per-post cap: $${spentOnPost.toFixed(2)} of $${postUsd.toFixed(2)} spent on ${call.post}.`,
-				capFix("caps.postUsd", postUsd, undefined, configFile),
+				`${cost} would pass the per-post cap: ${ofCap(spentOnPost, postUsd)} spent on ${call.post}.`,
+				capFix("caps.postUsd", postUsd, undefined, source("postUsd")),
 			),
 		);
 	}
@@ -276,8 +342,8 @@ const checkCaps = (
 			"caps.monthlyUsd",
 			fail(
 				"over-budget",
-				`${cost} would pass this month's cap: $${spentThisMonth.toFixed(2)} of $${monthlyUsd.toFixed(2)} spent in ${days.month}.`,
-				capFix("caps.monthlyUsd", monthlyUsd, "Wait until next month", configFile),
+				`${cost} would pass this month's cap: ${ofCap(spentThisMonth, monthlyUsd)} spent in ${days.month}.`,
+				capFix("caps.monthlyUsd", monthlyUsd, "Wait until next month", source("monthlyUsd")),
 			),
 		);
 	}
@@ -286,27 +352,39 @@ const checkCaps = (
 			"caps.dailyUsd",
 			fail(
 				"over-budget",
-				`${cost} would pass today's cap: $${spentToday.toFixed(2)} of $${dailyUsd.toFixed(2)} spent.`,
-				capFix("caps.dailyUsd", dailyUsd, "Wait until tomorrow", configFile),
+				`${cost} would pass today's cap: ${ofCap(spentToday, dailyUsd)} spent.`,
+				capFix("caps.dailyUsd", dailyUsd, "Wait until tomorrow", source("dailyUsd")),
 			),
 		);
 	}
 	return { budget: { fits: true, ...room } };
 };
 
+/** The `missing-key` failure of the first of `keys` not set, or undefined. Calls no provider. */
+const missingKeyOf = (ctx: Context, keys: ReadonlyArray<KeySpec>) =>
+	Effect.forEach(keys, (key) => requireKey(ctx, key), { discard: true }).pipe(
+		Effect.match({ onFailure: (error) => error, onSuccess: () => undefined }),
+	);
+
 /**
- * Whether a call of `usd` for `post` would fit the caps now, for a dry run, after `plannedUsd`
- * that a batch dry run planned for earlier posts. Read without the lock, so another command may
- * spend before the real run, which checks again under it.
+ * Whether the real run of a call of `usd` for `post` could go ahead now, for a dry run: the
+ * settings, then `keys`, the ones the real run would call the provider with (none when it would
+ * send or fetch nothing), then the caps, after `plannedUsd` that a batch dry run planned for
+ * earlier posts. Read without the lock, so another command may spend before the real run, which
+ * checks again under it.
  */
 export const budgetFor = (
 	ctx: Context,
 	call: Pick<PaidCall, "post" | "usd">,
-	plannedUsd = 0,
+	{
+		plannedUsd,
+		keys = [],
+	}: { readonly plannedUsd?: number | undefined; readonly keys?: ReadonlyArray<KeySpec> } = {},
 ): Effect.Effect<Budget, ShortsError> =>
 	Effect.map(
-		readLedgerFile(ctx),
-		({ entries }) => checkCaps(ctx, entries, call, daysNow(ctx), plannedUsd).budget,
+		Effect.all([readLedgerFile(ctx), missingKeyOf(ctx, keys)]),
+		([{ entries }, missingKey]) =>
+			checkCaps(ctx, entries, call, daysNow(ctx), { plannedUsd, missingKey }).budget,
 	);
 
 /**
@@ -316,12 +394,13 @@ export const budgetFor = (
 export const reserve = (ctx: Context, call: PaidCall): Effect.Effect<string, ShortsError> =>
 	withLedgerLock(
 		ctx,
+		`reserve for ${call.post}`,
 		Effect.gen(function* () {
 			// A negative cost would lower the totals and let later calls through.
 			if (!Number.isFinite(call.usd) || call.usd < 0) {
 				return yield* fail(
 					"failed",
-					`This call was priced at $${call.usd}, which can't be right, so nothing was reserved.`,
+					`This call was priced at ${usd(call.usd)}, which can't be right, so nothing was reserved.`,
 					"Check what it's priced from, such as the audio's length (post show), then run it again.",
 				);
 			}
@@ -346,6 +425,7 @@ const close = (
 ) =>
 	withLedgerLock(
 		ctx,
+		change.type,
 		Effect.gen(function* () {
 			const ledger = yield* readLedgerFile(ctx);
 			const reserved = ledger.entries.find((entry) => entry.id === id && entry.type === "reserve");
@@ -369,7 +449,9 @@ const NOTHING_BILLED: ReadonlySet<Reason["_tag"]> = new Set([
 	// The provider said no, or reported that the job failed.
 	"Refused",
 	"RequestEnded",
-	// The call stopped before anything was sent.
+	// The call stopped before anything was sent: by the provider's layer when the request never
+	// left the machine, or earlier, on a missing key or a bad input.
+	"NotSent",
 	"MissingKey",
 	"Usage",
 	"NotFound",

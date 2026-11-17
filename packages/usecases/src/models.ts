@@ -145,8 +145,8 @@ export const modelChecks = Effect.fn("modelChecks")(function* (
 	for (const { job, offer } of offers.filter(({ offer }) => Object.keys(offer.models).length > 0)) {
 		const chosen = yield* Effect.result(chooseModel(ctx, offer, job));
 		if (Result.isFailure(chosen)) {
-			const { message, fix } = chosen.failure;
-			rows.push({ name: `${job} model`, status: "fail", detail: message, fix });
+			const { message, fix, code } = chosen.failure;
+			rows.push({ name: `${job} model`, status: "fail", detail: message, fix, code });
 			continue;
 		}
 		const model = chosen.success;

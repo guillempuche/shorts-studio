@@ -18,6 +18,7 @@ import { hashOf, readText } from "../files.ts";
 import { defineOperation, p } from "../operation.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
 import { readTranscript, TRANSCRIPT_FILE } from "./audio.ts";
+import { fetchSavedFix, withImagesLock } from "./image.ts";
 import { NextFields, nextOf } from "./post.ts";
 
 /** The words to cut beats from: none for music, or before there's a transcript. */
@@ -34,6 +35,30 @@ const planInputHash = (post: Post): string | undefined => {
 		? undefined
 		: hashOf("speech", post.transcript.hash, post.audio.durationSec, PLANNER_VERSION);
 };
+
+/**
+ * Saves a new plan, whose beats start afresh. A saved request would be lost with its paid image,
+ * so it waits out a running image generate and refuses while a beat still has one.
+ */
+const replaceBeats = (ctx: Context, slug: string, beats: NonNullable<Post["beats"]>) =>
+	withImagesLock(
+		ctx,
+		slug,
+		"beat plan",
+		updatePost(ctx, slug, "beat plan", (current) => {
+			const waiting = (current.beats?.items ?? []).filter((b) => b.pending !== undefined);
+			if (waiting.length === 0) return Effect.succeed({ ...current, beats });
+			const one = waiting.length === 1;
+			const fetch = fetchSavedFix(ctx, slug, waiting);
+			return Effect.fail(
+				fail(
+					"conflict",
+					`${one ? "Beat" : "Beats"} ${waiting.map((b) => b.index).join(", ")} ${one ? "has a request" : "have requests"} already paid for and not fetched yet, so the beat plan was kept.`,
+					`Run ${fetch.cli} first: it ${fetch.what}. Then plan again.`,
+				),
+			);
+		}),
+	);
 
 const BeatRow = Schema.Struct({
 	index: Schema.Int,
@@ -97,9 +122,7 @@ export const beatPlan = defineOperation({
 			}
 			const spans = planByMoment(yield* readWords(ctx, post), sections);
 			const items: ReadonlyArray<Beat> = spans.map((span) => ({ ...span }));
-			const updated = yield* updatePost(ctx, input.post, "beat plan", (current) =>
-				Effect.succeed({ ...current, beats: { inputHash: recutHash, items } }),
-			);
+			const updated = yield* replaceBeats(ctx, input.post, { inputHash: recutHash, items });
 			return { beats: items.map(row), skipped: false, ...nextOf(updated) };
 		}
 		if (existing !== undefined && existing.inputHash === inputHash && !input.force) {
@@ -114,9 +137,7 @@ export const beatPlan = defineOperation({
 		}
 		const spans = planBeats(yield* readWords(ctx, post), post.audio.durationSec);
 		const items: ReadonlyArray<Beat> = spans.map((span) => ({ ...span }));
-		const updated = yield* updatePost(ctx, input.post, "beat plan", (current) =>
-			Effect.succeed({ ...current, beats: { inputHash, items } }),
-		);
+		const updated = yield* replaceBeats(ctx, input.post, { inputHash, items });
 		return { beats: items.map(row), skipped: false, ...nextOf(updated) };
 	}),
 	render: (o) =>

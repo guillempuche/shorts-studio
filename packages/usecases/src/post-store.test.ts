@@ -2,8 +2,10 @@ import { cpSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
+import { takeLock } from "./files.ts";
 import { createPost, postDir, readPost, updatePost } from "./post-store.ts";
 import { testContext } from "./test/context.ts";
+import { failurePastLockWait } from "./test/lock.ts";
 import { seedPost } from "./test/posts.ts";
 
 const SLUG = "2026-11-04-store";
@@ -24,6 +26,53 @@ describe("updatePost", () => {
 		expect(post.revision).toBe(3);
 		// AND the file holds the latest change
 		expect((await Effect.runPromise(readPost(ctx, SLUG))).aiGenerated).toBe(true);
+	});
+
+	it("should name the command holding a busy post, and the lock file to delete if it's left over", async () => {
+		// GIVEN a post whose lock another command holds
+		const ctx = testContext();
+		await seedPost(ctx, SLUG);
+		const lockFile = join(postDir(ctx, SLUG), "post.json.lock");
+		const held = await Effect.runPromise(takeLock(lockFile, "image generate"));
+
+		// WHEN a command updates the post and the lock stays busy past the wait
+		const error = await failurePastLockWait(
+			updatePost(ctx, SLUG, "beat set", (p) => Effect.succeed(p)),
+		);
+		held.release();
+
+		// THEN it is a conflict naming the holding command, its process and the lock file
+		expect(error.code).toBe("conflict");
+		expect(error.message).toContain('"image generate"');
+		expect(error.message).toContain(`pid ${process.pid}`);
+		expect(error.message).toContain(lockFile);
+		// AND the fix says which file to delete if that process isn't shorts-studio
+		expect(error.fix).toContain(
+			`If process ${process.pid} isn't shorts-studio, the lock was left behind: delete ${lockFile}, then run this again.`,
+		);
+	});
+
+	it("should take a post's lock whose process number went to a program started after it", async () => {
+		// GIVEN a post whose lock was taken ten minutes ago by a process number that a program
+		// started a minute ago now has
+		const ctx = testContext({ processStartedAt: async () => new Date(Date.now() - 60_000) });
+		await seedPost(ctx, SLUG);
+		writeFileSync(
+			join(postDir(ctx, SLUG), "post.json.lock"),
+			JSON.stringify({
+				pid: process.pid,
+				command: "image generate",
+				since: new Date(Date.now() - 10 * 60_000).toISOString(),
+			}),
+		);
+
+		// WHEN a command updates the post
+		const post = await Effect.runPromise(
+			updatePost(ctx, SLUG, "beat set", (p) => Effect.succeed({ ...p, aiGenerated: true })),
+		);
+
+		// THEN the update goes through
+		expect(post.aiGenerated).toBe(true);
 	});
 });
 

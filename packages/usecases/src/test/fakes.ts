@@ -6,7 +6,7 @@
 
 import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fail, failBecause, Refused, RequestEnded } from "@shorts-studio/domain/errors";
+import { fail, failBecause, NotSent, Refused, RequestEnded } from "@shorts-studio/domain/errors";
 import type { Model } from "@shorts-studio/domain/models";
 import type { Transcript } from "@shorts-studio/domain/post";
 import { Effect, Layer } from "effect";
@@ -32,10 +32,11 @@ export type FakeImageMaker = ImageMaker["Service"] & {
 	/**
 	 * How the fake answers, read on every call. `collect` answers with the image; never, so a run
 	 * can be interrupted while it waits; or by ending the request, as a provider that gave up
-	 * would. `submit` fails when refused (an HTTP 4xx) or dropped (no answer, outcome unknown).
-	 * When held, it waits for `letGo()`, so a run can be interrupted mid-send.
+	 * would. `submit` fails when refused (an HTTP 4xx), dropped (no answer, outcome unknown) or
+	 * unreachable (never sent). When held, it waits for `letGo()`, so a run can be interrupted
+	 * mid-send.
 	 */
-	answer: "image" | "never" | "ended" | "refused" | "dropped" | "held";
+	answer: "image" | "never" | "ended" | "refused" | "dropped" | "unreachable" | "held";
 	/** How many `collect` calls were left waiting because `answer` was "never". */
 	waits: number;
 	/** How many `submit` calls are waiting for `letGo()` because `answer` was "held". */
@@ -44,11 +45,24 @@ export type FakeImageMaker = ImageMaker["Service"] & {
 	letGo: () => void;
 };
 
-/** How a fake fails a paid request: refused (a 4xx, nothing billed) or dropped (unknown). */
-const paidCallFailure = (answer: "refused" | "dropped") =>
-	answer === "refused"
-		? failBecause(new Refused({ message: "The fake said no (HTTP 400).", fix: "Fix the request." }))
-		: fail("provider", "The connection dropped before the fake answered.", "Run it again.");
+/**
+ * How a fake fails a paid request: refused (a 4xx, nothing billed), dropped (unknown), or
+ * unreachable (never sent, nothing billed).
+ */
+const paidCallFailure = (answer: "refused" | "dropped" | "unreachable") => {
+	switch (answer) {
+		case "refused":
+			return failBecause(
+				new Refused({ message: "The fake said no (HTTP 400).", fix: "Fix the request." }),
+			);
+		case "unreachable":
+			return failBecause(
+				new NotSent({ message: "connect ECONNREFUSED", fix: "Nothing was sent; tell the user." }),
+			);
+		default:
+			return fail("provider", "The connection dropped before the fake answered.", "Run it again.");
+	}
+};
 
 /** The bytes the fake returns for a request: they change with the prompt and the seed. */
 export const fakeImageBytes = (prompt: string, seed: number): Uint8Array =>
@@ -96,7 +110,11 @@ export const fakeImageMaker = (
 		submit: (model, prompt, seed) =>
 			Effect.suspend(() => {
 				maker.submits.push({ endpoint: model.endpoint, prompt, seed });
-				if (maker.answer === "refused" || maker.answer === "dropped") {
+				if (
+					maker.answer === "refused" ||
+					maker.answer === "dropped" ||
+					maker.answer === "unreachable"
+				) {
 					return Effect.fail(paidCallFailure(maker.answer));
 				}
 				const requestId = `req-${maker.submits.length}`;
@@ -185,7 +203,7 @@ export type FakeTranscriber = Transcriber["Service"] & {
 
 /**
  * A transcriber in memory that hears `transcript` in every file, unless `answer` says it refuses
- * every file (an HTTP 4xx) or drops the connection (outcome unknown).
+ * every file (an HTTP 4xx), drops the connection (outcome unknown) or can't be reached.
  */
 export const fakeTranscriber = (
 	transcript: Transcript = {
@@ -197,7 +215,7 @@ export const fakeTranscriber = (
 		],
 	},
 	options: {
-		readonly answer?: "words" | "refused" | "dropped";
+		readonly answer?: "words" | "refused" | "dropped" | "unreachable";
 		readonly keys?: ReadonlyArray<KeySpec>;
 	} = {},
 ): FakeTranscriber => {

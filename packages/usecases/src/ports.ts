@@ -5,7 +5,7 @@
  */
 
 import type { RenderBeat } from "@shorts-studio/domain/direction";
-import type { ShortsError } from "@shorts-studio/domain/errors";
+import type { ErrorCode, ShortsError } from "@shorts-studio/domain/errors";
 import type { Model } from "@shorts-studio/domain/models";
 import type { Transcript } from "@shorts-studio/domain/post";
 import { Context, type Effect } from "effect";
@@ -17,6 +17,8 @@ export interface Check {
 	readonly status: "ok" | "warn" | "fail";
 	readonly detail: string;
 	readonly fix?: string;
+	/** The code a command fails with because of this; `doctor` gives a tool row `missing-tool`. */
+	readonly code?: ErrorCode;
 }
 
 /** What every provider says about itself, for records and for `doctor`. */

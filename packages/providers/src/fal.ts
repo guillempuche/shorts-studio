@@ -14,9 +14,10 @@ import { requireKey } from "@shorts-studio/usecases/inputs";
 import { ImageMaker, type ImageRequest } from "@shorts-studio/usecases/ports";
 import { Effect, Layer, Redacted, Schedule, Schema } from "effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
-import { ProviderEnv, providerFailure, readFailure } from "./env.ts";
+import { endedFix, type PaidService, ProviderEnv, providerFailure, readFailure } from "./env.ts";
 
 export const FAL_KEY: KeySpec = { env: "FAL_KEY", keychain: "fal-key" };
+const FAL: PaidService = { id: "fal", name: "FAL", key: FAL_KEY };
 const BASE_URL = "https://queue.fal.run";
 
 /** How long one check on a request may take before it counts as a dropped connection. */
@@ -59,10 +60,8 @@ const Submitted = Schema.Struct({
 const Status = Schema.Struct({ status: Schema.String });
 const Result = Schema.Struct({ images: Schema.Array(Schema.Struct({ url: Schema.String })) });
 
-const fix = "Check FAL_KEY and your connection, then run it again.";
-
 const ended = (message: string) =>
-	Effect.fail(failBecause(new RequestEnded({ message, fix: "Submit a new request." })));
+	Effect.fail(failBecause(new RequestEnded({ message, fix: endedFix(FAL) })));
 
 export const falLayer = Layer.effect(
 	ImageMaker,
@@ -136,7 +135,7 @@ export const falLayer = Layer.effect(
 				}),
 				http.execute,
 				Effect.flatMap(HttpClientResponse.schemaBodyJson(Submitted)),
-				Effect.catch(providerFailure(fix)),
+				Effect.catch(providerFailure(FAL)),
 			);
 			return {
 				requestId: queued.request_id,
@@ -151,13 +150,13 @@ export const falLayer = Layer.effect(
 			yield* onlyToFal(request.responseUrl);
 
 			// FAL took this job on, so no failure from here on proves that nothing was billed.
-			const status = yield* finalStatus(key, request).pipe(Effect.catch(readFailure(fix)));
+			const status = yield* finalStatus(key, request).pipe(Effect.catch(readFailure(FAL)));
 			if (status !== "COMPLETED") {
 				return yield* ended(`FAL request ${request.requestId} ended as ${status}`);
 			}
 
 			const result = yield* read(key, request.responseUrl, Result).pipe(
-				Effect.catch(readFailure(fix)),
+				Effect.catch(readFailure(FAL)),
 			);
 			const url = result.images[0]?.url;
 			if (url === undefined) {
@@ -166,7 +165,7 @@ export const falLayer = Layer.effect(
 
 			const bytes = yield* reader.get(url).pipe(
 				Effect.flatMap((response) => response.arrayBuffer.pipe(Effect.timeout(DOWNLOAD_TIMEOUT))),
-				Effect.catch(readFailure(fix)),
+				Effect.catch(readFailure(FAL)),
 			);
 			return new Uint8Array(bytes);
 		});

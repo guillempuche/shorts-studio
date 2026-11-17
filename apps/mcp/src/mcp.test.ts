@@ -64,6 +64,18 @@ describe.each(VERSIONS)("MCP tools on %s", (version) => {
 		expect(tools).toHaveLength(mcpOperations(operations).length);
 	});
 
+	it("should not mark image_generate idempotent, since calling it twice with reroll pays twice", async () => {
+		// GIVEN the registry
+		const ctx = testContext();
+
+		// WHEN an MCP client lists the tools
+		const { tools } = await withClient(ctx, fakePorts(), (client) => client.listTools());
+
+		// THEN image_generate isn't idempotent, so a client won't retry it on its own
+		const imageGenerate = tools.find((tool) => tool.name === "image_generate");
+		expect(imageGenerate?.annotations?.idempotentHint).toBe(false);
+	});
+
 	it("should return a failure as the documented code, message and fix", async () => {
 		// GIVEN no posts
 		const ctx = testContext();
@@ -80,6 +92,34 @@ describe.each(VERSIONS)("MCP tools on %s", (version) => {
 		const report = JSON.parse(content?.type === "text" ? content.text : "{}") as object;
 		expect(Object.keys(report).sort()).toEqual(["code", "fix", "message"]);
 		expect(report).toMatchObject({ code: "not-found", fix: "List posts with: post list" });
+	});
+
+	it("should list in budget_show's result a config.json that can't be used, since MCP shows no stderr", async () => {
+		// GIVEN a config.json that isn't valid JSON, so the caps are the defaults
+		const ctx = testContext({
+			settingsIssues: [
+				{ source: "/data/config.json", risk: "caps", text: "Unexpected end of JSON input" },
+			],
+		});
+
+		// WHEN a client calls budget_show
+		const result = await withClient(ctx, fakePorts(), (client) =>
+			client.callTool({ name: "budget_show", arguments: {} }),
+		);
+
+		// THEN the result names config.json and the problem
+		expect(result.isError).not.toBe(true);
+		const [content] = result.content;
+		const output = JSON.parse(content?.type === "text" ? content.text : "{}");
+		expect(output.settingsIssues).toEqual([
+			{ source: "/data/config.json", risk: "caps", text: "Unexpected end of JSON input" },
+		]);
+		// AND it says each cap is the default
+		expect(output.capsFrom).toEqual({
+			dailyUsd: "default",
+			monthlyUsd: "default",
+			postUsd: "default",
+		});
 	});
 
 	it("should refuse a field the tool doesn't take, rather than drop it and spend", async () => {

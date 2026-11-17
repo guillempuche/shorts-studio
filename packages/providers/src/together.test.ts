@@ -7,25 +7,91 @@ import { transcriberContract } from "@shorts-studio/usecases/test/transcriber.co
 import { Effect } from "effect";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { withEnv } from "./env.ts";
-import { providerContext } from "./test/context.ts";
+import { closedUrl, providerContext } from "./test/context.ts";
 import { startFakeTogether } from "./test/together-server.ts";
 import { TOGETHER_MODELS, togetherLayer } from "./together.ts";
 
+/** Together's provider talking to `url`, with its key unless `withKey` is false. */
+const togetherAt = (url: string, withKey = true) =>
+	Effect.runPromise(
+		Effect.gen(function* () {
+			return yield* Transcriber;
+		}).pipe(
+			Effect.provide(
+				withEnv(
+					togetherLayer,
+					providerContext({
+						endpoints: { together: url },
+						secrets: withKey ? { TOGETHER_API_KEY: "test-key" } : {},
+					}),
+				),
+			),
+		),
+	);
+
+/** Together's provider talking to a local fake that answers every upload with `status`. */
+const withFakeTogether = async (status?: number, withKey = true) => {
+	const fake = await startFakeTogether(status === undefined ? {} : { status });
+	onTestFinished(() => fake.close());
+	return { fake, together: await togetherAt(fake.url, withKey) };
+};
+
 transcriberContract("Together", {
 	make: async ({ answer, withKey }) => {
+		if (answer === "unreachable") return togetherAt(await closedUrl(), withKey);
 		const status = { words: undefined, refused: 400, unknown: 500 }[answer];
-		const fake = await startFakeTogether(status === undefined ? {} : { status });
-		onTestFinished(() => fake.close());
-		const ctx = providerContext({
-			endpoints: { together: fake.url },
-			secrets: withKey ? { TOGETHER_API_KEY: "test-key" } : {},
-		});
-		return Effect.runPromise(
-			Effect.gen(function* () {
-				return yield* Transcriber;
-			}).pipe(Effect.provide(withEnv(togetherLayer, ctx))),
-		);
+		return (await withFakeTogether(status, withKey)).together;
 	},
+});
+
+/** A small audio file to upload. */
+const audioFile = () => {
+	const file = join(tempDir(), "audio.m4a");
+	writeFileSync(file, new Uint8Array(64));
+	return file;
+};
+
+const whisper = TOGETHER_MODELS["openai/whisper-large-v3"];
+
+describe("Together's fixes", () => {
+	it.each([
+		[401, "Together refused the request, so nothing was counted.", "TOGETHER_API_KEY"],
+		[429, "Together refused the request, so nothing was counted.", "wait a minute"],
+		[502, "The outcome is unknown, so its cost stays counted.", "pays for a new request"],
+	])(
+		"should say whether an HTTP %i was counted, and what to do next",
+		async (status, first, next) => {
+			// GIVEN Together answering every upload with that status
+			const { together } = await withFakeTogether(status);
+
+			// WHEN a file is transcribed
+			const error = await Effect.runPromise(
+				Effect.flip(together.transcribe(whisper, audioFile(), undefined)),
+			);
+
+			// THEN the fix starts by saying whether it was counted, then what to do
+			expect(error.fix.slice(0, first.length)).toBe(first);
+			expect(error.fix).toContain(next);
+		},
+	);
+
+	it("should say a refused connection sent nothing, and to tell the user", async () => {
+		// GIVEN Together at an address where nothing listens any more
+		const together = await togetherAt(await closedUrl());
+
+		// WHEN a file is transcribed
+		const error = await Effect.runPromise(
+			Effect.flip(together.transcribe(whisper, audioFile(), undefined)),
+		);
+
+		// THEN it sent nothing, and the fix says so, that Together can't be reached, and to tell the user
+		expect(error.reason._tag).toBe("NotSent");
+		const first = "Nothing was sent, so nothing was counted.";
+		expect(error.fix.slice(0, first.length)).toBe(first);
+		expect(error.fix).toContain("Together can't be reached");
+		expect(error.fix).toContain("SHORTS_TOGETHER_URL");
+		expect(error.fix).toContain("Tell the user");
+	});
 });
 
 describe("Together transcribe", () => {
