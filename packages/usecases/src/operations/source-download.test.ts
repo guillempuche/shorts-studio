@@ -3,8 +3,9 @@ import { join } from "node:path";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import type { Context } from "../context.ts";
-import { readLedger } from "../ledger.ts";
-import { testContext } from "../test/context.ts";
+import { daysNow } from "../days.ts";
+import { readLedger, spent } from "../ledger.ts";
+import { BROKEN_CONFIG, testContext } from "../test/context.ts";
 import { fakeMediaTools, fakePorts, fakeTranscriber, run, runFailure } from "../test/fakes.ts";
 import { savedPath, sourceTranscribe } from "./source-download.ts";
 
@@ -114,10 +115,31 @@ describe("source transcribe", () => {
 		expect(existsSync(join(dir, "transcripts", "b.json"))).toBe(false);
 	});
 
+	it("should stop at the first file when the transcriber can't be reached, counting nothing", async () => {
+		// GIVEN two files and a transcriber that can't be reached from this machine
+		const ctx = testContext();
+		const dir = seedCollection(ctx, ["a.mp3", "b.mp3"]);
+		const transcriber = fakeTranscriber(undefined, { answer: "unreachable" });
+
+		// WHEN the collection is transcribed
+		const error = await runFailure(
+			transcribeCollection(ctx),
+			fakePorts({ transcriber, mediaTools: fakeMediaTools({ durationSec: 90 }) }),
+		);
+
+		// THEN it fails with that provider error after one attempt, since the next would fail the same way
+		expect(error.code).toBe("provider");
+		expect(transcriber.calls).toHaveLength(1);
+		// AND today's total is unchanged, since nothing was sent
+		const entries = await Effect.runPromise(readLedger(ctx));
+		expect(spent(entries, { since: daysNow(ctx).startOfToday })).toBe(0);
+		expect(existsSync(join(dir, "transcripts", "a.json"))).toBe(false);
+	});
+
 	it("should refuse before trying any file while a setting can't be used", async () => {
 		// GIVEN a setting that couldn't be used, and a collection with one file
 		const ctx = testContext({
-			settingsIssues: ["/data/config.json: captions.fontSize: Expected number"],
+			settingsIssues: [BROKEN_CONFIG],
 		});
 		seedCollection(ctx, ["a.mp3"]);
 		const transcriber = fakeTranscriber();

@@ -1,11 +1,33 @@
 import { describe, expect, it } from "vitest";
-import { testContext } from "../test/context.ts";
+import { BROKEN_CONFIG, testContext } from "../test/context.ts";
 import { run } from "../test/fakes.ts";
 import { modelsList } from "./models.ts";
 
 const MODE = { dryRun: false, confirmed: true } as const;
 
 describe("models list", () => {
+	it("should list every setting that can't be used, since a price may then be the default", async () => {
+		// GIVEN a config.json that couldn't be used
+		const ctx = testContext({ settingsIssues: [BROKEN_CONFIG] });
+
+		// WHEN the models are listed
+		const result = await run(modelsList.run({}, ctx, MODE));
+
+		// THEN the result names the file and the problem
+		expect(result.settingsIssues).toEqual([BROKEN_CONFIG]);
+	});
+
+	it("should list no settings problems when there are none", async () => {
+		// GIVEN settings that can all be used
+		const ctx = testContext();
+
+		// WHEN the models are listed
+		const result = await run(modelsList.run({}, ctx, MODE));
+
+		// THEN the list is there, and empty
+		expect(result.settingsIssues).toEqual([]);
+	});
+
 	it("should list the rest, and name the entry to fix, when one in config.json isn't whole", async () => {
 		// GIVEN config.json adding an image model without its endpoint
 		const ctx = testContext({

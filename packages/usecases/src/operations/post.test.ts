@@ -1,13 +1,12 @@
 import { type Post, Stage, stageOf } from "@shorts-studio/domain/post";
 import { DateTime, Effect } from "effect";
 import { describe, expect, it } from "vitest";
-import { commandPath, flagName } from "../operation.ts";
 import { readPost } from "../post-store.ts";
 import { testContext } from "../test/context.ts";
 import { run } from "../test/fakes.ts";
 import { approvedAsIs, type PostFields, seedPost, withDraft } from "../test/posts.ts";
+import { expectValidStep } from "../test/steps.ts";
 import { imageGenerate } from "./image.ts";
-import { operations } from "./index.ts";
 import { postArchive } from "./lifecycle.ts";
 import { nextStepsOf, postCreate, postList, postShow } from "./post.ts";
 
@@ -312,38 +311,14 @@ describe("nextStepsOf", () => {
 	});
 
 	it("should only name MCP tools the server offers, with their own fields and command", () => {
-		// GIVEN the operations offered over MCP
-		const tools = new Map(
-			operations.filter((op) => op.surface === "cli-and-mcp").map((op) => [op.name, op]),
-		);
-
 		for (const fields of FIXTURES) {
-			// WHEN the next steps of a post at each stage are worked out
+			// GIVEN a post at each stage
 			const post = postOf(fields);
+			// WHEN its next steps are worked out
 			for (const step of nextStepsOf(post)) {
-				const where = `${stageOf(post)}: ${step.cli ?? step.note}`;
-				if (step.tool === undefined) {
-					// THEN a step with no tool is the user's, or a note with nothing to run
-					expect(step.args, where).toBeUndefined();
-					continue;
-				}
-				// THEN its tool is one the server offers
-				const op = tools.get(step.tool);
-				expect(op, where).toBeDefined();
-				// AND each argument is one of that tool's fields
-				const fieldsOfTool = [...Object.keys(op?.params ?? {}), ...(op?.spends ? ["dryRun"] : [])];
-				for (const key of Object.keys(step.args ?? {})) expect(fieldsOfTool, where).toContain(key);
-				// AND its command is that operation's, with a flag for each argument
-				expect(step.cli?.startsWith(commandPath(step.tool).join(" ")), where).toBe(true);
-				for (const key of Object.keys(step.args ?? {})) {
-					expect(step.cli, where).toContain(`--${flagName(key)}`);
-				}
-				// AND every value a shell or a tool can't take as it is is a placeholder it lists to fill
-				for (const [key, value] of Object.entries(step.args ?? {})) {
-					const placeholder = typeof value === "string" && /^<[^<>]+>$/.test(value);
-					expect(step.fill?.includes(key) ?? false, `${where}: ${key}`).toBe(placeholder);
-					if (!placeholder) expect(String(value), `${where}: ${key}`).not.toMatch(/[<>|]/);
-				}
+				// THEN each is the user's or a note, or names a tool the server offers, with that
+				// tool's fields, its command, and a placeholder for each value to fill in
+				expectValidStep(step, `${stageOf(post)}: ${step.cli ?? step.note}`);
 			}
 		}
 	});

@@ -18,6 +18,7 @@ import { ensureDir, fileStep, readText, writeFileAtomic, writeJsonFile } from ".
 import { checkLanguage, requireKey } from "../inputs.ts";
 import { Budget, budgetFor, budgetLine, paidCall, settingsRefusal } from "../ledger.ts";
 import { chooseModel, costOf } from "../models.ts";
+import { roundUsd, usd } from "../money.ts";
 import { defineOperation, p, type RunMode } from "../operation.ts";
 import { Downloader, MediaTools, Transcriber } from "../ports.ts";
 import { postDir, readPost } from "../post-store.ts";
@@ -214,7 +215,7 @@ export const sourceTranscribe = defineOperation({
 
 		if (mode.dryRun) {
 			const costs = yield* Effect.forEach(todo, costOfFile);
-			const estimateUsd = costs.reduce((sum, cost) => sum + cost.usd, 0);
+			const estimateUsd = roundUsd(costs.reduce((sum, cost) => sum + cost.usd, 0));
 			return {
 				transcribed: 0,
 				skipped: files.length - todo.length,
@@ -222,7 +223,12 @@ export const sourceTranscribe = defineOperation({
 				toTranscribe: todo.length,
 				estimateUsd,
 				dryRun: true,
-				budget: yield* budgetFor(ctx, { post: `saved/${name}`, usd: estimateUsd }, mode.plannedUsd),
+				budget: yield* budgetFor(
+					ctx,
+					{ post: `saved/${name}`, usd: estimateUsd },
+					// The key matters only when there's a file to send.
+					{ plannedUsd: mode.plannedUsd, keys: todo.length > 0 ? transcriber.keys : [] },
+				),
 			};
 		}
 
@@ -252,13 +258,13 @@ export const sourceTranscribe = defineOperation({
 		});
 
 		// Every file is tried. A failed one is listed, and the next run tries it again. Past a
-		// spending cap every later file would fail the same way, so the run stops there instead.
-		// The transcripts already written stay.
+		// spending cap, or with a provider that can't be reached, every later file would fail the
+		// same way, so the run stops there instead. The transcripts already written stay.
 		const outcomes = yield* Effect.forEach(todo, (file) =>
 			transcribeOne(file).pipe(
 				Effect.map((usd) => ({ usd })),
 				Effect.catch((error) =>
-					error.code === "over-budget"
+					error.code === "over-budget" || error.reason._tag === "NotSent"
 						? Effect.fail(error)
 						: Effect.succeed({ failure: `${file}: ${error.message}` }),
 				),
@@ -270,13 +276,15 @@ export const sourceTranscribe = defineOperation({
 			skipped: files.length - todo.length,
 			failed,
 			toTranscribe: failed.length,
-			estimateUsd: outcomes.reduce((sum, outcome) => sum + ("usd" in outcome ? outcome.usd : 0), 0),
+			estimateUsd: roundUsd(
+				outcomes.reduce((sum, outcome) => sum + ("usd" in outcome ? outcome.usd : 0), 0),
+			),
 			dryRun: false,
 		};
 	}),
 	render: (o) =>
 		o.dryRun
-			? `Would transcribe ${o.toTranscribe} file${o.toTranscribe === 1 ? "" : "s"} (~$${o.estimateUsd.toFixed(3)}), already done ${o.skipped}; nothing was spent.${o.budget === undefined ? "" : ` ${budgetLine(o.budget)}`}`
+			? `Would transcribe ${o.toTranscribe} file${o.toTranscribe === 1 ? "" : "s"} (~${usd(o.estimateUsd)}), already done ${o.skipped}; nothing was spent.${o.budget === undefined ? "" : ` ${budgetLine(o.budget)}`}`
 			: [
 					`Transcribed ${o.transcribed}, already done ${o.skipped}, failed ${o.failed.length}.`,
 					...o.failed.map((line) => `  ✗ ${line}`),

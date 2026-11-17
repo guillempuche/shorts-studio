@@ -1,41 +1,86 @@
 import { cpSync } from "node:fs";
 import type { Context } from "@shorts-studio/usecases/context";
+import { readLedger, reserve } from "@shorts-studio/usecases/ledger";
 import { commandPath, defineOperation, type Operation } from "@shorts-studio/usecases/operation";
 import { configCheck } from "@shorts-studio/usecases/operations/config";
 import { operations } from "@shorts-studio/usecases/operations/index";
 import type { Ports } from "@shorts-studio/usecases/ports";
-import { postDir } from "@shorts-studio/usecases/post-store";
-import { testContext } from "@shorts-studio/usecases/test/context";
+import { postDir, readPost } from "@shorts-studio/usecases/post-store";
+import { BROKEN_CONFIG, testContext } from "@shorts-studio/usecases/test/context";
 import { fakeImageMaker, fakePorts } from "@shorts-studio/usecases/test/fakes";
 import { readyForImages, seedPost } from "@shorts-studio/usecases/test/posts";
-import { DateTime, Effect, Exit, Layer, Schema } from "effect";
+import { DateTime, Effect, Exit, Fiber, Layer, Runtime, Schema } from "effect";
 import { Command } from "effect/cli";
 import { TestConsole } from "effect/testing";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { aliasCommand, cliOutput, jsonRequested, nounCommands, root } from "./cli.ts";
 import { platform } from "./platform.ts";
 
 /**
  * Runs `shorts-studio <argv>` in this process with the given ports (in-memory fakes by default)
- * and returns what it printed, so tests check real argument parsing and output.
+ * and returns what it printed and the exit code the runtime gives it, so tests check real
+ * argument parsing and output.
  */
 const runCli = (
 	ctx: Context,
 	argv: ReadonlyArray<string>,
 	ports: Layer.Layer<Ports> = fakePorts(),
 	ops: ReadonlyArray<Operation> = operations,
-): Promise<{ readonly ok: boolean; readonly out: string; readonly err: string }> =>
+): Promise<{
+	readonly ok: boolean;
+	readonly exitCode: number;
+	readonly out: string;
+	readonly err: string;
+}> =>
 	Effect.runPromise(
 		Effect.gen(function* () {
-			const program = root.pipe(
-				Command.withSubcommands([
-					...nounCommands(ops, ctx),
-					aliasCommand(configCheck, ctx, "doctor"),
-				]),
-			);
-			const exit = yield* Effect.exit(Command.runWith(program, { version: "0.0.0" })([...argv]));
+			const exit = yield* Effect.exit(cli(ctx, ops)([...argv]));
+			let exitCode = -1;
+			Runtime.defaultTeardown(exit, (code) => {
+				exitCode = code;
+			});
 			return {
 				ok: Exit.isSuccess(exit),
+				exitCode,
+				out: (yield* TestConsole.logLines).join("\n"),
+				err: (yield* TestConsole.errorLines).join("\n"),
+			};
+		}).pipe(Effect.provide(Layer.mergeAll(platform, TestConsole.layer, ports, cliOutput(argv)))),
+	);
+
+/** The CLI with these operations, as main.ts builds it, less `mcp serve`. */
+const cli = (ctx: Context, ops: ReadonlyArray<Operation>) =>
+	Command.runWith(
+		root.pipe(
+			Command.withSubcommands([
+				...nounCommands(ops, ctx),
+				aliasCommand(configCheck, ctx, "doctor"),
+			]),
+		),
+		{ version: "0.0.0" },
+	);
+
+/**
+ * Runs `shorts-studio <argv>` like `runCli`, and interrupts it once `ready()` holds, as Ctrl-C
+ * does. Returns what it printed and the exit code the runtime gives it, as main.ts does.
+ */
+const interruptCli = (
+	ctx: Context,
+	argv: ReadonlyArray<string>,
+	ports: Layer.Layer<Ports>,
+	ready: () => boolean,
+): Promise<{ readonly exitCode: number; readonly out: string; readonly err: string }> =>
+	Effect.runPromise(
+		Effect.gen(function* () {
+			const running = yield* Effect.forkChild(cli(ctx, operations)([...argv]));
+			yield* Effect.promise(() => vi.waitUntil(ready));
+			yield* Fiber.interrupt(running);
+			let exitCode = -1;
+			Runtime.defaultTeardown(yield* Fiber.await(running), (code) => {
+				exitCode = code;
+			});
+			return {
+				exitCode,
 				out: (yield* TestConsole.logLines).join("\n"),
 				err: (yield* TestConsole.errorLines).join("\n"),
 			};
@@ -229,12 +274,120 @@ describe("spending on the CLI", () => {
 			fakePorts({ imageMaker: maker }),
 		);
 
-		// THEN it shows the estimate and fails asking for confirmation
+		// THEN it shows the estimate and fails asking for confirmation, with exit 3
 		expect(run.ok).toBe(false);
+		expect(run.exitCode).toBe(3);
 		expect(run.out).toContain("Would generate 2 images");
 		expect(run.err).toContain("spends money; nothing was spent.");
 		// AND nothing reached the provider
 		expect(maker.submits).toHaveLength(0);
+	});
+
+	it("should fail over the cap without --yes, as the real run would, with exit 4", async () => {
+		// GIVEN a post ready for images, and a daily cap below what they cost
+		const ctx = testContext({ config: { caps: { dailyUsd: 0.001 } } });
+		await seedPost(ctx, "2026-11-04-spend", readyForImages());
+		const maker = fakeImageMaker();
+
+		// WHEN images are generated without --yes
+		const run = await runCli(
+			ctx,
+			["image", "generate", "--post", "2026-11-04-spend", "--json"],
+			fakePorts({ imageMaker: maker }),
+		);
+
+		// THEN it fails with over-budget, not needs-confirmation, and exits 4
+		const output = JSON.parse(run.out);
+		expect(output.error.code).toBe("over-budget");
+		expect(output.error.fix).toContain("caps.dailyUsd");
+		expect(run.exitCode).toBe(4);
+		// AND nothing was reserved or sent
+		expect(maker.submits).toHaveLength(0);
+		expect(await Effect.runPromise(readLedger(ctx))).toHaveLength(0);
+	});
+
+	it("should fail with missing-key without --yes when the key isn't set, with exit 1", async () => {
+		// GIVEN a post ready for images, and an image provider whose key isn't set
+		const ctx = testContext();
+		await seedPost(ctx, "2026-11-04-spend", readyForImages());
+		const maker = fakeImageMaker({ keys: [{ env: "FAKE_IMAGES_KEY", keychain: "fake-images" }] });
+
+		// WHEN images are generated without --yes
+		const run = await runCli(
+			ctx,
+			["image", "generate", "--post", "2026-11-04-spend", "--json"],
+			fakePorts({ imageMaker: maker }),
+		);
+
+		// THEN it fails with missing-key, naming the key, and exits 1
+		const output = JSON.parse(run.out);
+		expect(output.error.code).toBe("missing-key");
+		expect(output.error.message).toContain("FAKE_IMAGES_KEY");
+		expect(run.exitCode).toBe(1);
+	});
+
+	it("should fail with failed without --yes while a setting can't be used, with exit 1", async () => {
+		// GIVEN a post ready for images, and a config.json that couldn't be used
+		const ctx = testContext({ settingsIssues: [BROKEN_CONFIG] });
+		await seedPost(ctx, "2026-11-04-spend", readyForImages());
+
+		// WHEN images are generated without --yes
+		const run = await runCli(ctx, ["image", "generate", "--post", "2026-11-04-spend", "--json"]);
+
+		// THEN it fails with failed, naming the setting, and exits 1
+		const output = JSON.parse(run.out);
+		expect(output.error.code).toBe("failed");
+		expect(output.error.message).toContain("/data/config.json");
+		expect(run.exitCode).toBe(1);
+	});
+
+	it("should fetch saved requests without --yes, since that spends nothing", async () => {
+		// GIVEN a post whose two beats' requests were sent and saved, then cut short by Ctrl-C
+		const ctx = testContext();
+		await seedPost(ctx, "2026-11-04-spend", readyForImages());
+		const maker = fakeImageMaker();
+		maker.answer = "never";
+		const ports = fakePorts({ imageMaker: maker });
+		await interruptCli(
+			ctx,
+			["image", "generate", "--post", "2026-11-04-spend", "--yes"],
+			ports,
+			() => maker.waits === 2,
+		);
+		maker.answer = "image";
+
+		// WHEN images are generated without --yes
+		const run = await runCli(ctx, ["image", "generate", "--post", "2026-11-04-spend"], ports);
+
+		// THEN both images are fetched and saved, no new request is sent, and it exits 0
+		expect(run.exitCode).toBe(0);
+		const post = await Effect.runPromise(readPost(ctx, "2026-11-04-spend"));
+		expect(post.beats?.items.every((b) => b.image !== undefined)).toBe(true);
+		expect(maker.submits).toHaveLength(2);
+		expect(run.out).toContain("resumed 2");
+	});
+
+	it("should give each post of a batch its own outcome without --yes", async () => {
+		// GIVEN two posts ready for images ($0.02 each) and a $0.03 daily cap, which fits one
+		const ctx = testContext({ config: { caps: { dailyUsd: 0.03, postUsd: 1 } } });
+		await seedPost(ctx, "2026-11-04-one", readyForImages());
+		await seedPost(ctx, "2026-11-04-two", readyForImages());
+
+		// WHEN both are generated without --yes
+		const run = await runCli(ctx, [
+			"image",
+			"generate",
+			"--post",
+			"2026-11-04-one,2026-11-04-two",
+			"--json",
+		]);
+
+		// THEN the first shows its estimate, and the second fails over the cap
+		const output = JSON.parse(run.out) as {
+			results: Array<{ ok: boolean; result?: { dryRun: boolean }; error?: { code: string } }>;
+		};
+		expect(output.results[0]).toMatchObject({ ok: true, result: { dryRun: true } });
+		expect(output.results[1]).toMatchObject({ ok: false, error: { code: "over-budget" } });
 	});
 
 	it("should print one JSON object holding the estimate and the error when --yes is missing", async () => {
@@ -257,8 +410,7 @@ describe("spending on the CLI", () => {
 
 	it("should name a setting that can't be used on stderr, and still run a command that spends nothing", async () => {
 		// GIVEN a config.json setting that couldn't be used
-		const issue = '/data/config.json: captions.fontSize: Expected a number, got "big"';
-		const ctx = testContext({ settingsIssues: [issue] });
+		const ctx = testContext({ settingsIssues: [BROKEN_CONFIG] });
 
 		// WHEN the budget is shown as JSON
 		const run = await runCli(ctx, ["budget", "show", "--json"]);
@@ -267,7 +419,7 @@ describe("spending on the CLI", () => {
 		expect(run.ok).toBe(true);
 		expect(JSON.parse(run.out).ok).toBe(true);
 		// AND stderr names the file and the problem
-		expect(run.err).toContain(issue);
+		expect(run.err).toContain('/data/config.json: captions.fontSize: Expected a number, got "big"');
 	});
 
 	it("should add up a batch dry run, so the posts that together pass the cap don't all fit", async () => {
@@ -293,10 +445,45 @@ describe("spending on the CLI", () => {
 		expect(fits).toEqual([true, false]);
 	});
 
+	it("should not count a post that can't go ahead toward the next posts of a batch dry run", async () => {
+		// GIVEN $0.01 already spent on the first post, a $0.025 per-post cap it would pass, and a
+		// $0.035 daily cap that fits the second post's $0.02 only if the first doesn't count
+		const ctx = testContext({ config: { caps: { dailyUsd: 0.035, postUsd: 0.025 } } });
+		await seedPost(ctx, "2026-11-04-one", readyForImages());
+		await seedPost(ctx, "2026-11-04-two", readyForImages());
+		await Effect.runPromise(
+			reserve(ctx, {
+				provider: "fake-images",
+				model: "fake-fast",
+				post: "2026-11-04-one",
+				unit: "image",
+				units: 1,
+				usdPerUnit: 0.01,
+				usd: 0.01,
+			}),
+		);
+
+		// WHEN both are planned in one dry run
+		const run = await runCli(ctx, [
+			"image",
+			"generate",
+			"--post",
+			"2026-11-04-one,2026-11-04-two",
+			"--dry-run",
+			"--json",
+		]);
+
+		// THEN the first doesn't fit its post's cap, and the second still fits the day's
+		const fits = JSON.parse(run.out).results.map(
+			(r: { result: { budget: { fits: boolean } } }) => r.result.budget.fits,
+		);
+		expect(fits).toEqual([false, true]);
+	});
+
 	it("should not warn about settings on doctor, which lists them itself", async () => {
 		// GIVEN a setting that couldn't be used
 		const ctx = testContext({
-			settingsIssues: ["/data/config.json: captions.fontSize: Expected number"],
+			settingsIssues: [BROKEN_CONFIG],
 		});
 
 		// WHEN doctor runs
@@ -343,6 +530,55 @@ describe("spending on the CLI", () => {
 		// THEN both images were paid for
 		expect(run.ok).toBe(true);
 		expect(maker.submits).toHaveLength(2);
+	});
+});
+
+describe("interrupting a run on the CLI", () => {
+	it("should print one JSON object with code interrupted when a run is interrupted, and exit 130", async () => {
+		// GIVEN a post ready for images, and a provider that never sends the images back
+		const ctx = testContext();
+		await seedPost(ctx, "2026-11-04-spend", readyForImages());
+		const maker = fakeImageMaker();
+		maker.answer = "never";
+
+		// WHEN images are generated with --json, and the run is interrupted while it waits
+		const run = await interruptCli(
+			ctx,
+			["image", "generate", "--post", "2026-11-04-spend", "--yes", "--json"],
+			fakePorts({ imageMaker: maker }),
+			() => maker.waits === 2,
+		);
+
+		// THEN stdout holds one object, with code interrupted
+		const output = JSON.parse(run.out) as { ok: boolean; error: { code: string; fix: string } };
+		expect(output.ok).toBe(false);
+		expect(output.error.code).toBe("interrupted");
+		// AND its fix says to run the same command again, without --reroll, to resume
+		expect(output.error.fix).toContain("Run the same image generate command again");
+		expect(output.error.fix).toContain("fetched without paying again; leave out --reroll");
+		// AND the run exits 130
+		expect(run.exitCode).toBe(130);
+	});
+
+	it("should print an interrupted run's error and fix on stderr without --json", async () => {
+		// GIVEN a post ready for images, and a provider that never sends the images back
+		const ctx = testContext();
+		await seedPost(ctx, "2026-11-04-spend", readyForImages());
+		const maker = fakeImageMaker();
+		maker.answer = "never";
+
+		// WHEN images are generated, and the run is interrupted while it waits
+		const run = await interruptCli(
+			ctx,
+			["image", "generate", "--post", "2026-11-04-spend", "--yes"],
+			fakePorts({ imageMaker: maker }),
+			() => maker.waits === 2,
+		);
+
+		// THEN stderr ends with the error and its fix, and stdout stays empty
+		expect(run.out).toBe("");
+		expect(run.err).toContain("✗ image generate was interrupted.\n  → Run the same image generate");
+		expect(run.exitCode).toBe(130);
 	});
 });
 

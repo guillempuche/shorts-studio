@@ -6,14 +6,25 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { closest } from "@shorts-studio/domain/closest";
 import { issueLine, schemaIssues } from "@shorts-studio/domain/errors";
 import {
 	Brand,
+	type CapsFrom,
 	type Context,
 	type Paths,
 	Config as Settings,
+	type SettingsIssue,
 } from "@shorts-studio/usecases/context";
-import { DateTime, Option, Redacted, Result, Schema, type SchemaAST } from "effect";
+import {
+	DateTime,
+	Option,
+	Redacted,
+	Result,
+	Schema,
+	type SchemaAST,
+	type SchemaIssue,
+} from "effect";
 import { runProcess, tryRun } from "./process.ts";
 
 /** Base URLs of the paid services, by provider. Tests and local fakes override them. */
@@ -38,22 +49,42 @@ export const resolvePaths = (env: NodeJS.ProcessEnv): Paths => {
 	return { data, posts: env["SHORTS_POSTS_DIR"] || join(data, "posts") };
 };
 
+type Risk = SettingsIssue["risk"];
+
+/** One settings file: where it is, its Schema, and the prefix of the variables that override it. */
+interface SettingsFile<S extends Schema.Codec<unknown, unknown>> {
+	readonly file: string;
+	readonly schema: S;
+	readonly envPrefix: string;
+	/** What a problem with the setting at `path`, or with the whole file, puts at risk. */
+	readonly riskOf: (path?: string) => Risk;
+}
+
+/**
+ * A config.json that doesn't decode is dropped whole (no `path`), caps included. A single key or
+ * variable puts only its own setting at risk.
+ */
+const configRisk = (path?: string): Risk =>
+	path === undefined || path === "caps" || path.startsWith("caps.") ? "caps" : "setting";
+
+const brandRisk = (): Risk => "brand";
+
 /**
  * A settings file with its `SHORTS_…` environment overrides, checked against its Schema. Each
  * value comes from the environment if set there, then from the file, then the built-in default:
  * `SHORTS_IMAGE_MODEL=flux-dev` replaces only `image.model` from config.json. A file that isn't
- * valid is left out, and why goes to `issues`; the environment's settings still apply.
+ * valid is left out, and why goes to `issues`; the environment's settings still apply. A key that
+ * names no setting goes to `issues` too, but the rest of the file still applies. `fromEnv` holds
+ * the paths of the settings a variable set.
  */
 const readSettings = <S extends Schema.Codec<unknown, unknown>>(
-	file: string,
-	schema: S,
-	envPrefix: string,
+	{ file, schema, envPrefix, riskOf }: SettingsFile<S>,
 	env: NodeJS.ProcessEnv,
-	issues: Array<string>,
-): S["Type"] => {
+	issues: Array<SettingsIssue>,
+): { readonly value: S["Type"]; readonly fromEnv: ReadonlySet<string> } => {
 	const decode = Schema.decodeUnknownResult(schema, { errors: "all" });
 	const fromText = leafFromText(schema);
-	const overrides = envOverrides(schema, fromText, envPrefix, env, issues);
+	const { overrides, fromEnv } = envOverrides(schema, fromText, envPrefix, riskOf, env, issues);
 	if (existsSync(file)) {
 		const parsed = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Unknown))(
 			readFileSync(file, "utf8"),
@@ -61,12 +92,90 @@ const readSettings = <S extends Schema.Codec<unknown, unknown>>(
 		const result = Result.isSuccess(parsed)
 			? decode(overlay(numbersFromText(schema, fromText, parsed.success), overrides))
 			: parsed;
-		if (Result.isSuccess(result)) return result.success;
-		issues.push(`${file}: ${issueLine(result.failure)}`);
+		if (Result.isFailure(result)) {
+			issues.push({ source: file, risk: riskOf(), text: issueLine(result.failure) });
+		}
+		if (Result.isSuccess(parsed)) issues.push(...unknownKeys(file, schema, riskOf, parsed.success));
+		if (Result.isSuccess(result)) return { value: result.success, fromEnv };
 	}
 	// Each override was checked on its own, so together they always decode.
-	return Result.getOrElse(decode(overrides), () => ({}));
+	return { value: Result.getOrElse(decode(overrides), () => ({})), fromEnv };
 };
+
+/**
+ * The keys in a settings file that name no setting, each with the one it most likely meant. A
+ * second decode that fails on them finds them; the first one drops them, so the rest of the
+ * file still applies.
+ */
+const unknownKeys = <S extends Schema.Codec<unknown, unknown>>(
+	file: string,
+	schema: S,
+	riskOf: (path?: string) => Risk,
+	saved: unknown,
+): Array<SettingsIssue> => {
+	const strict = Schema.decodeUnknownResult(schema, { errors: "all", onExcessProperty: "error" })(
+		saved,
+	);
+	if (Result.isSuccess(strict)) return [];
+	return unexpectedKeys(strict.failure.issue).map(({ path, siblings }) => {
+		const name = path.join(".");
+		const group = path.slice(0, -1);
+		const near = closest(path.at(-1) ?? "", siblings);
+		const meant = near === undefined ? undefined : [...group, near].join(".");
+		const where = group.length === 0 ? "the file" : group.join(".");
+		// `$schema` only points editors at the file's Schema, so it isn't listed as a setting.
+		const settingKeys = siblings.filter((key) => !key.startsWith("$"));
+		return {
+			source: file,
+			// A key in caps, or one meant as a cap, may leave a cap at its default.
+			risk: [name, meant].some((key) => key !== undefined && riskOf(key) === "caps")
+				? "caps"
+				: riskOf(name),
+			text:
+				meant === undefined
+					? `${name} isn't a setting; ${where} has ${listed(settingKeys)}.`
+					: `${name} isn't a setting; the closest is ${meant}.`,
+			...(meant === undefined ? {} : { setting: meant }),
+		};
+	});
+};
+
+/** Every key a strict decode found unexpected: its path, and the keys its object takes. */
+const unexpectedKeys = (
+	issue: SchemaIssue.Issue,
+	path: ReadonlyArray<string> = [],
+): Array<{ readonly path: ReadonlyArray<string>; readonly siblings: ReadonlyArray<string> }> => {
+	switch (issue._tag) {
+		case "Pointer":
+			return unexpectedKeys(issue.issue, [...path, ...issue.path.map(String)]);
+		case "Filter":
+		case "Encoding":
+			return unexpectedKeys(issue.issue, path);
+		case "Composite":
+		case "AnyOf":
+			return issue.issues.flatMap((inner) => unexpectedKeys(inner, path));
+		case "UnexpectedKey":
+			return [
+				{
+					path,
+					siblings:
+						issue.ast._tag === "Objects"
+							? issue.ast.propertySignatures.flatMap(({ name }) =>
+									typeof name === "string" ? [name] : [],
+								)
+							: [],
+				},
+			];
+		default:
+			return [];
+	}
+};
+
+/** `a, b and c`. */
+const listed = (names: ReadonlyArray<string>): string =>
+	names.length <= 1
+		? (names[0] ?? "nothing")
+		: `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 
 /**
  * The settings a `SHORTS_…` variable can set: every leaf of the file's Schema, by path. A
@@ -112,32 +221,114 @@ const leafFromText = <S extends Schema.Codec<unknown, unknown>>(schema: S): Leaf
 };
 
 /**
- * The settings the environment sets, each decoded from its text. One that isn't valid is left
- * out, and why goes to `issues`, naming its variable: the rest still apply.
+ * The settings the environment sets, each decoded from its text, and the paths it set. One that
+ * isn't valid is left out, and why goes to `issues`, naming its variable: the rest still apply.
  */
 const envOverrides = <S extends Schema.Codec<unknown, unknown>>(
 	schema: S,
 	fromText: LeafFromText,
 	prefix: string,
+	riskOf: (path?: string) => Risk,
 	env: NodeJS.ProcessEnv,
-	issues: Array<string>,
-): unknown => {
+	issues: Array<SettingsIssue>,
+): { readonly overrides: unknown; readonly fromEnv: ReadonlySet<string> } => {
 	let overrides: unknown = {};
+	const fromEnv = new Set<string>();
 	for (const path of settingPaths(schema.ast)) {
 		const name = envName(prefix, path);
 		const value = env[name];
 		// An empty variable is unset, as most shells and tools treat it.
 		if (!value) continue;
 		const decoded = fromText(path, value);
-		if (Result.isSuccess(decoded)) overrides = overlay(overrides, decoded.success);
-		else
-			issues.push(
-				`${name}: ${schemaIssues(decoded.failure)
+		if (Result.isSuccess(decoded)) {
+			overrides = overlay(overrides, decoded.success);
+			fromEnv.add(path.join("."));
+		} else {
+			issues.push({
+				source: name,
+				risk: riskOf(path.join(".")),
+				text: schemaIssues(decoded.failure)
 					.map((issue) => issue.message)
-					.join("; ")}`,
-			);
+					.join("; "),
+				setting: path.join("."),
+			});
+		}
 	}
-	return overrides;
+	return { overrides, fromEnv };
+};
+
+/**
+ * `SHORTS_` variables that aren't settings: the folders, a provider's address
+ * (`SHORTS_FAL_URL`), and the installer's.
+ */
+const NOT_SETTINGS = new Set([
+	"SHORTS_DATA_DIR",
+	"SHORTS_POSTS_DIR",
+	"SHORTS_INSTALL_DIR",
+	"SHORTS_VERSION",
+]);
+const URL_VARIABLE = /^SHORTS_([A-Z0-9]+(?:_[A-Z0-9]+)*)_URL$/;
+
+/** The variable that points service `id` (`fal`, `fish-audio`) at another address. */
+export const urlVariable = (id: string): string =>
+	`SHORTS_${id.toUpperCase().replaceAll("-", "_")}_URL`;
+
+/** Each setting's variable and its path, for the variables of one settings file. */
+const variablesOf = (schema: Schema.Top, prefix: string) =>
+	settingPaths(schema.ast).map((path) => ({
+		variable: envName(prefix, path),
+		path: path.join("."),
+	}));
+
+/**
+ * Every `SHORTS_` variable that names no setting, with the one it most likely meant. Without
+ * this, a misspelt `SHORTS_CAPS_DAILY` would leave the daily cap at its default unnoticed.
+ */
+const unknownVariables = (env: NodeJS.ProcessEnv): Array<SettingsIssue> => {
+	const config = variablesOf(Settings, "SHORTS");
+	const brand = variablesOf(Brand, "SHORTS_BRAND");
+	const known = new Set([...config, ...brand].map(({ variable }) => variable));
+	return Object.entries(env).flatMap(([name, value]): Array<SettingsIssue> => {
+		if (!name.startsWith("SHORTS_") || !value) return [];
+		if (known.has(name) || NOT_SETTINGS.has(name) || URL_VARIABLE.test(name)) return [];
+		if (name.startsWith("SHORTS_MODELS_")) {
+			return [
+				{
+					source: name,
+					risk: "setting",
+					text: "not a setting: models are set in config.json only, under models.",
+				},
+			];
+		}
+		const isBrand = name.startsWith("SHORTS_BRAND_");
+		const settings = isBrand ? brand : config;
+		const near = closest(
+			name,
+			settings.map(({ variable }) => variable),
+		);
+		const meant = settings.find(({ variable }) => variable === near);
+		const capsAtRisk =
+			name.startsWith("SHORTS_CAPS_") || (meant !== undefined && configRisk(meant.path) === "caps");
+		const risk: Risk = isBrand ? "brand" : capsAtRisk ? "caps" : "setting";
+		if (meant !== undefined) {
+			return [
+				{
+					source: name,
+					risk,
+					text: `not a setting; the closest is ${meant.variable}.`,
+					setting: meant.path,
+				},
+			];
+		}
+		// The variables that start with the same word (SHORTS_CAPS_…), else all of the file's.
+		const prefix = isBrand ? "SHORTS_BRAND_" : "SHORTS_";
+		const word = `${prefix}${name.slice(prefix.length).split("_")[0]?.toUpperCase()}_`;
+		const alike = settings.filter(({ variable }) => variable.startsWith(word));
+		const which =
+			alike.length > 0 ? "the ones that start like it" : `${isBrand ? "brand" : "config"}.json's`;
+		const shown = (alike.length > 0 ? alike : settings).map(({ variable }) => variable);
+		return [{ source: name, risk, text: `not a setting; ${which} are ${listed(shown)}.` }];
+	});
 };
 
 /**
@@ -199,7 +390,7 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> =>
 const endpointsFrom = (env: NodeJS.ProcessEnv): Endpoints =>
 	Object.fromEntries(
 		Object.entries(env).flatMap(([name, value]) => {
-			const provider = /^SHORTS_([A-Z0-9]+(?:_[A-Z0-9]+)*)_URL$/.exec(name)?.[1];
+			const provider = URL_VARIABLE.exec(name)?.[1];
 			return provider === undefined || !value
 				? []
 				: [[provider.toLowerCase().replaceAll("_", "-"), value]];
@@ -218,6 +409,42 @@ const keychain = async (env: NodeJS.ProcessEnv, service: string): Promise<string
 		"-w",
 	]);
 	return found?.code === 0 ? found.stdout.trim() || undefined : undefined;
+};
+
+/** `ps`'s elapsed time, `[[dd-]hh:]mm:ss`, as on macOS and Linux. */
+const ETIME = /^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)$/;
+
+/** Seconds since a process started, from `ps -o etime=`; undefined for anything else. */
+export const elapsedSeconds = (etime: string): number | undefined => {
+	const match = ETIME.exec(etime.trim());
+	if (match === null) return undefined;
+	const [, days = "0", hours = "0", minutes = "0", seconds = "0"] = match;
+	return ((Number(days) * 24 + Number(hours)) * 60 + Number(minutes)) * 60 + Number(seconds);
+};
+
+/** A lock waits on this, so `ps` gets a short time to answer. */
+const PS_DEADLINE_MS = 2_000;
+
+/**
+ * When process `pid` started, from `ps -o etime=`. Undefined on Windows, where there's no `ps`,
+ * and when `ps` fails, takes too long or finds no such process.
+ */
+export const processStartedAt = async (
+	pid: number,
+	run: typeof runProcess = runProcess,
+	platform: NodeJS.Platform = process.platform,
+): Promise<Date | undefined> => {
+	if (platform === "win32") return undefined;
+	// Read before `ps` runs, so a slow answer can only make the start look earlier: that keeps
+	// the lock rather than taking it over.
+	const asked = Date.now();
+	const found = await tryRun(
+		{ run: (file, args) => run(file, args, { signal: AbortSignal.timeout(PS_DEADLINE_MS) }) },
+		"ps",
+		["-o", "etime=", "-p", String(pid)],
+	);
+	const seconds = found?.code === 0 ? elapsedSeconds(found.stdout) : undefined;
+	return seconds === undefined ? undefined : new Date(asked - seconds * 1000);
 };
 
 /**
@@ -249,15 +476,52 @@ const AGENT_MARKERS: ReadonlyArray<string> = ["CLAUDECODE"];
 const agentShellFrom = (env: NodeJS.ProcessEnv): string | undefined =>
 	AGENT_MARKERS.find((variable) => (env[variable] ?? "") !== "");
 
+/** Where each cap was set: its variable, else config.json when the file set it, else its default. */
+const capsFromOf = (
+	config: { readonly value: Settings; readonly fromEnv: ReadonlySet<string> },
+	configFile: string,
+): CapsFrom => {
+	const from = (cap: keyof CapsFrom) =>
+		config.fromEnv.has(`caps.${cap}`)
+			? envName("SHORTS", ["caps", cap])
+			: config.value.caps?.[cap] === undefined
+				? "default"
+				: configFile;
+	return { dailyUsd: from("dailyUsd"), monthlyUsd: from("monthlyUsd"), postUsd: from("postUsd") };
+};
+
 export const makeContext = (env: NodeJS.ProcessEnv = process.env): ProviderContext => {
 	const paths = resolvePaths(env);
-	const settingsIssues: Array<string> = [];
+	const settingsIssues: Array<SettingsIssue> = [];
 	const settingsWarnings: Array<string> = [];
+	const configFile = join(paths.data, "config.json");
+	const config = readSettings(
+		{ file: configFile, schema: Settings, envPrefix: "SHORTS", riskOf: configRisk },
+		env,
+		settingsIssues,
+	);
+	const brand = readSettings(
+		{
+			file: join(paths.data, "brand.json"),
+			schema: Brand,
+			envPrefix: "SHORTS_BRAND",
+			riskOf: brandRisk,
+		},
+		env,
+		settingsIssues,
+	);
+	settingsIssues.push(...unknownVariables(env));
 	return {
 		paths,
+		// resolvePaths reads an empty variable as unset too.
+		pathsFrom: {
+			data: env["SHORTS_DATA_DIR"] ? "SHORTS_DATA_DIR" : undefined,
+			posts: env["SHORTS_POSTS_DIR"] ? "SHORTS_POSTS_DIR" : undefined,
+		},
 		endpoints: endpointsFrom(env),
-		config: readSettings(join(paths.data, "config.json"), Settings, "SHORTS", env, settingsIssues),
-		brand: readSettings(join(paths.data, "brand.json"), Brand, "SHORTS_BRAND", env, settingsIssues),
+		config: config.value,
+		brand: brand.value,
+		capsFrom: capsFromOf(config, configFile),
 		settingsIssues,
 		secret: async (key) => {
 			const value = env[key.env] || (await keychain(env, key.keychain));
@@ -265,6 +529,7 @@ export const makeContext = (env: NodeJS.ProcessEnv = process.env): ProviderConte
 		},
 		run: runProcess,
 		now: () => new Date(),
+		processStartedAt: (pid) => processStartedAt(pid),
 		timeZone: timeZoneFrom(env, settingsWarnings),
 		settingsWarnings,
 		interactive: process.stdin.isTTY === true,

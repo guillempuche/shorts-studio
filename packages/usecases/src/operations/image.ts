@@ -6,11 +6,14 @@
  * The provider's request is saved in post.json before waiting for the image. So if a run is cut
  * short, the next run picks that request up again instead of paying twice. Beats whose image is
  * already up to date are skipped. `--reroll` gives the chosen beats a new seed.
+ *
+ * One real run at a time makes a post's images (`images.lock`), and it fetches every saved
+ * request before it sends a new one. No command drops a saved request before it's fetched.
  */
 
 import { join } from "node:path";
 import { IMAGE_SIZE } from "@shorts-studio/domain/direction";
-import { fail, failBecause, RequestEnded } from "@shorts-studio/domain/errors";
+import { fail, failBecause, RequestEnded, type ShortsError } from "@shorts-studio/domain/errors";
 import { imageAmount } from "@shorts-studio/domain/models";
 import {
 	type Beat,
@@ -20,7 +23,7 @@ import {
 	type Post,
 	withoutPending,
 } from "@shorts-studio/domain/post";
-import { Effect, Schema } from "effect";
+import { Effect, Fiber, Schema } from "effect";
 import type { Context } from "../context.ts";
 import { ensureDir, hashBytes, hashOf, writeFileAtomic } from "../files.ts";
 import { parseBeatList, requireKey } from "../inputs.ts";
@@ -34,7 +37,9 @@ import {
 	settingsRefusal,
 	settle,
 } from "../ledger.ts";
+import { busyPost, withLock } from "../lock.ts";
 import { chooseModel, costOf, type NamedModel } from "../models.ts";
+import { roundUsd, usd } from "../money.ts";
 import { defineOperation, p, type RunMode } from "../operation.ts";
 import { ImageMaker, type ImageRequest } from "../ports.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
@@ -54,6 +59,12 @@ const SEED_LIMIT = 2_147_483_647;
 const defaultSeed = (slug: string, index: number): number =>
 	Number.parseInt(hashOf(slug, index).slice(0, 8), 16) % SEED_LIMIT;
 
+/** The seed a beat's image is made with: its own, else its default. */
+const seedOf = (slug: string, beat: Beat): number => beat.seed ?? defaultSeed(slug, beat.index);
+
+/** The seed a reroll makes a beat's image with. */
+const rerolledSeed = (slug: string, beat: Beat): number => (seedOf(slug, beat) + 1) % SEED_LIMIT;
+
 const fullPrompt = (ctx: Context, prompt: string): string => {
 	const suffix = ctx.brand.imagePrompt?.suffix?.trim();
 	return suffix ? `${prompt}, ${suffix}` : prompt;
@@ -70,71 +81,196 @@ const imageCost = (model: NamedModel) => costOf(model, imageAmount(model));
 const imageInputHash = (ctx: Context, modelName: string, beat: Beat, seed: number) =>
 	hashOf(fullPrompt(ctx, beat.prompt ?? ""), modelName, seed, IMAGE_SIZE);
 
+/** `beat 4`, or `beats 1, 4`. */
+const beatsNamed = (beats: ReadonlyArray<number>): string =>
+	beats.length === 1 ? `beat ${beats[0]}` : `beats ${beats.join(", ")}`;
+
+/**
+ * The free fetch of `beats`' saved requests: its `args`, its command, and what it does. A saved
+ * request is fetched whatever model sent it; `model` is the one the run plans with, so the fetch
+ * doesn't then plan new images with another one.
+ */
+const freeFetch = (slug: string, beats: ReadonlyArray<number>, model?: string) => {
+	const beatList = beats.join(",");
+	return {
+		args: { post: slug, beat: beatList, ...(model === undefined ? {} : { model }) },
+		cli: `image generate --post ${slug} --beat ${beatList}${model === undefined ? "" : ` --model ${model}`}`,
+		what: `fetches ${beats.length === 1 ? "the image" : `the ${beats.length} images`} already paid for, at no cost`,
+	};
+};
+
+/**
+ * Whether fetching `beat`'s saved request with the model that sent it also makes a new image: its
+ * prompt, seed or style changed since the request was sent, and its image doesn't fit either.
+ */
+const fetchAlsoGenerates = (ctx: Context, slug: string, beat: Beat): boolean => {
+	if (beat.pending === undefined || beat.prompt === undefined) return false;
+	const hash = imageInputHash(ctx, beat.pending.model, beat, seedOf(slug, beat));
+	return (
+		beat.pending.inputHash !== hash &&
+		beat.image?.inputHash !== hash &&
+		beat.image?.source !== "imported"
+	);
+};
+
+/**
+ * How a refusal's fix fetches `beats`' saved requests: one command per model that sent them, so
+ * none plans a new image with another model. It says when a beat changed since its request, since
+ * the same run then also pays for a new image.
+ */
+export const fetchSavedFix = (ctx: Context, slug: string, beats: ReadonlyArray<Beat>) => {
+	const saved = beats.filter((beat) => beat.pending !== undefined);
+	const models = [...new Set(saved.map((beat) => beat.pending?.model ?? ""))];
+	const cli = models
+		.map(
+			(model) =>
+				freeFetch(
+					slug,
+					saved.filter((beat) => beat.pending?.model === model).map((beat) => beat.index),
+					model,
+				).cli,
+		)
+		.join(", then ");
+	const changed = saved.filter((beat) => fetchAlsoGenerates(ctx, slug, beat)).map((b) => b.index);
+	const fetches = `fetches ${saved.length === 1 ? "the image" : `the ${saved.length} images`} already paid for`;
+	return {
+		cli,
+		what:
+			changed.length === 0
+				? `${fetches}, at no cost`
+				: `${fetches}, and pays for a new one for ${beatsNamed(changed)}, changed since its request: check its estimate with a dry run first`,
+	};
+};
+
+/** The free fetch as an agent's step, without `--yes`: it pays for nothing, so it confirms nothing. */
+const freeFetchStep = (slug: string, beats: ReadonlyArray<number>, model?: string) => {
+	const fetch = freeFetch(slug, beats, model);
+	return agentStep("image_generate", fetch.args, { note: fetch.what });
+};
+
+/**
+ * Runs `use` holding the post's `images.lock`, so one run at a time makes a post's images and two
+ * can't both pay for one beat. It's taken before post.json's or the ledger's lock, never while
+ * holding them, so the three can't deadlock.
+ */
+export const withImagesLock = <A, E, R>(
+	ctx: Context,
+	slug: string,
+	command: string,
+	use: Effect.Effect<A, E, R>,
+) =>
+	withLock(join(postDir(ctx, slug), "images.lock"), command, busyPost(slug), use, {
+		processStartedAt: ctx.processStartedAt,
+	});
+
 const Planned = Schema.Struct({
 	beat: Schema.Int,
 	action: Schema.Literals(["generate", "resume", "skip"]),
 	estimateUsd: Schema.Finite,
+	/**
+	 * The beat's saved request was sent for an earlier prompt, seed, model or style. It's paid
+	 * for, so it's fetched first, at no cost; `action` says what the beat needs after that.
+	 */
+	fetchesSaved: Schema.optionalKey(Schema.Literal(true)),
 });
 
-/** Generates (or resumes) one beat's image and records it. */
-const generateOne = Effect.fn("generateOne")(function* (
+/** What a run does with one chosen beat, and the seed it makes the image with. */
+interface Step {
+	readonly beat: Beat;
+	readonly seed: number;
+	readonly action: (typeof Planned.Type)["action"];
+	/** Its saved request no longer fits the plan, but is fetched first all the same. */
+	readonly fetchesSaved: boolean;
+}
+
+/**
+ * Sends one beat's request and saves it, with the new seed of a reroll, in the same write.
+ *
+ * Reserving, sending and saving finish together, in a fiber nothing interrupts: stopped mid-send,
+ * the request would be paid for and lost. On Ctrl-C the run says it waits for the provider's
+ * answer, then saves it, so the next run resumes the request instead of paying for it again. The
+ * deadline keeps that wait short if the provider never answers.
+ */
+const sendRequest = Effect.fn("sendRequest")(function* (
 	ctx: Context,
 	maker: Maker,
 	model: NamedModel,
 	slug: string,
-	beat: Beat,
+	{ beat, seed }: Step,
+	inputHash: string,
 ) {
-	const seed = beat.seed ?? defaultSeed(slug, beat.index);
-	const inputHash = imageInputHash(ctx, model.name, beat, seed);
-	let request: ImageRequest & { readonly ledgerId: string };
-
-	if (beat.pending !== undefined && beat.pending.inputHash === inputHash) {
-		ctx.log(`beat ${beat.index}: resuming request ${beat.pending.requestId}`);
-		request = beat.pending;
-	} else {
-		// Reserving, sending and saving the request finish together. Interrupted mid-send, the run
-		// waits for the provider's answer and saves it, so the next run resumes the request instead
-		// of paying for it again. The deadline keeps that wait short if the provider never answers.
-		request = yield* Effect.uninterruptible(
-			Effect.gen(function* () {
-				const ledgerId = yield* reserve(ctx, {
-					...imageCost(model),
-					post: slug,
-					note: `beat ${beat.index}`,
-				});
-				const submitted = yield* maker.submit(model, fullPrompt(ctx, beat.prompt ?? ""), seed).pipe(
-					Effect.timeoutOrElse({
-						duration: SUBMIT_DEADLINE,
-						orElse: () =>
-							Effect.fail(
-								fail(
-									"provider",
-									`The image provider didn't answer beat ${beat.index}'s request within ${SUBMIT_DEADLINE}.`,
-									`Run image generate --post ${slug} --yes again later. The request may have been taken, so its cost stays counted.`,
-								),
+	const sending = yield* Effect.forkChild(
+		Effect.gen(function* () {
+			const ledgerId = yield* reserve(ctx, {
+				...imageCost(model),
+				post: slug,
+				note: `beat ${beat.index}`,
+			});
+			const submitted = yield* maker.submit(model, fullPrompt(ctx, beat.prompt ?? ""), seed).pipe(
+				Effect.timeoutOrElse({
+					duration: SUBMIT_DEADLINE,
+					orElse: () =>
+						Effect.fail(
+							fail(
+								"provider",
+								`The image provider didn't answer beat ${beat.index}'s request within ${SUBMIT_DEADLINE}.`,
+								`The request may have been taken, so its cost stays counted, and running it again pays for a new one. Run image generate --post ${slug} --yes again later.`,
 							),
-					}),
-					Effect.tapError((error) => releaseIfNothingBilled(ctx, ledgerId, error)),
-				);
-				const sent = { ...submitted, ledgerId };
-				yield* updatePost(ctx, slug, "image generate", (post) =>
-					Effect.succeed(
-						withBeat(post, beat.index, (b) => ({
-							...b,
-							pending: { provider: maker.provider, model: model.name, inputHash, seed, ...sent },
-						})),
-					),
-				);
-				ctx.log(`beat ${beat.index}: submitted (${submitted.requestId})`);
-				return sent;
-			}),
-		);
-	}
+						),
+				}),
+				Effect.tapError((error) => releaseIfNothingBilled(ctx, ledgerId, error)),
+			);
+			const sent = { ...submitted, ledgerId };
+			// The seed is saved only with its request: a reroll stopped before sending keeps the old one.
+			yield* updatePost(ctx, slug, "image generate", (post) =>
+				Effect.succeed(
+					withBeat(post, beat.index, (b) => ({
+						...b,
+						seed,
+						pending: { provider: maker.provider, model: model.name, inputHash, seed, ...sent },
+					})),
+				),
+			);
+			ctx.log(`beat ${beat.index}: submitted (${submitted.requestId})`);
+			return sent;
+		}),
+		{ uninterruptible: true },
+	);
+	return yield* Fiber.join(sending).pipe(
+		Effect.onInterrupt(() =>
+			Effect.sync(() =>
+				ctx.log(
+					`beat ${beat.index}: waiting up to ${SUBMIT_DEADLINE} for the provider's answer, so its request is saved and not paid for twice`,
+				),
+			).pipe(Effect.andThen(Fiber.await(sending)), Effect.asVoid),
+		),
+	);
+});
 
+/** What an image was made from, as the beat records it. */
+interface MadeWith {
+	readonly inputHash: string;
+	readonly provider: string;
+	readonly model: string;
+	readonly seed: number;
+}
+
+/**
+ * Fetches a sent request's image and records it on the beat as `made`, then settles the request's
+ * reservation. Without `made`, the beat keeps the image it has: the request is only settled.
+ */
+const collectAndSave = Effect.fn("collectAndSave")(function* (
+	ctx: Context,
+	maker: Maker,
+	slug: string,
+	index: number,
+	request: ImageRequest & { readonly ledgerId: string },
+	made: MadeWith | undefined,
+) {
 	const forgetRequest = release(ctx, request.ledgerId).pipe(
 		Effect.andThen(
 			updatePost(ctx, slug, "image generate", (post) =>
-				Effect.succeed(withBeat(post, beat.index, withoutPending)),
+				Effect.succeed(withBeat(post, index, withoutPending)),
 			),
 		),
 		Effect.ignore,
@@ -166,49 +302,239 @@ const generateOne = Effect.fn("generateOne")(function* (
 		),
 	);
 
-	const file = join("images", `beat-${String(beat.index).padStart(2, "0")}.jpg`);
-	yield* Effect.andThen(
-		ensureDir(join(postDir(ctx, slug), "images")),
-		writeFileAtomic(join(postDir(ctx, slug), file), bytes),
-	).pipe(
-		// The image is paid for and its request is still saved, so the next run fetches it free.
-		Effect.mapError((error) =>
-			fail(
-				"failed",
-				error.message,
-				`Free some disk space or fix the folder's permissions, then run image generate --post ${slug} --yes: it fetches the paid image again without paying.`,
+	const file = join("images", `beat-${String(index).padStart(2, "0")}.jpg`);
+	if (made !== undefined) {
+		yield* Effect.andThen(
+			ensureDir(join(postDir(ctx, slug), "images")),
+			writeFileAtomic(join(postDir(ctx, slug), file), bytes),
+		).pipe(
+			// The image is paid for and its request is still saved, so the next run fetches it free.
+			Effect.mapError((error) =>
+				fail(
+					"failed",
+					error.message,
+					`Free some disk space or fix the folder's permissions, then run image generate --post ${slug} --yes: it fetches the paid image again without paying.`,
+				),
 			),
-		),
-	);
+		);
+	}
 
 	yield* updatePost(ctx, slug, "image generate", (post) =>
 		Effect.succeed(
-			withBeat(post, beat.index, (b) => ({
-				...withoutPending(b),
-				seed,
-				image: {
-					file,
-					hash: hashBytes(bytes),
-					inputHash,
-					provider: maker.provider,
-					model: model.name,
-					seed,
-					source: "generated" as const,
-				},
-			})),
+			withBeat(post, index, (b) =>
+				made === undefined
+					? withoutPending(b)
+					: {
+							...withoutPending(b),
+							seed: made.seed,
+							image: { file, hash: hashBytes(bytes), ...made, source: "generated" as const },
+						},
+			),
 		),
 	);
 
 	// The image is saved, so a ledger that can't be closed mustn't fail the run: an open
 	// reservation counts the same amount as a settled one.
 	yield* Effect.ignore(settle(ctx, request.ledgerId, request.requestId));
-	ctx.log(`beat ${beat.index}: saved ${file}`);
+	ctx.log(
+		made === undefined
+			? `beat ${index}: fetched request ${request.requestId}, and kept the image it has`
+			: `beat ${index}: saved ${file}`,
+	);
+});
+
+/**
+ * Fetches a beat's saved request, whatever its plan: it's paid for. One sent for an earlier
+ * prompt, seed, model or style becomes the beat's image as it was made, and the plan then sends
+ * a new request if that one no longer fits. A beat whose image already fits keeps it.
+ */
+const fetchSaved = (ctx: Context, maker: Maker, slug: string, step: Step) => {
+	const saved = step.beat.pending;
+	if (saved === undefined) return Effect.void;
+	ctx.log(`beat ${step.beat.index}: resuming request ${saved.requestId}`);
+	const { inputHash, provider, model, seed } = saved;
+	return collectAndSave(
+		ctx,
+		maker,
+		slug,
+		step.beat.index,
+		saved,
+		step.action === "skip" ? undefined : { inputHash, provider, model, seed },
+	);
+};
+
+/** Sends a new request for one beat, then fetches its image and records it. */
+const generateOne = Effect.fn("generateOne")(function* (
+	ctx: Context,
+	maker: Maker,
+	model: NamedModel,
+	slug: string,
+	step: Step,
+) {
+	const inputHash = imageInputHash(ctx, model.name, step.beat, step.seed);
+	const request = yield* sendRequest(ctx, maker, model, slug, step, inputHash);
+	yield* collectAndSave(ctx, maker, slug, step.beat.index, request, {
+		inputHash,
+		provider: maker.provider,
+		model: model.name,
+		seed: step.seed,
+	});
 });
 
 const withBeat = (post: Post, index: number, change: (beat: Beat) => Beat): Post =>
 	mapBeats(post, (b) => (b.index === index ? change(b) : b));
 
-/** The real run of what a dry run planned: the same call without `dryRun`, and `--yes` on the CLI. */
+/** Fails unless the user approved the post as it stands and every beat can be made. */
+const checkReady = (post: Post, slug: string): Effect.Effect<void, ShortsError> => {
+	if (!isScriptApproved(post)) {
+		const changed = changesSinceApproval(post);
+		return Effect.fail(
+			fail(
+				"needs-approval",
+				changed.length === 0
+					? `${slug}'s script isn't approved, so nothing will be spent on images yet.`
+					: `${slug} changed since the user approved it (${changed.join(", ")}), so nothing will be spent on images yet.`,
+				`The user approves it after reading it, in their terminal: script approve --post ${slug}`,
+			),
+		);
+	}
+	const beats = post.beats?.items ?? [];
+	const withoutPrompt = beats
+		.filter((b) => b.prompt === undefined && b.image?.source !== "imported")
+		.map((b) => b.index);
+	if (beats.length === 0 || withoutPrompt.length > 0) {
+		return Effect.fail(
+			fail(
+				"not-found",
+				beats.length === 0
+					? `${slug} has no beats.`
+					: `Beats without a prompt: ${withoutPrompt.join(", ")}.`,
+				nextStep(post),
+			),
+		);
+	}
+	return Effect.void;
+};
+
+/**
+ * Refuses to reroll a beat whose request is saved but not fetched: the reroll would drop an image
+ * already paid for, and a reroll run again after Ctrl-C would pay a third time.
+ */
+const checkRerollable = (
+	ctx: Context,
+	chosen: ReadonlyArray<Beat>,
+	slug: string,
+): Effect.Effect<void, ShortsError> => {
+	const waiting = chosen.filter((b) => b.pending !== undefined);
+	const saved = waiting.map((b) => b.index);
+	if (saved.length === 0) return Effect.void;
+	const fetch = fetchSavedFix(ctx, slug, waiting);
+	const one = saved.length === 1;
+	const named = beatsNamed(saved);
+	return Effect.fail(
+		fail(
+			"conflict",
+			`${named.charAt(0).toUpperCase()}${named.slice(1)} ${one ? "has a request" : "have requests"} already paid for and not fetched yet, so nothing was rerolled.`,
+			`Run ${fetch.cli} without --reroll first: it ${fetch.what}. Then reroll ${one ? "it" : "them"}.`,
+		),
+	);
+};
+
+/**
+ * Refuses a beat whose saved request another image provider holds: this one can't fetch it, and
+ * sending a new request would drop it.
+ */
+const checkFetchable = (
+	ctx: Context,
+	chosen: ReadonlyArray<Beat>,
+	maker: Maker,
+	slug: string,
+): Effect.Effect<void, ShortsError> => {
+	const elsewhere = chosen.find(
+		(b) => b.pending !== undefined && b.pending.provider !== maker.provider,
+	);
+	if (elsewhere?.pending === undefined) return Effect.void;
+	const { provider } = elsewhere.pending;
+	const fetch = fetchSavedFix(ctx, slug, [elsewhere]);
+	return Effect.fail(
+		fail(
+			"conflict",
+			`Beat ${elsewhere.index} has a request already paid for with ${provider}, not ${maker.provider}, the image provider in use, so nothing was sent.`,
+			`Set image.provider to ${provider} in config.json, then run ${fetch.cli}: it ${fetch.what}.`,
+		),
+	);
+};
+
+/**
+ * Plans each chosen beat: resume its saved request, generate it, or skip it. A saved request that
+ * no longer fits is still fetched first (`fetchesSaved`). A reroll plans the next seed, and saves
+ * it only with the new request.
+ */
+const planOf = (
+	ctx: Context,
+	model: NamedModel,
+	post: Post,
+	chosen: ReadonlyArray<Beat>,
+	reroll: boolean,
+): ReadonlyArray<Step> =>
+	chosen.map((beat) => {
+		const seed = reroll ? rerolledSeed(post.slug, beat) : seedOf(post.slug, beat);
+		const inputHash = imageInputHash(ctx, model.name, beat, seed);
+		// An imported image (Midjourney, a photo) stays unless the beat is rerolled. A beat
+		// without a prompt (allowed only with an imported image) is never sent, rerolled or not.
+		const keepsImported = beat.image?.source === "imported" && !reroll;
+		const resumes = beat.pending?.inputHash === inputHash;
+		const action =
+			beat.prompt === undefined
+				? "skip"
+				: resumes
+					? "resume"
+					: keepsImported || beat.image?.inputHash === inputHash
+						? "skip"
+						: "generate";
+		return { beat, seed, action, fetchesSaved: beat.pending !== undefined && !resumes };
+	});
+
+/**
+ * Over a cap part-way, the error also names the beats saved before it stopped, and those whose
+ * request is paid for but not fetched, with the free fetch for them. Its code stays `over-budget`.
+ */
+const stoppedByCap = (
+	ctx: Context,
+	slug: string,
+	stopped: { readonly message: string; readonly fix: string },
+	finished: ReadonlyArray<number>,
+): Effect.Effect<never, ShortsError> =>
+	readPost(ctx, slug).pipe(
+		Effect.map((post) => (post.beats?.items ?? []).filter((b) => b.pending !== undefined)),
+		// Unreadable now, it can't say more than the cap's own error.
+		Effect.orElseSucceed((): ReadonlyArray<Beat> => []),
+		Effect.flatMap((waiting) => {
+			const pending = waiting.map((b) => b.index);
+			const done = [...finished].sort((a, b) => a - b);
+			const fetch = fetchSavedFix(ctx, slug, waiting);
+			return Effect.fail(
+				fail(
+					"over-budget",
+					[
+						stopped.message,
+						done.length === 0
+							? "No image was saved before it stopped."
+							: `Saved before it stopped: ${beatsNamed(done)}.`,
+						...(pending.length === 0
+							? []
+							: [`Paid for but not fetched yet: ${beatsNamed(pending)}.`]),
+					].join(" "),
+					pending.length === 0 ? stopped.fix : `${stopped.fix} Run ${fetch.cli}: it ${fetch.what}.`,
+				),
+			);
+		}),
+	);
+
+/**
+ * The real run of what a dry run planned: the same call without `dryRun`. On the CLI it takes
+ * `--yes` only when it pays: `--yes` would also confirm a paid run if the post changed meanwhile.
+ */
 const realRunOf = (
 	slug: string,
 	input: {
@@ -216,6 +542,7 @@ const realRunOf = (
 		readonly reroll: boolean;
 		readonly model?: string | undefined;
 	},
+	pays: boolean,
 ) =>
 	agentStep(
 		"image_generate",
@@ -225,8 +552,44 @@ const realRunOf = (
 			...(input.reroll ? { reroll: true } : {}),
 			...(input.model === undefined ? {} : { model: input.model }),
 		},
-		{ yes: true, note: "once the user has seen the estimate" },
+		pays
+			? { yes: true, note: "once the user has seen the estimate" }
+			: { note: "it spends nothing" },
 	);
+
+/** Whether a step calls the provider: to send a new request, or to fetch a saved one. */
+const callsProvider = (step: Step): boolean => step.action !== "skip" || step.fetchesSaved;
+
+/**
+ * Fails before anything changes when the real run can't go ahead: a setting that can't be used,
+ * only when it would pay for something; a missing key, only when it would send or fetch. So a run
+ * that only fetches saved requests goes ahead next to a broken setting, as its dry run says.
+ * Without the CLI's `--yes` it may only fetch: the post may have changed since its $0 estimate.
+ */
+const checkCanRun = (
+	ctx: Context,
+	maker: Maker,
+	slug: string,
+	steps: ReadonlyArray<Step>,
+	mode: RunMode,
+): Effect.Effect<void, ShortsError> =>
+	Effect.gen(function* () {
+		const pays = steps.some((step) => step.action === "generate");
+		if (pays) {
+			const refusal = settingsRefusal(ctx);
+			if (refusal !== undefined) return yield* refusal;
+		}
+		if (steps.some(callsProvider)) {
+			yield* Effect.forEach(maker.keys, (key) => requireKey(ctx, key), { discard: true });
+		}
+		if (pays && !mode.confirmed) {
+			return yield* fail(
+				"needs-confirmation",
+				`${slug} changed since its estimate of $0 and now needs new images, which cost money; nothing was spent.`,
+				"Run the same command again to see the new estimate; if it fits, run it with --yes.",
+			);
+		}
+	});
 
 export const imageGenerate = defineOperation({
 	name: "image_generate",
@@ -253,122 +616,115 @@ export const imageGenerate = defineOperation({
 	}),
 	surface: "cli-and-mcp",
 	spends: true,
-	hints: { readonly: false, destructive: false, idempotent: true, openWorld: true },
+	// With reroll, calling it twice pays twice, and an MCP client may retry an idempotent tool.
+	hints: { readonly: false, destructive: false, idempotent: false, openWorld: true },
 	run: Effect.fn("image_generate")(function* (input, ctx, mode: RunMode) {
 		const only = input.beat === undefined ? undefined : yield* parseBeatList(input.beat);
 		const maker = yield* ImageMaker;
 		const model = yield* chooseModel(ctx, maker, "image", input.model);
-		let post = yield* readPost(ctx, input.post);
-		if (!isScriptApproved(post)) {
-			const changed = changesSinceApproval(post);
-			return yield* fail(
-				"needs-approval",
-				changed.length === 0
-					? `${input.post}'s script isn't approved, so nothing will be spent on images yet.`
-					: `${input.post} changed since the user approved it (${changed.join(", ")}), so nothing will be spent on images yet.`,
-				`The user approves it after reading it, in their terminal: script approve --post ${input.post}`,
-			);
-		}
 
-		const beats = post.beats?.items ?? [];
-		const withoutPrompt = beats
-			.filter((b) => b.prompt === undefined && b.image?.source !== "imported")
-			.map((b) => b.index);
-		if (beats.length === 0 || withoutPrompt.length > 0) {
-			return yield* fail(
-				"not-found",
-				beats.length === 0
-					? `${input.post} has no beats.`
-					: `Beats without a prompt: ${withoutPrompt.join(", ")}.`,
-				nextStep(post),
+		/** Checks the post can have images made now, then plans each chosen beat. */
+		const planFor = Effect.fnUntraced(function* (post: Post) {
+			yield* checkReady(post, input.post);
+			const chosen = (post.beats?.items ?? []).filter(
+				(b) => only === undefined || only.includes(b.index),
 			);
-		}
-
-		if (!mode.dryRun) {
-			// Fail on a setting that can't be used or a missing key before anything changes:
-			// --reroll saves new seeds, and sending reserves money.
-			const refusal = settingsRefusal(ctx);
-			if (refusal !== undefined) return yield* refusal;
-			yield* Effect.forEach(maker.keys, (key) => requireKey(ctx, key), { discard: true });
-		}
-
-		if (input.reroll && !mode.dryRun) {
-			const targets = new Set(only ?? beats.map((b) => b.index));
-			const reseed = (b: Beat, slug: string): Beat =>
-				targets.has(b.index)
-					? {
-							...withoutPending(b),
-							seed: ((b.seed ?? defaultSeed(slug, b.index)) + 1) % SEED_LIMIT,
-						}
-					: b;
-			post = yield* updatePost(ctx, input.post, "image generate", (current) =>
-				Effect.succeed(mapBeats(current, (b) => reseed(b, current.slug))),
-			);
-		}
-
-		const chosen = (post.beats?.items ?? []).filter(
-			(b) => only === undefined || only.includes(b.index),
-		);
-		const planned = chosen.map((b) => {
-			const seed = b.seed ?? defaultSeed(post.slug, b.index);
-			// A dry run doesn't save the rerolled seeds, so it plans with the next seed here.
-			const hash = imageInputHash(
-				ctx,
-				model.name,
-				b,
-				input.reroll && mode.dryRun ? seed + 1 : seed,
-			);
-			// An imported image (Midjourney, a photo) stays unless the beat is rerolled. A beat
-			// without a prompt (allowed only with an imported image) is never sent, rerolled or not.
-			const imported = b.image?.source === "imported" && !input.reroll;
-			const action =
-				b.prompt === undefined
-					? "skip"
-					: b.pending?.inputHash === hash
-						? "resume"
-						: imported || b.image?.inputHash === hash
-							? "skip"
-							: "generate";
-			return {
-				beat: b.index,
-				action,
-				estimateUsd: action === "generate" ? imageCost(model).usd : 0,
-			} as const;
+			if (input.reroll) yield* checkRerollable(ctx, chosen, input.post);
+			yield* checkFetchable(ctx, chosen, maker, input.post);
+			const steps = planOf(ctx, model, post, chosen, input.reroll);
+			// A dry run reports these in its budget instead.
+			if (!mode.dryRun) yield* checkCanRun(ctx, maker, input.post, steps, mode);
+			return steps;
 		});
-		const total = planned.reduce((sum, item) => sum + item.estimateUsd, 0);
 
-		if (!mode.dryRun) {
-			const toSend = chosen.filter(
-				(b) => planned.find((item) => item.beat === b.index)?.action !== "skip",
-			);
-			yield* Effect.forEach(toSend, (beat) => generateOne(ctx, maker, model, post.slug, beat), {
-				concurrency: CONCURRENCY,
-				discard: true,
-			});
-			post = yield* readPost(ctx, input.post);
-		}
+		// Read first outside the lock: a post that isn't there has no folder to lock.
+		let post = yield* readPost(ctx, input.post);
+		const plan = mode.dryRun
+			? yield* planFor(post)
+			: yield* withImagesLock(
+					ctx,
+					input.post,
+					"image generate",
+					Effect.gen(function* () {
+						// Read again under the lock: a run that held it may have saved images or requests.
+						const current = yield* readPost(ctx, input.post);
+						const steps = yield* planFor(current);
+						const done = new Set<number>();
+						const markDone = (step: Step) =>
+							Effect.tap(() => Effect.sync(() => done.add(step.beat.index)));
+						// Every saved request first, whatever its plan, in a pass of its own: they're paid
+						// for, so neither a new request nor a cap that stops one can leave them behind.
+						// Only a resumed one finishes its beat: the others still need a new image, or keep theirs.
+						yield* Effect.forEach(
+							steps.filter((step) => step.action === "resume" || step.fetchesSaved),
+							(step) =>
+								fetchSaved(ctx, maker, current.slug, step).pipe(
+									step.action === "resume" ? markDone(step) : Effect.asVoid,
+								),
+							{ concurrency: CONCURRENCY, discard: true },
+						);
+						yield* Effect.forEach(
+							steps.filter((step) => step.action === "generate"),
+							(step) => generateOne(ctx, maker, model, current.slug, step).pipe(markDone(step)),
+							{ concurrency: CONCURRENCY, discard: true },
+						).pipe(
+							Effect.catchReason("ShortsError", "OverBudget", (reason) =>
+								stoppedByCap(ctx, input.post, reason, [...done]),
+							),
+						);
+						return steps;
+					}),
+				);
+		const planned = plan.map(({ beat, action, fetchesSaved }) => ({
+			beat: beat.index,
+			action,
+			// Only a new request costs: a saved one is paid for.
+			estimateUsd: action === "generate" ? roundUsd(imageCost(model).usd) : 0,
+			...(fetchesSaved ? { fetchesSaved: true as const } : {}),
+		}));
+		const total = roundUsd(planned.reduce((sum, item) => sum + item.estimateUsd, 0));
+
+		if (!mode.dryRun) post = yield* readPost(ctx, input.post);
+		const callsMaker = plan.some(callsProvider);
 		const budget = mode.dryRun
-			? yield* budgetFor(ctx, { post: post.slug, usd: total }, mode.plannedUsd)
+			? yield* budgetFor(
+					ctx,
+					{ post: post.slug, usd: total },
+					{ plannedUsd: mode.plannedUsd, keys: callsMaker ? maker.keys : [] },
+				)
 			: undefined;
+		// Beats whose saved request is all they need: fetching them costs nothing, even when the
+		// new requests can't go ahead.
+		const fetchOnly = plan
+			.filter((step) => step.beat.pending !== undefined && step.action !== "generate")
+			.map((step) => step.beat.index);
 		return {
 			model: model.name,
 			planned,
 			estimateUsd: total,
 			dryRun: mode.dryRun,
 			...(budget === undefined ? {} : { budget }),
-			// After a dry run that would make images, the next step is the real run (or the user's
-			// call when it won't fit), not another dry run.
-			...(budget !== undefined && planned.some((item) => item.action !== "skip")
-				? nextAfterDryRun(budget, realRunOf(post.slug, input))
+			// After a dry run that would make or fetch images, the next step is the real run, or the
+			// user's when it can't go ahead, not another dry run.
+			...(budget !== undefined && callsMaker
+				? nextAfterDryRun(
+						budget,
+						realRunOf(post.slug, input, total > 0),
+						fetchOnly.length === 0 ? undefined : freeFetchStep(post.slug, fetchOnly, input.model),
+					)
 				: nextOf(post)),
 		};
 	}),
 	render: (o) => {
 		const counts = { generate: 0, resume: 0, skip: 0 };
-		for (const item of o.planned) counts[item.action]++;
+		for (const item of o.planned) {
+			counts[item.action]++;
+			// A saved request that no longer fits is fetched too, before the beat's new request.
+			if (item.fetchesSaved === true) counts.resume++;
+		}
 		const head = o.dryRun
-			? `Would generate ${counts.generate} image${counts.generate === 1 ? "" : "s"} with ${o.model} (~$${o.estimateUsd.toFixed(3)}), resume ${counts.resume}, skip ${counts.skip} up to date.`
-			: `Generated ${counts.generate}, resumed ${counts.resume}, skipped ${counts.skip} (~$${o.estimateUsd.toFixed(3)} with ${o.model}).`;
+			? `Would generate ${counts.generate} image${counts.generate === 1 ? "" : "s"} with ${o.model} (~${usd(o.estimateUsd)}), resume ${counts.resume}, skip ${counts.skip} up to date.`
+			: `Generated ${counts.generate}, resumed ${counts.resume}, skipped ${counts.skip} (~${usd(o.estimateUsd)} with ${o.model}).`;
 		const budget = o.budget === undefined ? "" : `\n${budgetLine(o.budget)}`;
 		return `${head}${budget}\nNext: ${o.next}`;
 	},

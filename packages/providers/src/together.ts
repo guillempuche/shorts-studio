@@ -15,9 +15,10 @@ import { requireKey } from "@shorts-studio/usecases/inputs";
 import { Transcriber } from "@shorts-studio/usecases/ports";
 import { Effect, Layer, Schema } from "effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
-import { ProviderEnv, providerFailure } from "./env.ts";
+import { type PaidService, ProviderEnv, providerFailure } from "./env.ts";
 
 export const TOGETHER_KEY: KeySpec = { env: "TOGETHER_API_KEY", keychain: "together-api-key" };
+const TOGETHER: PaidService = { id: "together", name: "Together", key: TOGETHER_KEY };
 const BASE_URL = "https://api.together.ai";
 
 /** Together's own models, priced from together.ai/pricing (per minute of audio). */
@@ -50,8 +51,6 @@ const Transcription = Schema.Struct({
 		),
 	),
 });
-
-const fix = "Check the key and your connection (VPN?), then run it again.";
 
 export const togetherLayer = Layer.effect(
 	Transcriber,
@@ -92,7 +91,7 @@ export const togetherLayer = Layer.effect(
 				HttpClientRequest.bodyFormData(form),
 				http.execute,
 				Effect.flatMap(HttpClientResponse.schemaBodyJson(Transcription)),
-				Effect.catch(providerFailure(fix)),
+				Effect.catch(providerFailure(TOGETHER)),
 			);
 
 			const words = (reply.words ?? [])
@@ -102,7 +101,7 @@ export const togetherLayer = Layer.effect(
 				return yield* fail(
 					"provider",
 					"Together returned no word timings.",
-					"Check that there is speech in the audio.",
+					"Together did the work, so its cost stays counted. Check that there is speech in the audio: running it again pays for a new transcription.",
 				);
 			}
 			return {

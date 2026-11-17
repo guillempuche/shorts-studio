@@ -191,6 +191,16 @@ const CLOCK_SLACK_MS = 10 * 60_000;
 const fromBeforeBoot = (holder: LockHolder): boolean =>
 	Date.parse(holder.since) < Date.now() - uptime() * 1000 - CLOCK_SLACK_MS;
 
+/** Slack for a clock change between taking the lock and asking, and for `ps`'s whole seconds. */
+const REUSED_SLACK_MS = 60_000;
+
+/**
+ * The holder's process started after the lock was taken, so it isn't the holder: the holder ended
+ * and the system gave its number to another program.
+ */
+const pidReused = (holder: LockHolder, startedAt: Date | undefined): boolean =>
+	startedAt !== undefined && startedAt.getTime() > Date.parse(holder.since) + REUSED_SLACK_MS;
+
 /** A lock this process holds. */
 export interface Lock {
 	readonly release: () => void;
@@ -205,14 +215,19 @@ export class LockBusy extends Data.TaggedError("LockBusy")<{
 }> {}
 
 /**
- * One try at a lock file that only one process can hold. A lock whose process is gone, or that
- * a crash left empty or damaged, is removed and taken over.
+ * One try at a lock file that only one process can hold. A lock whose process is gone, whose
+ * process started after it (`startOf`, when known), or that a crash left empty or damaged, is
+ * removed and taken over.
  *
  * Two processes can both find the same lock stale and both take it over. That needs a crash
  * first and two commands in the same instant, so it's accepted; releasing removes only a lock
  * that still names this process, so neither removes the other's.
  */
-const tryLock = (lockFile: string, command: string): Lock | LockBusy => {
+const tryLock = (
+	lockFile: string,
+	command: string,
+	startOf: (holder: LockHolder) => Date | undefined,
+): Lock | LockBusy => {
 	for (;;) {
 		try {
 			const holder: LockHolder = { pid: process.pid, command, since: new Date().toISOString() };
@@ -244,19 +259,24 @@ const tryLock = (lockFile: string, command: string): Lock | LockBusy => {
 		const stale =
 			holder === undefined
 				? unreadableTooLong(lockFile)
-				: !isAlive(holder.pid) || fromBeforeBoot(holder);
+				: !isAlive(holder.pid) || fromBeforeBoot(holder) || pidReused(holder, startOf(holder));
 		if (!stale) return new LockBusy({ holder });
 		rmSync(lockFile, { force: true });
 	}
 };
 
-/** One try at `lockFile`: the lock, `LockBusy`, or a failure when the file can't be used at all. */
+/**
+ * One try at `lockFile`: the lock, `LockBusy`, or a failure when the file can't be used at all.
+ * `startOf` gives when a holder's process started, if already known: asking takes a `ps`, too slow
+ * for this single try, so `withLock` asks between tries.
+ */
 export const takeLock = (
 	lockFile: string,
 	command: string,
+	startOf: (holder: LockHolder) => Date | undefined = () => undefined,
 ): Effect.Effect<Lock, LockBusy | ShortsError> =>
 	Effect.try({
-		try: () => tryLock(lockFile, command),
+		try: () => tryLock(lockFile, command, startOf),
 		catch: failWith(
 			"failed",
 			`Check that ${lockFile} is a file this user can read and write, in a folder that exists.`,
