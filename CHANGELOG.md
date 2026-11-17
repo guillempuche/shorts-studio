@@ -20,10 +20,17 @@ Notable changes, newest first. The release workflow publishes each version's sec
 - Every result that moves a post on has `nextSteps` next to `next`: each step's MCP tool and arguments, its CLI command, and whether it's the agent's or the user's.
 - A dry run says whether its estimate fits the caps (`budget`), and which cap stops it if not. A batch dry run counts the posts before it, and a dry run that won't fit leaves the next step to you.
 - A post not found by a slug that's one post's slug without its date suggests that post.
+- `budget show` says where each cap was set (its default, `config.json`, or a `SHORTS_CAPS_*` variable), and `budget show` and `models list` list every setting that can't be used (`settingsIssues`), so an MCP client sees them too.
+- `doctor` checks the data and posts folders and the spend ledger, and each row that isn't ok carries the code a command would fail with because of it (`code` in `config show --json`, in brackets beside each blocking problem). `doctor` itself still fails with `missing-tool`.
+- A dry run also checks the keys the real run would call the provider with, by presence, even at $0 since fetching needs them (`stoppedBy: "missing-key"`), and its `budget` holds the real run's message and fix (`why`, `fix`). Its next steps start with the user's step for what stops it: setting the key, deciding about the cap, or fixing the setting, then `config_check`. When some beats' images are already paid for, a later step fetches them at no cost.
+- Ctrl-C prints the run's error with the new code `interrupted` (exit 130), as one object with `--json`; its fix says to run the same command again, and for `image generate`, that saved requests are fetched without paying again and to leave out `--reroll`. Ctrl-C while an image request is being sent says it waits up to 60 s to save it.
 
 ### Changed
 
+- **BREAKING:** a key in `config.json` or `brand.json`, or a `SHORTS_*` variable, that names no setting stops paid calls like a value that isn't valid, and `doctor` names it with the closest setting (`caps.daily` → `caps.dailyUsd`). The file's other settings still apply. Folder, address and installer variables aren't reported.
 - **BREAKING:** a step that waits on the user's approval fails with the new code `needs-approval`, still exit 3: `script approve` and `post review` from an agent, `image generate` on an unapproved script, `capcut export` and `post finalize` on an unapproved draft. `needs-confirmation` now only means "check the estimate, then run it again with `--yes`". A CapCut export of a draft that changed after approval fails with `stale`.
+- **BREAKING:** without `--yes`, `image generate` asks for it (`needs-confirmation`, exit 3) only when the run could go ahead. One that can't fails as the real run would: `over-budget` (exit 4) past a cap, `missing-key` or `failed` (exit 1) for a key or a setting. One that spends nothing, such as fetching images already paid for, runs without `--yes`. In a batch, each post gets its own outcome.
+- `image generate` and `source transcribe` refuse on a setting that can't be used only when they'd pay for something, and on a missing key only when they'd send or fetch something, so fetching images already paid for works next to a broken setting.
 - `script approve` and `post review` also refuse in an agent's shell (`CLAUDECODE` set), even with a terminal.
 - `next` points images at `image generate --dry-run` first, instead of straight at `--yes`.
 - The over-budget fix says where waiting helps and that raising a cap is the user's decision, instead of telling the reader to raise it.
@@ -43,6 +50,15 @@ Notable changes, newest first. The release workflow publishes each version's sec
 - Node 26 runs the TypeScript directly; there is no build step.
 - `transcript.json`, lock files and ledger lines are read through their Schemas, so a damaged file names the bad field and the fix.
 - API keys are held as redacted values, so a key printed by mistake shows `<redacted>`.
+- A failed paid call's fix starts by saying whether its cost was counted, and what running it again does: nothing counted after a refusal or a request that never left the machine, counted and paid again after an unknown outcome.
+- A paid call refused because of the settings says what's at risk: caps that may be the defaults, images without your brand's style, or one setting at its default. Its fix names `doctor` and `config_check`.
+- The over-budget fix names where its cap was set: a `SHORTS_CAPS_*` variable, `config.json`, or its default.
+- Every settings and key row in `doctor` says to restart a running MCP server after the fix, since it keeps the settings and environment it started with; on macOS, a key added to the Keychain needs no restart.
+- A corrupt ledger line's fix leaves what to do with it to the user, since the caps are checked against the ledger, except an unfinished last line from a write that was cut off, which it says to remove.
+- Dollar amounts show as many decimals as it takes to tell them apart: an amount above $0 never shows as $0.00 (~$0.0003), and one below its cap never shows as equal to it. Amounts in JSON results are rounded to millionths of a dollar.
+- A busy post or spend ledger names the process holding its lock, what it's running and since when, and the lock file, which the fix says to delete if that process isn't shorts-studio.
+- `image generate` fetches every saved request before it sends a new one, even one sent for an earlier prompt or another model, which it no longer replaces with a new request, and a run stopped by a cap names the beats it saved and those paid for but not fetched, with the command that fetches them at no cost. That command names the model that sent each request, and says when it also pays for a new image. `beat plan` refuses while a beat has a saved request, and waits while `image generate` runs on the post.
+- The MCP tool `image_generate` is no longer marked idempotent, since calling it twice with `reroll` pays twice.
 
 ### Fixed
 
@@ -53,8 +69,12 @@ Notable changes, newest first. The release workflow publishes each version's sec
 - With `--json` (or `--json=true`), a command called wrong, or a group of commands given no command such as `post`, prints one JSON error object instead of help, and a run on several posts where some failed ends with the error object too. `doctor --json` names itself `doctor`.
 - A file that can't be read or written (a folder in its place, no permission, a full disk) fails with a fix, instead of a stack trace and, with `--json`, no JSON at all. An unexpected failure ends the same way, with its trace on stderr. An image that was paid for but couldn't be saved is fetched again, free, on the next run.
 - A lock file that can't be read no longer makes a command hang, Ctrl-C ends a wait for a busy post at once, and a lock left from before the machine restarted is taken over.
+- On macOS and Linux, a post's or the ledger's lock whose process number now belongs to a program that started after the lock was taken is taken over, instead of staying busy.
 - A post folder copied under a new name is refused, instead of writing over the original's post.json. `post list` and `--day`/`--in-stage` name it by its folder.
 - An HTTP 4xx while FAL finishes an image no longer counts as a refusal, since FAL had already taken the job on. Each check on an image gives up after 30 s, and its download after 2 minutes, instead of hanging, and the FAL key is sent only to FAL.
+- A paid call whose request never left the machine (a refused connection, a name that didn't resolve, a failed TLS handshake) frees its reservation instead of staying counted, and `source transcribe` stops at the first such file.
+- Two `image generate` runs on one post no longer both pay for the same beat: one run at a time makes a post's images, and the second fails with `conflict`, naming the first.
+- `--reroll` and `image import` no longer drop an image request already paid for: they refuse that beat with `conflict` and name the command that fetches it at no cost. A reroll stopped before sending, by a cap, a setting or Ctrl-C, keeps the old seed.
 
 ### Removed
 

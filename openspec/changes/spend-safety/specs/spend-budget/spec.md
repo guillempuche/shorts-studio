@@ -199,7 +199,7 @@ When `config.json`, `brand.json` or a `SHORTS_*` variable can't be used, or name
 - **AND** `image generate --beat 1 --reroll --yes` runs
 - **THEN** it fails with `conflict` and sends nothing
 - **AND** beat 1's saved request is still there
-- **AND** the fix names `image generate --post <slug> --beat 1` without `--reroll`
+- **AND** the fix names `image generate --post <slug> --beat 1 --model <the model that sent it>` without `--reroll`
 
 #### Scenario: A reroll over the cap
 
@@ -210,7 +210,7 @@ When `config.json`, `brand.json` or a `SHORTS_*` variable can't be used, or name
 
 ### Requirement: A run stopped by a cap SHALL say what's already paid for
 
-When a cap stops `image generate` part-way, its error SHALL keep the code `over-budget` and name the beats whose images it saved and the beats whose requests are saved but not fetched. When there are any of the latter, its fix SHALL offer fetching them, which costs nothing.
+When a cap stops `image generate` part-way, its error SHALL keep the code `over-budget` and name the beats whose images it saved and the beats whose requests are saved but not fetched. When there are any of the latter, its fix SHALL offer fetching them with the model that sent them, which costs nothing. A beat whose old request it fetched, but whose new image the cap stopped, SHALL NOT be named as saved.
 
 #### Scenario: A saved request left behind
 
@@ -218,7 +218,26 @@ When a cap stops `image generate` part-way, its error SHALL keep the code `over-
 - **AND** a new request for beat 1 would pass the per-post cap while beat 4 isn't fetched yet
 - **THEN** `image generate --yes` fails with `over-budget`
 - **AND** the message names beat 4 as paid for but not fetched
-- **AND** the fix names `image generate --post <slug> --beat 4`
+- **AND** the fix names `image generate --post <slug> --beat 4 --model <the model that sent it>`
+
+#### Scenario: An old request fetched, its new image stopped
+
+- **WHEN** beat 0 has a saved request, and its prompt changed since
+- **AND** beat 0's new request would pass the per-post cap
+- **THEN** `image generate --beat 0 --yes` fetches the old request, then fails with `over-budget`
+- **AND** the message doesn't name beat 0 as saved
+
+### Requirement: Planning beats again SHALL keep paid requests
+
+`beat plan`, with or without `--force` or `--by-moment`, SHALL refuse with `conflict` while a beat has a request saved but not fetched, and keep the plan as it was. Its fix SHALL name the fetch, as `image import`'s does. It SHALL wait while `image generate` runs on the post, as `image import` does.
+
+#### Scenario: Planning again over a saved request
+
+- **WHEN** beat 1 has a saved request
+- **AND** `beat plan --force` runs
+- **THEN** it fails with `conflict`
+- **AND** the plan and beat 1's saved request are as they were
+- **AND** the fix names `image generate --post <slug> --beat 1 --model <the model that sent it>`
 
 ### Requirement: A dry run that can't go ahead SHALL say who clears the way
 
