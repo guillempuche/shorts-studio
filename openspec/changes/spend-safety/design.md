@@ -65,7 +65,7 @@ Alternatives:
 
 `image generate`'s real run holds `images.lock` in the post's folder for its whole run, through `withLock` (`lock.ts`), with the same 10-second wait as the post's lock. Then a second run fails with `conflict` naming the first's process, command and start. `image import` takes the same lock for its one write. Dry runs take no lock. The order is always `images.lock`, then `post.json.lock` or the ledger's, so they can't deadlock.
 
-Inside the lock, the run reads the post again before planning, and plans resumes first: every beat with a saved request is fetched, in its own pass, before any new request is reserved. So a rerun after a cap fetches what's paid for before it hits the cap again.
+Inside the lock, the run reads the post again before planning, and plans resumes first: every chosen beat with a saved request is fetched, in its own pass, before any new request is reserved, whatever its plan. A request sent for an earlier prompt, seed, model or style is fetched by its saved id, its reservation settled, and its image recorded as it was made; the plan then sends a new request only if that image no longer fits, as a normal paid request under the caps. So a rerun after a cap fetches what's paid for before it hits the cap again, and no new request replaces a saved one. A dry run shows such a beat with `fetchesSaved` beside the new request it needs, and counts only that one in the estimate. A saved request held by another image provider can't be fetched, so the run refuses that beat with `conflict`.
 
 `hints.idempotent` becomes `false`: with `reroll`, calling the tool twice pays twice, and an MCP client may retry an idempotent tool on its own.
 
