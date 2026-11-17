@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fail, failBecause, NotSent } from "@shorts-studio/domain/errors";
 import { DateTime, Effect, Exit } from "effect";
 import { describe, expect, it } from "vitest";
 import { daysNow } from "./days.ts";
@@ -14,7 +15,8 @@ import {
 	settle,
 	spent,
 } from "./ledger.ts";
-import { testContext } from "./test/context.ts";
+import { BROKEN_CONFIG, testContext } from "./test/context.ts";
+import { failurePastLockWait } from "./test/lock.ts";
 
 /** A ledger line as commands write it, at `at`, for `usd`. */
 const line = (at: string, usd: number, extra: Record<string, unknown> = {}) =>
@@ -59,6 +61,20 @@ describe("reserve", () => {
 		expect(error.code).toBe("over-budget");
 		// AND says where the cap lives
 		expect(error.fix).toContain("config.json");
+	});
+
+	it("should tell a sub-cent spend apart from its cap, and price the call to its last cent", async () => {
+		// GIVEN a $0.004 daily cap with $0.003 already reserved today
+		const ctx = testContext({ config: { caps: { dailyUsd: 0.004 } } });
+		await Effect.runPromise(reserve(ctx, call("a", 0.003)));
+
+		// WHEN a $0.0015 call is reserved
+		const error = await Effect.runPromise(Effect.flip(reserve(ctx, call("a", 0.0015))));
+
+		// THEN the message shows the call, what's spent and the cap as three different amounts
+		expect(error.message).toBe(
+			"This call (~$0.0015) would pass today's cap: $0.003 of $0.004 spent.",
+		);
 	});
 
 	it("should refuse a call that would pass the post's cap", async () => {
@@ -141,7 +157,7 @@ describe("reserve", () => {
 
 		// THEN it is refused, and the ledger is untouched, so it can't lower later totals
 		expect(error.code).toBe("failed");
-		expect(error.message).toContain("$-5");
+		expect(error.message).toContain("-$5.00");
 		expect(await Effect.runPromise(readLedger(ctx))).toHaveLength(0);
 	});
 
@@ -159,6 +175,38 @@ describe("reserve", () => {
 		// AND raising it is left to the user, not given as the next step
 		expect(error.fix).toContain("is the user's decision");
 		expect(error.fix).not.toMatch(/^Raise/);
+	});
+
+	it("should name the variable that set a cap, and not config.json", async () => {
+		// GIVEN a $1 daily cap set by SHORTS_CAPS_DAILY_USD
+		const ctx = testContext({
+			config: { caps: { dailyUsd: 1, postUsd: 10 } },
+			capsFrom: { dailyUsd: "SHORTS_CAPS_DAILY_USD", monthlyUsd: "default", postUsd: "default" },
+		});
+
+		// WHEN a $2 call is reserved
+		const error = await Effect.runPromise(Effect.flip(reserve(ctx, call("a", 2))));
+
+		// THEN the fix names the variable as where the cap was set
+		expect(error.code).toBe("over-budget");
+		expect(error.fix).toContain("caps.dailyUsd (set by SHORTS_CAPS_DAILY_USD)");
+		expect(error.fix).not.toContain("config.json");
+	});
+
+	it("should name config.json as where a cap was set, or would be set when it's the default", async () => {
+		// GIVEN a $1 per-post cap set in config.json, and the default $5 daily cap
+		const ctx = testContext({ config: { caps: { postUsd: 1 } } });
+		const configFile = join(ctx.paths.data, "config.json");
+
+		// WHEN a $1.50 call, then a $6 call on another post, are reserved
+		const post = await Effect.runPromise(Effect.flip(reserve(ctx, call("a", 1.5))));
+		const day = await Effect.runPromise(
+			Effect.flip(reserve({ ...ctx, config: { caps: { postUsd: 10 } } }, call("b", 6))),
+		);
+
+		// THEN each fix says where its cap was set
+		expect(post.fix).toContain(`caps.postUsd (set in ${configFile})`);
+		expect(day.fix).toContain(`caps.dailyUsd (its default; it's set in ${configFile})`);
 	});
 
 	it("should say nothing can be spent when a cap is 0, rather than to wait", async () => {
@@ -207,6 +255,48 @@ describe("reserve", () => {
 		// AND the reservation went through once it was free
 		expect(await Effect.runPromise(readLedger(ctx))).toHaveLength(1);
 	});
+
+	it("should name the process holding a busy ledger, and its lock file", async () => {
+		// GIVEN another command holding the ledger's lock
+		const ctx = testContext();
+		mkdirSync(ctx.paths.data, { recursive: true });
+		const lockFile = join(ctx.paths.data, "ledger.lock");
+		const held = await Effect.runPromise(takeLock(lockFile, "reserve for b"));
+
+		// WHEN a call is reserved and the lock stays busy past the wait
+		const error = await failurePastLockWait(reserve(ctx, call("a", 0.1)));
+		held.release();
+
+		// THEN it is a conflict naming the holder's command, its process and the ledger's lock file
+		expect(error.code).toBe("conflict");
+		expect(error.message).toContain(`"reserve for b" (pid ${process.pid})`);
+		expect(error.message).toContain(lockFile);
+		// AND the fix says to delete that file if the process isn't shorts-studio
+		expect(error.fix).toContain(`delete ${lockFile}, then run this again.`);
+		// AND nothing was reserved
+		expect(await Effect.runPromise(readLedger(ctx))).toHaveLength(0);
+	});
+
+	it("should take the ledger's lock whose process number went to a program started after it", async () => {
+		// GIVEN a ledger lock taken ten minutes ago by a process number that a program started a
+		// minute ago now has
+		const ctx = testContext({ processStartedAt: async () => new Date(Date.now() - 60_000) });
+		mkdirSync(ctx.paths.data, { recursive: true });
+		writeFileSync(
+			join(ctx.paths.data, "ledger.lock"),
+			JSON.stringify({
+				pid: process.pid,
+				command: "reserve for b",
+				since: new Date(Date.now() - 10 * 60_000).toISOString(),
+			}),
+		);
+
+		// WHEN a call is reserved
+		await Effect.runPromise(reserve(ctx, call("a", 0.1)));
+
+		// THEN it went through
+		expect(await Effect.runPromise(readLedger(ctx))).toHaveLength(1);
+	});
 });
 
 describe("budgetFor", () => {
@@ -240,30 +330,208 @@ describe("budgetFor", () => {
 		const budget = await Effect.runPromise(budgetFor(ctx, { post: "a", usd: 0.2 }));
 		const error = await Effect.runPromise(Effect.flip(reserve(ctx, call("a", 0.2))));
 
-		// THEN the check says it doesn't fit, naming that cap with the reservation's own message
+		// THEN the check says it doesn't fit, naming that cap with the reservation's own message and fix
 		expect(budget.fits).toBe(false);
 		expect(budget.stoppedBy).toBe(cap);
 		expect(budget.why).toBe(error.message);
+		expect(budget.fix).toBe(error.fix);
+	});
+});
+
+describe("budgetFor, with the keys the real run would use", () => {
+	const KEY = { env: "FAKE_IMAGES_KEY", keychain: "fake-images" };
+
+	it("should say a call can't go ahead without its key, naming it", async () => {
+		// GIVEN a key that isn't set, and caps with room
+		const ctx = testContext();
+
+		// WHEN a $0.20 call that would use that key is checked
+		const budget = await Effect.runPromise(
+			budgetFor(ctx, { post: "a", usd: 0.2 }, { keys: [KEY] }),
+		);
+
+		// THEN it can't go ahead, stopped by the missing key, with the key's own fix
+		expect(budget).toMatchObject({ fits: false, stoppedBy: "missing-key" });
+		expect(budget.why).toContain("FAKE_IMAGES_KEY");
+		expect(budget.fix).toContain("Keychain");
+	});
+
+	it("should need the key even for a call of $0, since fetching what's paid for uses it", async () => {
+		// GIVEN a key that isn't set
+		const ctx = testContext();
+
+		// WHEN a $0 call that would fetch with that key is checked
+		const budget = await Effect.runPromise(budgetFor(ctx, { post: "a", usd: 0 }, { keys: [KEY] }));
+
+		// THEN it can't go ahead, stopped by the missing key
+		expect(budget).toMatchObject({ fits: false, stoppedBy: "missing-key" });
+	});
+
+	it("should let a call of $0 go ahead once its key is set", async () => {
+		// GIVEN the key set
+		const ctx = testContext({ secrets: { FAKE_IMAGES_KEY: "k" } });
+
+		// WHEN a $0 call that would fetch with that key is checked
+		const budget = await Effect.runPromise(budgetFor(ctx, { post: "a", usd: 0 }, { keys: [KEY] }));
+
+		// THEN it fits
+		expect(budget.fits).toBe(true);
+	});
+
+	it("should name a setting that can't be used before a missing key", async () => {
+		// GIVEN a config.json that couldn't be used, and a key that isn't set
+		const ctx = testContext({ settingsIssues: [BROKEN_CONFIG] });
+
+		// WHEN a $0.20 call that would use that key is checked
+		const budget = await Effect.runPromise(
+			budgetFor(ctx, { post: "a", usd: 0.2 }, { keys: [KEY] }),
+		);
+
+		// THEN the setting stops it
+		expect(budget.stoppedBy).toBe("settings");
+	});
+
+	it("should name a missing key before a cap", async () => {
+		// GIVEN a daily cap the call would pass, and a key that isn't set
+		const ctx = testContext({ config: { caps: { dailyUsd: 0.1 } } });
+
+		// WHEN a $0.20 call that would use that key is checked
+		const budget = await Effect.runPromise(
+			budgetFor(ctx, { post: "a", usd: 0.2 }, { keys: [KEY] }),
+		);
+
+		// THEN the missing key stops it
+		expect(budget.stoppedBy).toBe("missing-key");
+	});
+
+	it("should check the caps once the key is set", async () => {
+		// GIVEN a daily cap the call would pass, and the key set
+		const ctx = testContext({
+			config: { caps: { dailyUsd: 0.1 } },
+			secrets: { FAKE_IMAGES_KEY: "k" },
+		});
+
+		// WHEN a $0.20 call that would use that key is checked
+		const budget = await Effect.runPromise(
+			budgetFor(ctx, { post: "a", usd: 0.2 }, { keys: [KEY] }),
+		);
+
+		// THEN the daily cap stops it
+		expect(budget.stoppedBy).toBe("caps.dailyUsd");
 	});
 });
 
 describe("settings that can't be used", () => {
 	it("should reserve nothing, since the caps may be the defaults rather than the user's", async () => {
-		// GIVEN a setting that couldn't be used
-		const issue = 'config.json: captions.fontSize: Expected a number, got "big"';
-		const ctx = testContext({ settingsIssues: [issue] });
+		// GIVEN a config.json value that couldn't be used
+		const ctx = testContext({ settingsIssues: [BROKEN_CONFIG] });
 
 		// WHEN a call is reserved, and a dry run checks one
 		const error = await Effect.runPromise(Effect.flip(reserve(ctx, call("a", 0.01))));
 		const budget = await Effect.runPromise(budgetFor(ctx, { post: "a", usd: 0.01 }));
 
-		// THEN the call fails before anything is written, naming the setting and doctor
+		// THEN the call fails before anything is written, naming the setting
 		expect(error.code).toBe("failed");
-		expect(error.message).toContain(issue);
-		expect(error.fix).toContain("doctor");
+		expect(error.message).toContain(
+			'/data/config.json: captions.fontSize: Expected a number, got "big"',
+		);
+		expect(error.message).toContain("the caps may be the defaults");
 		expect(await Effect.runPromise(readLedger(ctx))).toEqual([]);
+		// AND the fix names doctor in both forms, and the MCP server's restart
+		expect(error.fix).toContain("doctor (`config_check` over MCP)");
+		expect(error.fix).toContain("restart it after the fix");
 		// AND the dry run says it doesn't fit, for the same reason
 		expect(budget).toMatchObject({ fits: false, stoppedBy: "settings" });
+	});
+
+	it("should name a misspelt cap and the cap it meant, and say the caps may be the defaults", async () => {
+		// GIVEN config.json setting caps.daily, which names no setting
+		const ctx = testContext({
+			settingsIssues: [
+				{
+					source: "/data/config.json",
+					risk: "caps",
+					text: "caps.daily isn't a setting; the closest is caps.dailyUsd.",
+					setting: "caps.dailyUsd",
+				},
+			],
+		});
+
+		// WHEN a call is reserved
+		const error = await Effect.runPromise(Effect.flip(reserve(ctx, call("a", 0.01))));
+
+		// THEN nothing is reserved, and the message names both and the caps at risk
+		expect(error.code).toBe("failed");
+		expect(error.message).toContain("caps.daily isn't a setting");
+		expect(error.message).toContain("caps.dailyUsd");
+		expect(error.message).toContain("the caps may be the defaults");
+		expect(await Effect.runPromise(readLedger(ctx))).toEqual([]);
+	});
+
+	it("should say a broken brand.json would make images without the brand's style, not name the caps", async () => {
+		// GIVEN a brand.json that isn't valid
+		const ctx = testContext({
+			settingsIssues: [
+				{
+					source: "/data/brand.json",
+					risk: "brand",
+					text: "imagePrompt.suffix: Expected string, got 3",
+				},
+			],
+		});
+
+		// WHEN a call is reserved
+		const error = await Effect.runPromise(Effect.flip(reserve(ctx, call("a", 0.01))));
+
+		// THEN nothing is reserved, and the message says what's at risk
+		expect(error.code).toBe("failed");
+		expect(error.message).toContain("images would be made without your brand's style");
+		expect(error.message).not.toContain("caps");
+		expect(await Effect.runPromise(readLedger(ctx))).toEqual([]);
+	});
+
+	it("should lead with the problem that puts the caps at risk, whatever its place", async () => {
+		// GIVEN a variable that isn't valid, then a config.json that couldn't be used
+		const ctx = testContext({
+			settingsIssues: [
+				{
+					source: "SHORTS_CAPTIONS_FONT_SIZE",
+					risk: "setting",
+					text: 'Expected a number, got "big"',
+					setting: "captions.fontSize",
+				},
+				BROKEN_CONFIG,
+			],
+		});
+
+		// WHEN a call is reserved
+		const error = await Effect.runPromise(Effect.flip(reserve(ctx, call("a", 0.01))));
+
+		// THEN the message is about the caps, and counts the other problem
+		expect(error.message).toContain("the caps may be the defaults");
+		expect(error.message).toContain("/data/config.json");
+		expect(error.message).toContain("(and 1 more)");
+	});
+
+	it("should name the one setting at its default when that's all that's at risk", async () => {
+		// GIVEN only a caption size variable that isn't valid
+		const ctx = testContext({
+			settingsIssues: [
+				{
+					source: "SHORTS_CAPTIONS_FONT_SIZE",
+					risk: "setting",
+					text: 'Expected a number, got "big"',
+					setting: "captions.fontSize",
+				},
+			],
+		});
+
+		// WHEN a call is reserved
+		const error = await Effect.runPromise(Effect.flip(reserve(ctx, call("a", 0.01))));
+
+		// THEN the message names that setting, not the caps
+		expect(error.message).toContain("captions.fontSize would be its default");
+		expect(error.message).not.toContain("caps");
 	});
 });
 
@@ -406,6 +674,47 @@ describe("readLedger", () => {
 		expect(spent(entries, { since: daysNow(ctx).startOfToday })).toBeCloseTo(0.35);
 	});
 
+	it("should leave a hand-edited line to the user, since the caps are checked against it", async () => {
+		// GIVEN a ledger whose only line has its time written with an offset
+		const ctx = testContext();
+		writeLedger(ctx, `${line("2026-11-03T20:00:00-05:00", 0.1)}\n`);
+
+		// WHEN it is read
+		const error = await Effect.runPromise(Effect.flip(readLedger(ctx)));
+
+		// THEN it fails on that line, and what to do with it is the user's decision
+		expect(error.message).toContain("line 1 is corrupt");
+		expect(error.fix).toContain("what to do with that line is the user's decision");
+		expect(error.fix).not.toContain("Remove it");
+	});
+
+	it("should say to remove an unfinished last line, left by a write that was cut off", async () => {
+		// GIVEN a good line, then a line that stops mid-way with no line end
+		const ctx = testContext();
+		const good = line("2026-11-04T08:00:00.000Z", 0.1);
+		writeLedger(ctx, `${good}\n${line("2026-11-04T08:30:00.000Z", 0.2).slice(0, 40)}`);
+
+		// WHEN it is read
+		const error = await Effect.runPromise(Effect.flip(readLedger(ctx)));
+
+		// THEN it fails on that line, and the fix says to remove it
+		expect(error.message).toContain("line 2 is corrupt");
+		expect(error.fix).toContain("Remove it");
+		expect(error.fix).toContain("can't make the caps count less than was spent");
+	});
+
+	it("should leave a whole last line without a line end to the user, since no write was cut off", async () => {
+		// GIVEN a hand-edited last line, valid JSON with a negative amount, and no line end
+		const ctx = testContext();
+		writeLedger(ctx, line("2026-11-04T08:00:00.000Z", -1));
+
+		// WHEN it is read
+		const error = await Effect.runPromise(Effect.flip(readLedger(ctx)));
+
+		// THEN removing it isn't offered
+		expect(error.fix).toContain("the user's decision");
+	});
+
 	it("should refuse a ledger with a corrupt line, naming the line", async () => {
 		// GIVEN a ledger whose second line was damaged
 		const ctx = testContext();
@@ -448,11 +757,41 @@ describe("paidCall", () => {
 		expect(spent(entries, { post: "a" })).toBeCloseTo(0.1);
 	});
 
+	it("should free the reservation of a call that never left the machine", async () => {
+		// GIVEN a paid call whose connection is refused before the request is sent
+		const ctx = testContext();
+		const refused = Effect.fail(
+			failBecause(new NotSent({ message: "connect ECONNREFUSED", fix: "Tell the user." })),
+		);
+
+		// WHEN it runs
+		const error = await Effect.runPromise(Effect.flip(paidCall(ctx, call("a", 0.1), refused)));
+
+		// THEN it fails as a provider error
+		expect(error.code).toBe("provider");
+		// AND today's total is what it was before, since nothing was billed
+		const entries = await Effect.runPromise(readLedger(ctx));
+		expect(spent(entries, { since: daysNow(ctx).startOfToday })).toBe(0);
+	});
+
+	it("should keep counting a call whose outcome is unknown", async () => {
+		// GIVEN a paid call whose connection drops after the request may have been sent
+		const ctx = testContext();
+		const dropped = Effect.fail(fail("provider", "socket hang up", "Run it again later."));
+
+		// WHEN it runs
+		await Effect.runPromise(Effect.flip(paidCall(ctx, call("a", 0.1), dropped)));
+
+		// THEN its cost stays counted today
+		const entries = await Effect.runPromise(readLedger(ctx));
+		expect(spent(entries, { since: daysNow(ctx).startOfToday })).toBeCloseTo(0.1);
+	});
+
 	describe("budgetFor, for nothing to spend and for a batch", () => {
 		it("should say a call of $0 fits, even while a setting can't be used", async () => {
 			// GIVEN a setting that couldn't be used
 			const ctx = testContext({
-				settingsIssues: ["/data/config.json: captions.fontSize: Expected number"],
+				settingsIssues: [BROKEN_CONFIG],
 			});
 
 			// WHEN a call with nothing to spend is checked
@@ -467,7 +806,9 @@ describe("paidCall", () => {
 			const ctx = testContext({ config: { caps: { dailyUsd: 1, postUsd: 10 } } });
 
 			// WHEN a $0.40 call is checked after $0.70 planned for earlier posts in the same dry run
-			const budget = await Effect.runPromise(budgetFor(ctx, { post: "c", usd: 0.4 }, 0.7));
+			const budget = await Effect.runPromise(
+				budgetFor(ctx, { post: "c", usd: 0.4 }, { plannedUsd: 0.7 }),
+			);
 
 			// THEN it doesn't fit today's cap
 			expect(budget).toMatchObject({ fits: false, stoppedBy: "caps.dailyUsd" });

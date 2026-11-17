@@ -21,7 +21,7 @@ describe("providersLayer", () => {
 
 		// THEN it fails naming ffmpeg, FAL's key and Together's key, each with a fix
 		expect(error.code).toBe("missing-tool");
-		expect(error.message).toMatch(/✗ ffmpeg +not found\n +→ /);
+		expect(error.message).toMatch(/✗ ffmpeg +not found \[missing-tool\]\n +→ /);
 		expect(error.message).toMatch(/✗ FAL_KEY +missing \(fal needs it\)/);
 		expect(error.message).toMatch(/✗ TOGETHER_API_KEY +missing \(together needs it\)/);
 	});

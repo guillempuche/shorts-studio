@@ -100,6 +100,45 @@ export const Brand = Schema.Struct({
 });
 export type Brand = typeof Brand.Type;
 
+/**
+ * A setting that can't be used, or names no setting: config.json, brand.json or a SHORTS_*
+ * variable. `risk` is what that puts at risk, which a refusal to spend says: the caps (they may be
+ * the defaults), the brand's style, or one setting left at its default.
+ */
+export const SettingsIssue = Schema.Struct({
+	source: Schema.String.annotate({ description: "The file or the variable." }),
+	risk: Schema.Literals(["caps", "brand", "setting"]),
+	text: Schema.String,
+	setting: Schema.optionalKey(
+		Schema.String.annotate({ description: "The setting left at its default, when it's one." }),
+	),
+});
+export type SettingsIssue = typeof SettingsIssue.Type;
+
+/** A settings issue as one line: `<file or variable>: <what's wrong>`. */
+export const settingsIssueLine = (issue: SettingsIssue): string => `${issue.source}: ${issue.text}`;
+
+/** An MCP server reads the settings and its environment once, when it starts. */
+export const MCP_RESTART =
+	"A running MCP server keeps the settings and environment it started with: restart it after the fix.";
+
+/**
+ * Where each cap's value comes from: `default`, the config.json that set it, or the `SHORTS_CAPS_*`
+ * variable that did.
+ */
+export const CapsFrom = Schema.Struct({
+	dailyUsd: Schema.String,
+	monthlyUsd: Schema.String,
+	postUsd: Schema.String,
+});
+export type CapsFrom = typeof CapsFrom.Type;
+
+/** A cap's source, in words: `set by SHORTS_CAPS_DAILY_USD`, `set in <file>`, or `the default`. */
+export const capSetBy = (source: string): string => {
+	if (source === "default") return "the default";
+	return /^SHORTS_[A-Z0-9_]+$/.test(source) ? `set by ${source}` : `set in ${source}`;
+};
+
 /** Where an API key is looked up: an environment variable, then a macOS Keychain entry. */
 export interface KeySpec {
 	readonly env: string;
@@ -108,13 +147,16 @@ export interface KeySpec {
 
 export interface Context {
 	readonly paths: Paths;
+	/** The variable that chose each folder (`SHORTS_DATA_DIR`), or undefined for its default. */
+	readonly pathsFrom: { readonly [Folder in keyof Paths]: string | undefined };
 	readonly config: Config;
 	readonly brand: Brand;
+	readonly capsFrom: CapsFrom;
 	/**
-	 * Why a setting couldn't be used: config.json, brand.json or a SHORTS_* variable. Its default
-	 * applies, and doctor reports it as a problem to fix.
+	 * Settings that can't be used, or that name no setting. Each one's default applies, nothing
+	 * may be spent until it's fixed, and doctor reports it as a problem to fix.
 	 */
-	readonly settingsIssues: ReadonlyArray<string>;
+	readonly settingsIssues: ReadonlyArray<SettingsIssue>;
 	/** Settings that fell back to a default without stopping anything, such as TZ. Doctor warns. */
 	readonly settingsWarnings: ReadonlyArray<string>;
 	/**
@@ -123,6 +165,12 @@ export interface Context {
 	 */
 	readonly secret: (key: KeySpec) => Promise<Redacted.Redacted<string> | undefined>;
 	readonly now: () => Date;
+	/**
+	 * When process `pid` started, or undefined when that can't be told (Windows, no `ps`, no such
+	 * process). A lock uses it to tell its holder from a later program given the same number.
+	 * Never rejects.
+	 */
+	readonly processStartedAt: (pid: number) => Promise<Date | undefined>;
 	/** The machine's time zone, which sets where a day and a month start for the caps. */
 	readonly timeZone: DateTime.TimeZone;
 	/**

@@ -13,8 +13,9 @@ import { Effect, Schema } from "effect";
 import type { Context } from "../context.ts";
 import { fileHash, hashOf, readJsonFile, writeJsonFile } from "../files.ts";
 import { checkLanguage, requireKey } from "../inputs.ts";
-import { Budget, budgetFor, budgetLine, paidCall } from "../ledger.ts";
+import { Budget, budgetFor, budgetLine, paidCall, settingsRefusal } from "../ledger.ts";
 import { chooseModel, costOf } from "../models.ts";
+import { roundUsd, usd } from "../money.ts";
 import { defineOperation, p, type RunMode } from "../operation.ts";
 import { Transcriber } from "../ports.ts";
 import { postDir, readPost, updatePost } from "../post-store.ts";
@@ -92,14 +93,19 @@ export const audioTranscribe = defineOperation({
 		}
 
 		const cost = costOf(model, audioAmount(model, post.audio.durationSec));
+		const estimateUsd = roundUsd(cost.usd);
 		if (mode.dryRun) {
-			const budget = yield* budgetFor(ctx, { post: input.post, usd: cost.usd }, mode.plannedUsd);
+			const budget = yield* budgetFor(
+				ctx,
+				{ post: input.post, usd: cost.usd },
+				{ plannedUsd: mode.plannedUsd, keys: transcriber.keys },
+			);
 			return {
 				file,
 				language: input.language ?? "auto",
 				words: 0,
 				skipped: false,
-				estimateUsd: cost.usd,
+				estimateUsd,
 				dryRun: true,
 				budget,
 				// The real run is the same call without `dryRun`; transcription needs no `--yes`.
@@ -114,7 +120,10 @@ export const audioTranscribe = defineOperation({
 			};
 		}
 
-		// Fail on a missing key before anything is reserved.
+		// Fail before anything is reserved, in the order its dry run checks: the settings, when
+		// there's something to pay for, then the key.
+		const refusal = cost.usd > 0 ? settingsRefusal(ctx) : undefined;
+		if (refusal !== undefined) return yield* refusal;
 		yield* Effect.forEach(transcriber.keys, (key) => requireKey(ctx, key), { discard: true });
 		ctx.log(`Transcribing ${post.audio.durationSec.toFixed(0)} s of audio…`);
 		const transcript = yield* paidCall(
@@ -143,7 +152,7 @@ export const audioTranscribe = defineOperation({
 			language: transcript.language,
 			words: transcript.words.length,
 			skipped: false,
-			estimateUsd: cost.usd,
+			estimateUsd,
 			dryRun: false,
 			...nextOf(updated),
 		};
@@ -152,6 +161,6 @@ export const audioTranscribe = defineOperation({
 		o.skipped
 			? `Transcript is up to date (${o.language}).\nNext: ${o.next}`
 			: o.dryRun
-				? `Would transcribe the audio (~$${o.estimateUsd.toFixed(3)}); nothing was spent.${o.budget === undefined ? "" : ` ${budgetLine(o.budget)}`}`
+				? `Would transcribe the audio (~${usd(o.estimateUsd)}); nothing was spent.${o.budget === undefined ? "" : ` ${budgetLine(o.budget)}`}`
 				: `Transcribed ${o.words} words (${o.language}) to ${o.file}\nNext: ${o.next}`,
 });
