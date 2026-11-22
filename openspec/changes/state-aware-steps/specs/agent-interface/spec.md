@@ -84,7 +84,8 @@
 
 - **WHEN** the user's review asks for fixes, with notes on beats 1 and 3
 - **THEN** the first steps are the agent's, one per note, each naming its beat, its note and the tools that fix it
-- **AND** `draft_render` comes after them
+- **AND** until a fix changes the draft's inputs, the last step is a note to render the draft once the fixes are made, with no tool
+- **AND** once one has, `draft_render` comes after them
 
 #### Scenario: A rejected draft
 
