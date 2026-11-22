@@ -10,7 +10,7 @@
 
 import { renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { fail } from "@shorts-studio/domain/errors";
+import { fail, type ShortsError } from "@shorts-studio/domain/errors";
 import { Kind, Origin } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import { ensureDir, fileHash, fileStep } from "../files.ts";
@@ -65,8 +65,16 @@ export const sourceImport = defineOperation({
 		const target = join(dir, AUDIO_FILE);
 		const tmp = join(dir, "audio", "audio.tmp.m4a");
 		const durationSec = yield* Effect.gen(function* () {
-			yield* media.extractAudio(source, tmp);
-			const peak = yield* media.peakDb(tmp);
+			// Their errors would name the temporary file; the user knows only the one they gave.
+			const fromSource = Effect.mapError((error: ShortsError) =>
+				fail(
+					error.code,
+					`${source} couldn't be converted to audio: ${error.message.replaceAll(tmp, source)}`,
+					error.fix,
+				),
+			);
+			yield* media.extractAudio(source, tmp).pipe(fromSource);
+			const peak = yield* media.peakDb(tmp).pipe(fromSource);
 			if (peak <= SILENT_DB) {
 				return yield* fail(
 					"usage",

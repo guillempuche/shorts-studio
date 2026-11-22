@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fail } from "@shorts-studio/domain/errors";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import type { Context } from "../context.ts";
@@ -367,5 +368,45 @@ describe("source download", () => {
 		expect(error.code).toBe("usage");
 		expect(error.message).toContain(says);
 		expect(downloader.calls).toEqual([]);
+	});
+});
+
+describe("source transcribe, when nothing can be estimated", () => {
+	const dryRun = (ctx: Context) =>
+		sourceTranscribe.run({ collection: "sm-awareness", language: undefined }, ctx, {
+			dryRun: true,
+			confirmed: false,
+		});
+
+	it("should fail the dry run when ffprobe is missing, rather than estimate $0", async () => {
+		// GIVEN a collection, and no ffprobe
+		const ctx = testContext();
+		seedCollection(ctx, ["a.mp3"]);
+		const media = {
+			...fakeMediaTools(),
+			duration: () => Effect.fail(fail("missing-tool", "spawn ffprobe ENOENT", "doctor")),
+		};
+
+		// WHEN it is planned with a dry run
+		const error = await runFailure(dryRun(ctx), fakePorts({ mediaTools: media }));
+
+		// THEN it fails as a missing tool
+		expect(error.code).toBe("missing-tool");
+	});
+
+	it("should offer no real run when no file could be read", async () => {
+		// GIVEN a collection whose only file can't be read
+		const ctx = testContext();
+		seedCollection(ctx, ["a.mp3"]);
+
+		// WHEN it is planned with a dry run
+		const planned = await run(
+			dryRun(ctx),
+			fakePorts({ mediaTools: fakeMediaTools({ unreadable: ["a.mp3"] }) }),
+		);
+
+		// THEN the file is listed as failed, and no next step runs it for real
+		expect(planned.failures).toHaveLength(1);
+		expect(planned.nextSteps).toBeUndefined();
 	});
 });

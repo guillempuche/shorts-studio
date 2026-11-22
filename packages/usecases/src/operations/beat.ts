@@ -220,7 +220,7 @@ type BeatPatch = Schema.Struct.Type<typeof beatFields>;
 const BeatList: Schema.Codec<ReadonlyArray<BeatPatch>, unknown> = Schema.Array(
 	closedStruct(beatFields, "A beat's settings"),
 );
-const BeatPatches = Schema.Union([BeatList, Schema.Struct({ beats: BeatList })]);
+const BeatPatches = Schema.Union([BeatList, closedStruct({ beats: BeatList }, "A beats file")]);
 
 const FORMS = `Pass the beats inline with --beats '${BEAT_ITEM}', a JSON file with --from <beats.json>, or one beat with --beat <n> and --prompt, --moment or --motion.`;
 
@@ -297,6 +297,22 @@ const patchesOf = (input: BeatSetInput): Effect.Effect<ReadonlyArray<BeatPatch>,
 const checkPatches = (
 	patches: ReadonlyArray<BeatPatch>,
 ): Effect.Effect<ReadonlyArray<BeatPatch>, ShortsError> => {
+	if (patches.length === 0) {
+		return Effect.fail(fail("usage", "The list of beats is empty.", FORMS));
+	}
+	const bare = patches.filter(
+		(patch) =>
+			patch.prompt === undefined && patch.moment === undefined && patch.motion === undefined,
+	);
+	if (bare.length > 0) {
+		return Effect.fail(
+			fail(
+				"usage",
+				`Nothing to set on beat ${bare.map((patch) => patch.beat).join(", ")}.`,
+				"Give each beat a prompt, a moment or a motion.",
+			),
+		);
+	}
 	const blank = patches.filter((patch) => patch.prompt?.trim() === "").map((patch) => patch.beat);
 	if (blank.length > 0) {
 		return Effect.fail(

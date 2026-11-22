@@ -7,6 +7,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { fail } from "@shorts-studio/domain/errors";
 import { Effect, Schema } from "effect";
 import { CapsFrom, capSetBy, SettingsIssue } from "../context.ts";
 import { daysNow } from "../days.ts";
@@ -46,10 +47,17 @@ export const budgetShow = defineOperation({
 			// collection; any other is a typo, which would otherwise read as nothing spent.
 			if (input.post !== undefined && names.length === 0) {
 				const collection = /^saved\/(.+)$/.exec(input.post)?.[1];
-				if (collection === undefined || !existsSync(join(ctx.paths.posts, "saved", collection))) {
-					// Only to fail when it's no post: not-found's fix names the post it may mean.
-					yield* readPost(ctx, input.post);
+				const folder =
+					collection === undefined ? undefined : join(ctx.paths.posts, "saved", collection);
+				if (folder !== undefined && !existsSync(folder)) {
+					return yield* fail(
+						"not-found",
+						`No collection at ${folder}, and nothing spent on it.`,
+						"Check the collection's name: its folder sits under <posts>/saved/.",
+					);
 				}
+				// Only to fail when it's no post: not-found's fix names the post it may mean.
+				if (folder === undefined) yield* readPost(ctx, input.post);
 				names.push(input.post);
 			}
 			const { dailyUsd, monthlyUsd, postUsd } = caps(ctx);

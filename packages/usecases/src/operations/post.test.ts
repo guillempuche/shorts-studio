@@ -750,3 +750,50 @@ describe("nextStepsOf, following what's out of date", () => {
 		expect(shown.next).toBe(`draft render --post ${SLUG}`);
 	});
 });
+
+describe("next steps around an imported image", () => {
+	it("should ask no prompt for a beat whose image was imported", () => {
+		// GIVEN beats with prompts, but beat 1 has an imported image and no prompt
+		const post: Post = {
+			manifestVersion: 1,
+			slug: "2026-11-04-imported",
+			createdAt: "2026-11-04T09:00:00.000Z",
+			revision: 1,
+			audio: {
+				file: "audio/audio.m4a",
+				hash: "a",
+				origin: "mine",
+				kind: "music",
+				durationSec: 4,
+				source: "x.m4a",
+			},
+			beats: {
+				inputHash: "b",
+				items: [
+					{ index: 0, start: 0, end: 2, text: "", prompt: "a red door" },
+					{
+						index: 1,
+						start: 2,
+						end: 4,
+						text: "",
+						image: {
+							file: "images/beat-01-imported.png",
+							hash: "i",
+							inputHash: "i",
+							provider: "import",
+							model: "none",
+							seed: 0,
+							source: "imported",
+						},
+					},
+				],
+			},
+		};
+
+		// WHEN its steps are worked out
+		const [step] = nextStepsOf(post, UP_TO_DATE);
+
+		// THEN the next step is the script, not another prompt
+		expect(step?.tool).toBe("script_set");
+	});
+});

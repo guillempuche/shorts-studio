@@ -104,10 +104,10 @@ export const usageHint = (errors: ReadonlyArray<CliError.CliError>): string | un
 	for (const error of errors) {
 		const option = "option" in error ? String(error.option).replace(/^-+/, "") : undefined;
 		if (error._tag === "UnrecognizedOption" && option === "stage") {
-			return "Pick the posts at a stage with --in-stage <stage>; --stage is post list's.";
+			return "--stage is post list's; a command that runs on several posts picks them with --in-stage <stage>.";
 		}
 		if (error._tag === "UnrecognizedOption" && option === "in-stage") {
-			return "post list shows the posts at a stage with --stage <stage>.";
+			return "--in-stage picks posts for a command that runs on several; post list shows a stage's posts with --stage <stage>.";
 		}
 		if ((error._tag === "DuplicateOption" || error._tag === "InvalidValue") && option === "post") {
 			return "Give several posts in one --post, separated by commas: --post a,b.";
@@ -318,14 +318,25 @@ export const batchError = (
 	again: (posts: ReadonlyArray<string>) => string,
 ): ShortsError => {
 	const code = batchCode(failures.map((failure) => failure.code));
-	const posts = failures.map((failure) => failure.post);
-	const named = posts.join(", ");
+	const waits = (failure: { readonly code: ErrorCode }) =>
+		failure.code === "over-budget" || failure.code === "needs-approval";
+	const waiting = failures.filter(waits).map((failure) => failure.post);
+	const rest = failures.filter((failure) => !waits(failure)).map((failure) => failure.post);
 	return fail(
 		code,
 		`${failures.length} of ${total} posts failed.`,
-		code === "over-budget" || code === "needs-approval"
-			? `${named} wait on the user: each post's own fix, listed with it, says what to ask them.`
-			: `Follow each post's fix, listed with it, then run the command on just those posts: ${again(posts)}`,
+		[
+			...(waiting.length === 0
+				? []
+				: [
+						`${waiting.join(", ")} wait on the user: each post's own fix, listed with it, says what to ask them.`,
+					]),
+			...(rest.length === 0
+				? []
+				: [
+						`Follow each post's fix, listed with it, then run the command on just ${rest.length === 1 ? "that post" : "those posts"}: ${again(rest)}`,
+					]),
+		].join(" "),
 	);
 };
 

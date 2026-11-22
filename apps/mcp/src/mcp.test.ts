@@ -311,3 +311,36 @@ describe.each(VERSIONS)("MCP tools on %s", (version) => {
 		expect(builds).toBe(1);
 	});
 });
+
+describe("beat_set over MCP, with the beats as text", () => {
+	it("should take the beats as JSON text as well as a list", async () => {
+		// GIVEN a post with beats
+		const ctx = testContext();
+		await seedPost(ctx, "2026-11-04-text", readyForImages());
+
+		// WHEN a client passes the beats as the JSON text the step's note shows
+		const result = await Effect.runPromise(
+			Effect.scoped(
+				McpTest.makeClient(mcpRegistrations(operations, ctx).pipe(Layer.provide(fakePorts())), {
+					protocols: MCP_PROTOCOLS,
+					protocolVersion: VERSIONS[0],
+				}).pipe(
+					Effect.flatMap((client) =>
+						client.callTool({
+							name: "beat_set",
+							arguments: {
+								post: "2026-11-04-text",
+								beats: '[{"beat": 0, "prompt": "a green door"}]',
+							},
+						}),
+					),
+				),
+			),
+		);
+
+		// THEN beat 0 has that prompt
+		expect(result.isError).not.toBe(true);
+		const post = await Effect.runPromise(readPost(ctx, "2026-11-04-text"));
+		expect(post.beats?.items[0]?.prompt).toBe("a green door");
+	});
+});

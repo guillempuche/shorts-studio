@@ -444,3 +444,36 @@ describe("beat set", () => {
 		expect((await postOf(ctx)).revision).toBe(before);
 	});
 });
+
+describe("beat set, with nothing in it", () => {
+	it.each([
+		["an empty list", []],
+		["a beat with nothing to set", [{ beat: 0 }]],
+	] as const)("should refuse %s, changing nothing", async (_, beats) => {
+		// GIVEN a post with two beats
+		const ctx = testContext();
+		await seedPost(ctx, SLUG, withOldPlan());
+		const before = (await Effect.runPromise(readPost(ctx, SLUG))).revision;
+
+		// WHEN beats are set from that list
+		const error = await runFailure(
+			beatSet.run(
+				{
+					post: SLUG,
+					beats,
+					from: undefined,
+					beat: undefined,
+					prompt: undefined,
+					moment: undefined,
+					motion: undefined,
+				},
+				ctx,
+				MODE,
+			),
+		);
+
+		// THEN it is a usage error, and nothing is saved
+		expect(error.code).toBe("usage");
+		expect((await Effect.runPromise(readPost(ctx, SLUG))).revision).toBe(before);
+	});
+});
