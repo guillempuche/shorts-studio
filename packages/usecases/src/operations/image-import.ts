@@ -11,7 +11,7 @@ import { type Beat, mapBeats } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import { ensureDir, fileHash, fileStep, hashOf } from "../files.ts";
 import { defineOperation, p } from "../operation.ts";
-import { postDir, readPost, updatePost } from "../post-store.ts";
+import { postDir, readPost, refuseArchived, updatePost } from "../post-store.ts";
 import { fetchSavedFix, withImagesLock } from "./image.ts";
 import { NextFields, nextOf } from "./post.ts";
 
@@ -43,7 +43,7 @@ export const imageImport = defineOperation({
 			);
 		}
 		// Read first outside the lock: a post that isn't there has no folder to lock.
-		yield* readPost(ctx, input.post);
+		yield* refuseArchived(yield* readPost(ctx, input.post), "image import");
 		const imported = yield* withImagesLock(
 			ctx,
 			input.post,
@@ -99,7 +99,7 @@ export const imageImport = defineOperation({
 				return { post: written, file: join(dir, file) };
 			}),
 		);
-		return { file: imported.file, ...nextOf(imported.post) };
+		return { file: imported.file, ...(yield* nextOf(ctx, imported.post)) };
 	}),
 	render: (o) => `Imported ${o.file}\nNext: ${o.next}`,
 });

@@ -14,7 +14,7 @@ import { Effect, Schema } from "effect";
 import { hashOf, readText, writeFileAtomic } from "../files.ts";
 import { requireUser } from "../inputs.ts";
 import { defineOperation, p } from "../operation.ts";
-import { postDir, readPost, updatePost } from "../post-store.ts";
+import { postDir, readPost, refuseArchived, updatePost } from "../post-store.ts";
 import { NextFields, nextOf } from "./post.ts";
 
 const SCRIPT_FILE = "script.md";
@@ -45,7 +45,7 @@ export const scriptSet = defineOperation({
 			"Write the script to a file first, then pass its path.",
 		);
 		const hash = hashOf(text);
-		yield* readPost(ctx, input.post);
+		yield* refuseArchived(yield* readPost(ctx, input.post), "script set");
 		yield* writeFileAtomic(join(postDir(ctx, input.post), SCRIPT_FILE), text);
 		const post = yield* updatePost(ctx, input.post, "script set", (post) =>
 			// The approval and hook stay; the approval holds only if the text is unchanged.
@@ -62,7 +62,7 @@ export const scriptSet = defineOperation({
 		return {
 			file: join(postDir(ctx, input.post), SCRIPT_FILE),
 			approved: isScriptApproved(post),
-			...nextOf(post),
+			...(yield* nextOf(ctx, post)),
 		};
 	}),
 	render: (o) =>
@@ -82,20 +82,22 @@ export const scriptApprove = defineOperation({
 		yield* requireUser(ctx, `script approve --post ${input.post}`);
 		const approvedAt = ctx.now().toISOString();
 		const post = yield* updatePost(ctx, input.post, "script approve", (post) =>
-			post.script === undefined
-				? Effect.fail(
-						fail(
-							"not-found",
-							`${input.post} has no script yet.`,
-							`Save one first: script set --post ${input.post} --file script.md`,
-						),
-					)
-				: Effect.succeed({
-						...post,
-						script: { ...post.script, ...approvalOf(post), approvedAt },
-					}),
+			post.archivedAt !== undefined
+				? refuseArchived(post, "script approve").pipe(Effect.as(post))
+				: post.script === undefined
+					? Effect.fail(
+							fail(
+								"not-found",
+								`${input.post} has no script yet.`,
+								`Save one first: script set --post ${input.post} --file script.md`,
+							),
+						)
+					: Effect.succeed({
+							...post,
+							script: { ...post.script, ...approvalOf(post), approvedAt },
+						}),
 		);
-		return { approvedAt, ...nextOf(post) };
+		return { approvedAt, ...(yield* nextOf(ctx, post)) };
 	}),
 	render: (o) => `Script approved.\nNext: ${o.next}`,
 });

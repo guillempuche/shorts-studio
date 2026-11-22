@@ -64,6 +64,18 @@ describe("audio transcribe", () => {
 		expect(post.transcript).toMatchObject({ model: "fake-whisper", language: "en" });
 	});
 
+	it("should record the hash of the audio a transcript was made from", async () => {
+		// GIVEN a post with audio whose hash is "a"
+		const { ctx, ports } = await ready();
+
+		// WHEN its audio is transcribed
+		await run(transcribe(ctx), ports);
+
+		// THEN post.json records that audio's hash with the transcript
+		const post = await Effect.runPromise(readPost(ctx, SLUG));
+		expect(post.transcript?.audioHash).toBe("a");
+	});
+
 	it("should reserve the model's price for the audio's minutes, without asking for --yes", async () => {
 		// GIVEN a post with 2 minutes of audio, and a model at $0.006 a minute
 		const { ctx, ports } = await ready();

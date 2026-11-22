@@ -54,6 +54,23 @@ const audioFile = () => {
 const whisper = TOGETHER_MODELS["openai/whisper-large-v3"];
 
 describe("Together's fixes", () => {
+	it("should point an instrumental track imported as speech at music", async () => {
+		// GIVEN Together finding no words in the audio
+		const fake = await startFakeTogether({ noWords: true });
+		onTestFinished(() => fake.close());
+		const together = await togetherAt(fake.url);
+
+		// WHEN a file is transcribed
+		const error = await Effect.runPromise(
+			Effect.flip(together.transcribe(whisper, audioFile(), undefined)),
+		);
+
+		// THEN it fails, and its fix names importing it again as music
+		expect(error.message).toContain("no word timings");
+		expect(error.fix).toContain("source import");
+		expect(error.fix).toContain("--kind music");
+	});
+
 	it.each([
 		[401, "Together refused the request, so nothing was counted.", "TOGETHER_API_KEY"],
 		[429, "Together refused the request, so nothing was counted.", "wait a minute"],

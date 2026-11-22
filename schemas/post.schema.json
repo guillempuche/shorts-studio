@@ -111,6 +111,9 @@
         },
         "language": {
           "type": "string"
+        },
+        "audioHash": {
+          "type": "string"
         }
       },
       "required": ["file", "hash", "inputHash", "provider", "model", "language"],
@@ -120,6 +123,9 @@
       "type": "object",
       "properties": {
         "inputHash": {
+          "type": "string"
+        },
+        "sourceHash": {
           "type": "string"
         },
         "items": {
@@ -192,6 +198,9 @@
                   "source": {
                     "type": "string",
                     "enum": ["generated", "imported"]
+                  },
+                  "prompt": {
+                    "type": "string"
                   }
                 },
                 "required": ["file", "hash", "inputHash", "provider", "model", "seed", "source"],

@@ -29,6 +29,19 @@ const expectWithin = (
 };
 
 describe("planBeats", () => {
+	it("should end the last beat where the audio ends, when a word runs past it", () => {
+		// GIVEN 20 words from older, longer audio, and new audio of 5 seconds
+		const words = steadyWords(20);
+
+		// WHEN beats are planned
+		const beats = planBeats(words, 5);
+
+		// THEN the last beat ends where the audio does, back to back from 0
+		expect(beats[0]?.start).toBe(0);
+		expect(beats.at(-1)?.end).toBe(5);
+		expectBackToBack(beats);
+	});
+
 	it("should cover the whole audio with beats back to back", () => {
 		// GIVEN 40 steadily spoken words in 15 seconds of audio
 		const words = steadyWords(40);

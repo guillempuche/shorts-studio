@@ -4,8 +4,8 @@
  * publish with the platform's in-app sound.
  *
  * Whatever comes in, audio or video, is converted to one `audio/audio.m4a`, so every later step
- * reads the same format. New audio changes the input hashes of the transcript, beats and draft,
- * which marks them out of date.
+ * reads the same format. New audio changes the audio's hash: the transcript records the hash it
+ * was made from, so `freshnessOf` counts it out of date, and the beats and draft built from it.
  */
 
 import { existsSync, renameSync, rmSync } from "node:fs";
@@ -16,7 +16,7 @@ import { Effect, Schema } from "effect";
 import { ensureDir, fileHash, fileStep } from "../files.ts";
 import { defineOperation, p } from "../operation.ts";
 import { MediaTools } from "../ports.ts";
-import { postDir, readPost, updatePost } from "../post-store.ts";
+import { postDir, readPost, refuseArchived, updatePost } from "../post-store.ts";
 import { NextFields, nextOf } from "./post.ts";
 
 const AUDIO_FILE = join("audio", "audio.m4a");
@@ -43,7 +43,7 @@ export const sourceImport = defineOperation({
 		if (!existsSync(source)) {
 			return yield* fail("not-found", `No file at ${source}.`, "Check the path and try again.");
 		}
-		yield* readPost(ctx, input.post);
+		yield* refuseArchived(yield* readPost(ctx, input.post), "source import");
 		const dir = postDir(ctx, input.post);
 		yield* ensureDir(join(dir, "audio"));
 		const target = join(dir, AUDIO_FILE);
@@ -72,7 +72,7 @@ export const sourceImport = defineOperation({
 				},
 			}),
 		);
-		return { file: target, durationSec, ...nextOf(post) };
+		return { file: target, durationSec, ...(yield* nextOf(ctx, post)) };
 	}),
 	render: (o) => `Imported ${o.durationSec.toFixed(1)} s of audio to ${o.file}\nNext: ${o.next}`,
 });

@@ -613,6 +613,22 @@ describe("batching posts on the CLI", () => {
 		expect(slugsOf(byStage.out)).toEqual(["2026-11-04-a", "2026-11-05-c"]);
 	});
 
+	it("should leave an archived post out of today's posts, unless asked for by stage", async () => {
+		// GIVEN three posts, and one of today's archived
+		const ctx = await threePosts();
+		await seedPost(ctx, "2026-11-04-old", { archivedAt: "2026-11-04T08:00:00.000Z" });
+
+		// WHEN today's posts are shown, then the archived ones
+		const today = await runCli(ctx, ["post", "show", "--day", "today", "--json"]);
+		const archived = await runCli(ctx, ["post", "show", "--in-stage", "archived", "--json"]);
+
+		// THEN today's selection leaves it out, and asking for stage archived shows it
+		expect(slugsOf(today.out)).toEqual(["2026-11-04-a", "2026-11-04-b"]);
+		expect((JSON.parse(archived.out) as { result: { slug: string } }).result.slug).toBe(
+			"2026-11-04-old",
+		);
+	});
+
 	it("should select today's posts with --day today", async () => {
 		// GIVEN three posts, and today is 2026-11-04
 		const ctx = await threePosts();

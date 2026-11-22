@@ -59,6 +59,8 @@ export const BeatImage = Schema.Struct({
 	model: Schema.String,
 	seed: Schema.Int,
 	source: Schema.Literals(["generated", "imported"]),
+	/** The beat's prompt it was made from, without the brand's style. Older images don't have it. */
+	prompt: Schema.optionalKey(Schema.String),
 });
 
 export const Beat = Schema.Struct({
@@ -125,11 +127,18 @@ export const Post = Schema.Struct({
 			provider: Schema.String,
 			model: Schema.String,
 			language: Schema.String,
+			/** The hash of the audio it was made from. Older transcripts don't have it. */
+			audioHash: Schema.optionalKey(Schema.String),
 		}),
 	),
 	beats: Schema.optionalKey(
 		Schema.Struct({
 			inputHash: Schema.String,
+			/**
+			 * What the beats were cut from (the transcript, or the audio for music), before any
+			 * re-cut by moment. Older plans don't have it.
+			 */
+			sourceHash: Schema.optionalKey(Schema.String),
 			items: Schema.Array(Beat),
 		}),
 	),

@@ -1,4 +1,11 @@
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+	appendFileSync,
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { Effect, Fiber } from "effect";
 import { TestClock } from "effect/testing";
@@ -131,8 +138,8 @@ const damageLedger = (ctx: Context) =>
 
 describe("image generate", () => {
 	it("should keep an image made by an earlier version up to date, so it isn't paid for again", async () => {
-		// GIVEN beat 0's image, saved with the input hash earlier versions wrote for its prompt,
-		// model, seed 7 and image size
+		// GIVEN beat 0's image and its file, saved with the input hash earlier versions wrote for
+		// its prompt, model, seed 7 and image size
 		const ctx = testContext();
 		await seedPost(
 			ctx,
@@ -163,6 +170,8 @@ describe("image generate", () => {
 				},
 			}),
 		);
+		mkdirSync(join(postDir(ctx, SLUG), "images"), { recursive: true });
+		writeFileSync(join(postDir(ctx, SLUG), "images", "beat-00.jpg"), "made earlier");
 		const maker = fakeImageMaker();
 
 		// WHEN images are generated
@@ -170,6 +179,23 @@ describe("image generate", () => {
 
 		// THEN nothing is sent to the provider
 		expect(maker.submits).toHaveLength(0);
+	});
+
+	it("should make an image whose file is gone again with its seed, and skip the others", async () => {
+		// GIVEN both beats' images made, then beat 1's file deleted
+		const { ctx, maker, ports } = await ready();
+		await run(generate(ctx), ports);
+		const seed = maker.submits[1]?.seed;
+		rmSync(join(postDir(ctx, SLUG), "images", "beat-01.jpg"));
+
+		// WHEN images are generated again
+		const result = await run(generate(ctx), ports);
+
+		// THEN only beat 1 is sent, with the seed it had
+		expect(result.planned.map((p) => p.action)).toEqual(["skip", "generate"]);
+		expect(maker.submits).toHaveLength(3);
+		expect(maker.submits[2]?.seed).toBe(seed);
+		expect(existsSync(join(postDir(ctx, SLUG), "images", "beat-01.jpg"))).toBe(true);
 	});
 
 	it("should pay once per beat and nothing on a re-run", async () => {
@@ -193,6 +219,8 @@ describe("image generate", () => {
 		}
 		// AND the second run skipped both beats
 		expect(second.planned.map((p) => p.action)).toEqual(["skip", "skip"]);
+		// AND each image records the prompt it was made from
+		expect(post.beats?.items.map((b) => b.image?.prompt)).toEqual(["a red door", "a blue sky"]);
 	});
 
 	it("should spend nothing on a dry run", async () => {
@@ -232,6 +260,8 @@ describe("image generate", () => {
 		expect(beat?.image).toBeDefined();
 		expect(beat?.pending).toBeUndefined();
 		expect((await ledgerOf(ctx)).filter((e) => e.type === "reserve")).toHaveLength(1);
+		// AND the image picked up records the prompt it was made from
+		expect(beat?.image?.prompt).toBe("a red door");
 	});
 
 	it("should save a request the provider was still answering when the run was interrupted", async () => {

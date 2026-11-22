@@ -12,14 +12,13 @@ import { copyFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { FRAME, framesOf, motionOf, type RenderBeat } from "@shorts-studio/domain/direction";
 import { fail } from "@shorts-studio/domain/errors";
-import { stageOf } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import { fileStep, writeFileAtomic } from "../files.ts";
+import { draftInputHash, freshnessOf } from "../freshness.ts";
 import { defineOperation, p } from "../operation.ts";
 import { MediaTools } from "../ports.ts";
-import { postDir, readPost } from "../post-store.ts";
-import { draftInputHash } from "./draft.ts";
-import { NextFields, nextOf, nextStep } from "./post.ts";
+import { postDir, readPost, refuseArchived } from "../post-store.ts";
+import { NextFields, nextOf, nextStep, refuseUnapproved } from "./post.ts";
 
 const FOLDER = "capcut";
 
@@ -55,6 +54,7 @@ export const capcutExport = defineOperation({
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
 	run: Effect.fn("capcut_export")(function* (input, ctx) {
 		const post = yield* readPost(ctx, input.post);
+		yield* refuseArchived(post, "capcut export");
 		const beats = post.beats?.items ?? [];
 		if (
 			post.audio === undefined ||
@@ -64,24 +64,29 @@ export const capcutExport = defineOperation({
 			return yield* fail(
 				"not-found",
 				`${input.post} has no complete draft to export.`,
-				nextStep(post),
+				yield* nextStep(ctx, post),
 			);
 		}
-		if (stageOf(post) !== "approved") {
-			return yield* fail(
-				"needs-approval",
-				`${input.post} is at "${stageOf(post)}". Only an approved draft can be exported.`,
-				`The user reviews it first: post review --post ${input.post} --decision approve`,
-			);
-		}
+		// Checks the review, not the stage, so a post past its final video can still export again.
+		yield* refuseUnapproved(ctx, post, "capcut export");
 		// The clips are rebuilt from the beats as they are now, so they must still be the ones
-		// the approved draft was rendered from.
+		// the approved draft was rendered from, with every image file there.
 		const media = yield* MediaTools;
 		if (post.draft.inputHash !== draftInputHash(ctx, post, media.rendererVersion)) {
 			return yield* fail(
 				"stale",
 				`${input.post}'s beats, images or captions changed after the draft was approved, so the export wouldn't match it.`,
-				`Render it again with draft render --post ${input.post}, then the user reviews the new draft.`,
+				yield* nextStep(ctx, post),
+			);
+		}
+		const gone = (yield* freshnessOf(ctx, post)).images
+			.filter((image) => image.why === "file-gone")
+			.map((image) => image.beat);
+		if (gone.length > 0) {
+			return yield* fail(
+				"not-found",
+				`${input.post} has no image file for ${gone.length === 1 ? "beat" : "beats"} ${gone.join(", ")}, so nothing was exported.`,
+				yield* nextStep(ctx, post),
 			);
 		}
 		const muted = input.mute || post.audio.origin === "others";
@@ -136,7 +141,12 @@ export const capcutExport = defineOperation({
 				),
 		});
 		yield* writeFileAtomic(join(out, "README.txt"), instructions(beats.length, muted));
-		return { dir: out, clips: beats.length, muted, ...nextOf(post) };
+		return {
+			dir: out,
+			clips: beats.length,
+			muted,
+			...(yield* nextOf(ctx, post, { exported: true })),
+		};
 	}),
 	render: (o) =>
 		`Exported ${o.clips} clips${o.muted ? " (no audio: use the platform's sound)" : ""} to ${o.dir}\nSee README.txt there for the CapCut steps.\nNext: ${o.next}`,

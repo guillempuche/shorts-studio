@@ -1,6 +1,7 @@
 /**
  * A local stand-in for Together's transcription endpoint, so tests run without a key or
- * spending anything. It answers every upload with the same words, or refuses with `status`.
+ * spending anything. It answers every upload with the same words, none (`noWords`, as for an
+ * instrumental track), or refuses with `status`.
  * Only tests import this file.
  */
 
@@ -27,7 +28,7 @@ export const FAKE_TRANSCRIPT = {
 };
 
 export const startFakeTogether = (
-	options: { readonly status?: number } = {},
+	options: { readonly status?: number; readonly noWords?: boolean } = {},
 ): Promise<FakeTogether> => {
 	const authorizations: FakeTogether["authorizations"] = [];
 	const models: FakeTogether["models"] = [];
@@ -44,7 +45,10 @@ export const startFakeTogether = (
 			const ok = req.method === "POST" && req.url === "/v1/audio/transcriptions";
 			const status = ok ? (options.status ?? 200) : 404;
 			res.writeHead(status, { "content-type": "application/json" });
-			res.end(JSON.stringify(status === 200 ? FAKE_TRANSCRIPT : { error: "refused" }));
+			const transcript = options.noWords
+				? { ...FAKE_TRANSCRIPT, text: "", words: [] }
+				: FAKE_TRANSCRIPT;
+			res.end(JSON.stringify(status === 200 ? transcript : { error: "refused" }));
 		});
 	});
 

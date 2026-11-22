@@ -101,7 +101,7 @@ export const togetherLayer = Layer.effect(
 				return yield* fail(
 					"provider",
 					"Together returned no word timings.",
-					"Together did the work, so its cost stays counted. Check that there is speech in the audio: running it again pays for a new transcription.",
+					"Together did the work, so its cost stays counted. If the audio has no speech, import it again as music, which needs no transcript: source import --post <slug> --file <audio> --origin <origin> --kind music. Running it again as it is pays for a new transcription.",
 				);
 			}
 			return {

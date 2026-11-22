@@ -4,7 +4,7 @@
  * providers.
  */
 
-import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fail, failBecause, NotSent, Refused, RequestEnded } from "@shorts-studio/domain/errors";
 import type { Model } from "@shorts-studio/domain/models";
@@ -190,7 +190,13 @@ export const fakeMediaTools = (
 				media.renders.push(job);
 				const file = join(job.cwd, job.output);
 				mkdirSync(dirname(file), { recursive: true });
-				writeFileSync(file, JSON.stringify(job.beats));
+				// Each image's content too, as a real render shows it: a new image makes a new video.
+				const shown = (image: string) =>
+					existsSync(join(job.cwd, image)) ? readFileSync(join(job.cwd, image), "utf8") : "";
+				writeFileSync(
+					file,
+					JSON.stringify(job.beats.map((beat) => ({ ...beat, shown: shown(beat.image) }))),
+				);
 			}),
 	};
 	return media;

@@ -18,7 +18,7 @@ import { chooseModel, costOf } from "../models.ts";
 import { roundUsd, usd } from "../money.ts";
 import { defineOperation, p, type RunMode } from "../operation.ts";
 import { Transcriber } from "../ports.ts";
-import { postDir, readPost, updatePost } from "../post-store.ts";
+import { postDir, readPost, refuseArchived, updatePost } from "../post-store.ts";
 import { agentStep, NextFields, nextAfterDryRun, nextOf } from "./post.ts";
 
 export const TRANSCRIPT_FILE = "transcript.json";
@@ -61,6 +61,7 @@ export const audioTranscribe = defineOperation({
 		yield* checkLanguage(input.language);
 
 		const post = yield* readPost(ctx, input.post);
+		yield* refuseArchived(post, "audio transcribe");
 		if (post.audio === undefined) {
 			return yield* fail(
 				"not-found",
@@ -88,7 +89,7 @@ export const audioTranscribe = defineOperation({
 				skipped: true,
 				estimateUsd: 0,
 				dryRun: mode.dryRun,
-				...nextOf(post),
+				...(yield* nextOf(ctx, post)),
 			};
 		}
 
@@ -134,6 +135,9 @@ export const audioTranscribe = defineOperation({
 
 		yield* writeJsonFile(file, Transcript, transcript);
 		const hash = yield* fileHash(file);
+		// The audio that was transcribed, not `current`'s: if new audio came in meanwhile, this
+		// transcript counts as out of date.
+		const audioHash = post.audio.hash;
 		const updated = yield* updatePost(ctx, input.post, "audio transcribe", (current) =>
 			Effect.succeed({
 				...current,
@@ -144,6 +148,7 @@ export const audioTranscribe = defineOperation({
 					provider: transcriber.provider,
 					model: model.name,
 					language: transcript.language,
+					audioHash,
 				},
 			}),
 		);
@@ -154,7 +159,7 @@ export const audioTranscribe = defineOperation({
 			skipped: false,
 			estimateUsd,
 			dryRun: false,
-			...nextOf(updated),
+			...(yield* nextOf(ctx, updated)),
 		};
 	}),
 	render: (o) =>
