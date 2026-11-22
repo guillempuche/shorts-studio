@@ -27,8 +27,35 @@ Notable changes, newest first. The release workflow publishes each version's sec
 - `post.json` records what each output was made from: a transcript its audio's hash, a beat plan what it was cut from, and a generated image its beat's prompt. Posts made before are judged by their hashes, so nothing already made goes out of date.
 - `post show` prints the user's review, with each beat's note, and `post archive` returns the first time the post was archived, with its (empty) next steps.
 - Ctrl-C prints the run's error with the new code `interrupted` (exit 130), as one object with `--json`; its fix says to run the same command again, and for `image generate`, that saved requests are fetched without paying again and to leave out `--reroll`. Ctrl-C while an image request is being sent says it waits up to 60 s to save it.
+- Errors carry `nextSteps` too, in the shape results use: when a fix names a step, each step's MCP tool and arguments, its CLI command, and whose it is. A step only the user can take, such as an approval, setting a key or a CLI-only download, is `by: user`. The MCP server's instructions say how a CLI command in a fix maps to its tool.
+- `script set --text` and `beat set --beats` take the script and the beats' settings inline (over MCP, `beats` is the list itself), so an agent with only the MCP tools can take a post to the user's approval. Next steps pass them inline, with `<script>` and `<beats>` to fill in, and the beats step names the beats to fill and the shape of each.
+- `post list` lists every post it can read and names each one it can't, with its error and fix (`unreadable`), so one damaged post.json no longer hides the others.
+- `source transcribe` gives `next` and `nextSteps` after a dry run and after failed files, and lists each failed file with its error's code and fix (`failures`). A dry run lists a file it can't read instead of failing, and a cap reached part-way says how many files were transcribed and kept.
+- `schema show` takes a command as the CLI writes it (`image generate`), and lists the commands that are CLI only (`cliOnly`).
+- `config show` and `doctor` warn when a `SHORTS_<PROVIDER>_URL` variable sends a provider's requests to another address.
+- `--version --json` prints one object.
+- A usage error names the flag meant: `--in-stage` for a batch command given `--stage`, `--stage` for `post list` given `--in-stage`, and `--post a,b` for `--post` given twice.
 
 ### Changed
+
+- **BREAKING:** a batch with failed posts fails with their code, not always `failed`: the code they share, else `over-budget`, else `needs-approval`, else `failed`. So it can exit 2, 3 or 4, not only 1. Its fix names the failed posts, and, unless they wait on the user, the same command on just those posts.
+- **BREAKING:** `--post` together with `--day` or `--in-stage` is refused (exit 2), instead of `--post` being ignored, and so is a `--day` that doesn't exist, such as `2026-13-45`. A batch by `--day` reports a post it can't read as that post's failure; one by `--in-stage` leaves it out and names it on stderr.
+- **BREAKING:** input that can't be right is refused with `usage` (exit 2) before anything is saved, reserved or sent:
+  - `beat set`: a blank prompt, a beat named twice, a `--from` file or `--beats` item with a key a beat doesn't take (such as rows copied from `beat plan`'s output), and more than one of `--beats`, `--from` and `--beat`.
+  - `script set`: an empty script, a hook that isn't 3 to 7 words (`--hook ""` removes it), and both `--text` and `--file`.
+  - `image generate --beat`: anything but beats of the post, such as `7` on a post with two beats, `0x`, `1.5` or `-1`.
+  - `image import`: a file that isn't a JPEG, PNG or WebP by its content, whatever its name. The copy is named by what it holds.
+  - `source import`: a folder, a file ffmpeg can't read, one with no audio track, and silent audio (peak at or below −60 dBFS). The error names the file given, never the temporary one.
+  - `post create`: an empty name, a slug over 100 characters, and a leading date that doesn't exist.
+  - `post publish`: a URL without an `http` or `https` scheme and a host, such as `https://`.
+- **BREAKING:** `budget show --post` with a name that no post, saved collection or spending goes by fails with `not-found`, suggesting the post meant. A post with nothing spent shows $0.
+- **BREAKING:** `source download --collection` fails before running yt-dlp when urls.txt isn't a file or holds no URL, and fails with `provider` and yt-dlp's error lines when nothing new came down. `--url` and `--post` each need the other. When yt-dlp prints no ERROR line, its last 5 lines are kept.
+- MCP tools publish their input with `additionalProperties: false`, and `schema show` does the same for command inputs, the objects inside them included.
+- A fix for the user's step says to ask the user: approvals, a missing key, a setting `doctor` names, a post.json that can't be read, and a collection with no audio. The missing key's fix says a running MCP server reads a key put in the Keychain on its next call, while one set in the environment needs a restart.
+- A post.json that isn't JSON says so, and its fix says to restore it or move the post's folder out of `posts/mine`; one with bad fields says "the fields named in the message", not "named above".
+- A relative path is read from the folder shorts-studio runs in, which for MCP is where the server started, and an error about the file names its full path.
+- A slug without its date that matches posts from several days names them all, with a step for each.
+- The text of every dry run ends with `Next:`.
 
 - **BREAKING:** `capcut export`, `post finalize` and `post publish` on a draft whose user asked for fixes fail with `conflict` (exit 1), naming each note and `draft render`, instead of `needs-approval` (exit 3): the fixes are the agent's. A draft waiting for its review, or rejected, still fails with `needs-approval`.
 - **BREAKING:** an archived post no longer changes: every command that changes a post or spends on it refuses an archived one with `conflict` before it reserves or writes anything. `--day` and `--in-stage` leave archived posts out unless you select stage `archived`.
