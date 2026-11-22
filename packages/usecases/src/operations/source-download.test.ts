@@ -6,8 +6,15 @@ import type { Context } from "../context.ts";
 import { daysNow } from "../days.ts";
 import { readLedger, spent } from "../ledger.ts";
 import { BROKEN_CONFIG, testContext } from "../test/context.ts";
-import { fakeMediaTools, fakePorts, fakeTranscriber, run, runFailure } from "../test/fakes.ts";
-import { savedPath, sourceTranscribe } from "./source-download.ts";
+import {
+	fakeDownloader,
+	fakeMediaTools,
+	fakePorts,
+	fakeTranscriber,
+	run,
+	runFailure,
+} from "../test/fakes.ts";
+import { savedPath, sourceDownload, sourceTranscribe } from "./source-download.ts";
 
 // Transcription needs no --yes, so these runs never confirm.
 const MODE = { dryRun: false, confirmed: false } as const;
@@ -172,5 +179,193 @@ describe("source transcribe", () => {
 
 		// THEN its budget says the estimate doesn't fit, naming the daily cap
 		expect(planned.budget).toMatchObject({ fits: false, stoppedBy: "caps.dailyUsd" });
+	});
+});
+
+describe("source transcribe, saying what's next", () => {
+	const dryRun = (ctx: Context) =>
+		sourceTranscribe.run({ collection: "sm-awareness", language: undefined }, ctx, {
+			dryRun: true,
+			confirmed: false,
+		});
+
+	it("should make the real run the next step after a dry run that fits", async () => {
+		// GIVEN a collection with one file
+		const ctx = testContext();
+		seedCollection(ctx, ["a.mp3"]);
+
+		// WHEN it is planned with a dry run
+		const planned = await run(dryRun(ctx));
+
+		// THEN the next step is the same call for real
+		expect(planned.nextSteps?.[0]).toMatchObject({
+			by: "agent",
+			tool: "source_transcribe",
+			args: { collection: "sm-awareness" },
+		});
+		// AND its text ends with Next:
+		expect(sourceTranscribe.render?.(planned).split("\n").at(-1)).toMatch(/^Next: /);
+	});
+
+	it("should list a file it can't read as failed, and still estimate the others", async () => {
+		// GIVEN three files, one whose length can't be read
+		const ctx = testContext();
+		seedCollection(ctx, ["a.mp3", "b.mp3", "c.mp3"]);
+
+		// WHEN it is planned with a dry run
+		const planned = await run(
+			dryRun(ctx),
+			fakePorts({ mediaTools: fakeMediaTools({ durationSec: 90, unreadable: ["b.mp3"] }) }),
+		);
+
+		// THEN the other two are estimated, and b.mp3 is listed with its fix
+		expect(planned.toTranscribe).toBe(2);
+		expect(planned.estimateUsd).toBeCloseTo(0.018);
+		expect(planned.failures).toEqual([
+			{
+				file: "b.mp3",
+				error: expect.objectContaining({ code: "failed", fix: "Check that the file is audio." }),
+			},
+		]);
+	});
+
+	it("should give each failed file its error's fix, and offer to run it again", async () => {
+		// GIVEN a collection whose files the transcriber refuses
+		const ctx = testContext();
+		seedCollection(ctx, ["a.mp3"]);
+		const transcriber = fakeTranscriber(undefined, { answer: "refused" });
+
+		// WHEN it is transcribed
+		const result = await run(transcribeCollection(ctx), fakePorts({ transcriber }));
+
+		// THEN the file is listed with the provider's fix
+		expect(result.failures?.[0]).toMatchObject({
+			file: "a.mp3",
+			error: { code: "provider", fix: "Fix the request." },
+		});
+		// AND the next step runs it again
+		expect(result.nextSteps?.[0]).toMatchObject({ tool: "source_transcribe" });
+	});
+
+	it("should say how many files it transcribed before a cap stopped it", async () => {
+		// GIVEN five 90-second files ($0.009 each) and a daily cap of $0.02, which fits two
+		const ctx = testContext({ config: { caps: { dailyUsd: 0.02 } } });
+		seedCollection(ctx, ["a.mp3", "b.mp3", "c.mp3", "d.mp3", "e.mp3"]);
+
+		// WHEN the collection is transcribed
+		const error = await runFailure(transcribeCollection(ctx), ninetySeconds());
+
+		// THEN it is over budget, saying two files were transcribed and kept
+		expect(error.code).toBe("over-budget");
+		expect(error.message).toContain("Transcribed 2 of 5 files before the cap; they're kept.");
+	});
+
+	it("should make the collection's download the user's step when it has no audio", async () => {
+		// GIVEN a collection with no audio folder
+		const ctx = testContext();
+
+		// WHEN it is transcribed
+		const error = await runFailure(transcribeCollection(ctx));
+
+		// THEN the step is the user's CLI-only download
+		expect(error.code).toBe("not-found");
+		expect(error.fix).toMatch(/^Ask the user to /);
+		expect(error.nextSteps[0]).toMatchObject({
+			by: "user",
+			cli: "source download --collection sm-awareness",
+		});
+	});
+});
+
+describe("source download", () => {
+	const download = (
+		ctx: Context,
+		input: Partial<{ collection: string; url: string; post: string }>,
+	) =>
+		sourceDownload.run(
+			{
+				collection: input.collection,
+				url: input.url,
+				post: input.post,
+				origin: undefined,
+				kind: undefined,
+			},
+			ctx,
+			MODE,
+		);
+
+	it.each([
+		["holds only blank lines and comments", "\n# later\n  \n"],
+		["is empty", ""],
+	])("should refuse a urls.txt that %s, before running yt-dlp", async (_, text) => {
+		// GIVEN a collection whose urls.txt holds no URL
+		const ctx = testContext();
+		const dir = savedPath(ctx, "faves");
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(join(dir, "urls.txt"), text);
+		const downloader = fakeDownloader();
+
+		// WHEN it is downloaded
+		const error = await runFailure(
+			download(ctx, { collection: "faves" }),
+			fakePorts({ downloader }),
+		);
+
+		// THEN it fails, saying to put one URL per line, and yt-dlp never ran
+		expect(error.fix).toContain("one per line");
+		expect(downloader.calls).toEqual([]);
+	});
+
+	it("should refuse a urls.txt that's a folder, before running yt-dlp", async () => {
+		// GIVEN a collection whose urls.txt is a folder
+		const ctx = testContext();
+		mkdirSync(join(savedPath(ctx, "faves"), "urls.txt"), { recursive: true });
+		const downloader = fakeDownloader();
+
+		// WHEN it is downloaded
+		const error = await runFailure(
+			download(ctx, { collection: "faves" }),
+			fakePorts({ downloader }),
+		);
+
+		// THEN it is a usage error, and yt-dlp never ran
+		expect(error.code).toBe("usage");
+		expect(downloader.calls).toEqual([]);
+	});
+
+	it("should fail with yt-dlp's errors when nothing new came down", async () => {
+		// GIVEN a collection with a URL, and a yt-dlp that downloads nothing
+		const ctx = testContext();
+		const dir = savedPath(ctx, "faves");
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(join(dir, "urls.txt"), "https://example.com/p/1\n");
+		const downloader = fakeDownloader({ ok: false, errors: "cookies: no such browser" });
+
+		// WHEN it is downloaded
+		const error = await runFailure(
+			download(ctx, { collection: "faves" }),
+			fakePorts({ downloader }),
+		);
+
+		// THEN it fails as a provider failure carrying yt-dlp's lines
+		expect(error.code).toBe("provider");
+		expect(error.message).toContain("cookies: no such browser");
+	});
+
+	it.each([
+		[{ url: "https://example.com/p/1" }, "--url needs --post"],
+		[{ post: "2026-11-04-x" }, "--post needs --url"],
+	])("should name what's missing when %o comes alone", async (input, says) => {
+		// GIVEN no download running
+		const ctx = testContext();
+		const downloader = fakeDownloader();
+
+		// WHEN only one of --url and --post is given
+		const error = await runFailure(download(ctx, input), fakePorts({ downloader }));
+
+		// THEN it is a usage error naming the one missing, and nothing ran
+		expect(error.code).toBe("usage");
+		expect(error.message).toContain(says);
+		expect(downloader.calls).toEqual([]);
 	});
 });

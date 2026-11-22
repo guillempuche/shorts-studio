@@ -16,8 +16,10 @@ import { Effect, Schema } from "effect";
 import type { Context } from "../context.ts";
 import { readText } from "../files.ts";
 import { freshnessOf, planInputHash, recutInputHash } from "../freshness.ts";
-import { defineOperation, p } from "../operation.ts";
+import { inputFile, RELATIVE_PATH } from "../inputs.ts";
+import { closedStruct, defineOperation, p } from "../operation.ts";
 import { postDir, readPost, refuseArchived, updatePost } from "../post-store.ts";
+import { agentStep, BEAT_ITEM } from "../steps.ts";
 import { readTranscript, TRANSCRIPT_FILE } from "./audio.ts";
 import { fetchSavedFix, withImagesLock } from "./image.ts";
 import { NextFields, nextOf } from "./post.ts";
@@ -84,12 +86,22 @@ export const beatPlan = defineOperation({
 		yield* refuseArchived(post, "beat plan");
 		const inputHash = planInputHash(post);
 		if (post.audio === undefined || inputHash === undefined) {
+			const thisPost = { post: input.post };
+			const step =
+				post.audio === undefined
+					? agentStep(
+							"source_import",
+							{ ...thisPost, file: "<audio-or-video>", origin: "mine", kind: "speech" },
+							{ note: "origin: mine, others or ai; kind: speech or music" },
+						)
+					: agentStep("audio_transcribe", { ...thisPost, dryRun: true });
 			return yield* fail(
 				"not-found",
 				`${input.post} needs ${post.audio === undefined ? "audio" : "a transcript"} before beats can be planned.`,
 				post.audio === undefined
-					? `source import --post ${input.post} …`
-					: `audio transcribe --post ${input.post} --dry-run`,
+					? `Import the audio first: ${step.cli}. Set origin to mine, others or ai, and kind to speech or music.`
+					: `Transcribe it first: ${step.cli}`,
+				[step],
 			);
 		}
 		// Words from other audio would cut beats in the wrong places, or past the audio's end.
@@ -109,7 +121,18 @@ export const beatPlan = defineOperation({
 				return yield* fail(
 					"not-found",
 					`${input.post} has no story moments to re-cut by.`,
-					`Plan beats, then mark moments: beat set --post ${input.post} --from moments.json`,
+					existing === undefined
+						? `Plan the beats first: beat plan --post ${input.post}. Then mark their moments with beat set --post ${input.post} --beats <beats>.`
+						: `Mark the beats' story moments first: beat set --post ${input.post} --beats <beats>, each as ${BEAT_ITEM}.`,
+					existing === undefined
+						? [agentStep("beat_plan", { post: input.post })]
+						: [
+								agentStep(
+									"beat_set",
+									{ post: input.post, beats: "<beats>" },
+									{ note: `a story moment for each beat, as ${BEAT_ITEM}` },
+								),
+							],
 				);
 			}
 			// The moments mark time ranges of the old words, so a re-cut of them would mean nothing.
@@ -182,21 +205,29 @@ const row = (beat: Beat): typeof BeatRow.Type => ({
 	...(beat.prompt !== undefined ? { prompt: beat.prompt } : {}),
 });
 
-const BeatPatch = Schema.Struct({
+const beatFields = {
 	beat: Schema.Int,
 	prompt: Schema.optionalKey(Schema.String),
 	moment: Schema.optionalKey(Moment),
 	motion: Schema.optionalKey(MotionType),
-});
-type BeatPatch = typeof BeatPatch.Type;
-const BeatPatches = Schema.Union([
-	Schema.Array(BeatPatch),
-	Schema.Struct({ beats: Schema.Array(BeatPatch) }),
-]);
+};
+type BeatPatch = Schema.Struct.Type<typeof beatFields>;
+/**
+ * The beats' settings, as `--beats` and `--from` take them; a field a beat doesn't have fails.
+ * Typed as plain patches: the closed struct's type adds a `never` index signature, which no
+ * object built here would fit.
+ */
+const BeatList: Schema.Codec<ReadonlyArray<BeatPatch>, unknown> = Schema.Array(
+	closedStruct(beatFields, "A beat's settings"),
+);
+const BeatPatches = Schema.Union([BeatList, Schema.Struct({ beats: BeatList })]);
 
-const readPatches = (file: string): Effect.Effect<ReadonlyArray<BeatPatch>, ShortsError> =>
-	existsSync(file)
-		? readText(file, "Write the prompts to a JSON file first.").pipe(
+const FORMS = `Pass the beats inline with --beats '${BEAT_ITEM}', a JSON file with --from <beats.json>, or one beat with --beat <n> and --prompt, --moment or --motion.`;
+
+const readPatches = (path: string): Effect.Effect<ReadonlyArray<BeatPatch>, ShortsError> =>
+	inputFile(path, `Write the beats to a JSON file first, or pass them inline with --beats.`).pipe(
+		Effect.flatMap((file) =>
+			readText(file, "Write the beats to a JSON file first.").pipe(
 				Effect.flatMap((text) =>
 					Schema.decodeUnknownEffect(Schema.fromJsonString(BeatPatches), { errors: "all" })(
 						text,
@@ -205,30 +236,109 @@ const readPatches = (file: string): Effect.Effect<ReadonlyArray<BeatPatch>, Shor
 							fail(
 								"usage",
 								`${file} isn't a list of beat settings:\n${error.message}`,
-								'Use [{"beat": 0, "moment": "hook", "prompt": "…"}, …] or {"beats": [...]}.',
+								`Use ${BEAT_ITEM} or {"beats": [...]}.`,
 							),
 						),
 					),
 				),
-				Effect.map((parsed) => ("beats" in parsed ? parsed.beats : parsed)),
-			)
-		: Effect.fail(
-				fail("not-found", `No file at ${file}.`, "Write the prompts to a JSON file first."),
-			);
+			),
+		),
+		Effect.map((parsed) => ("beats" in parsed ? parsed.beats : parsed)),
+	);
+
+type BeatSetInput = {
+	readonly beats: ReadonlyArray<BeatPatch> | undefined;
+	readonly from: string | undefined;
+	readonly beat: number | undefined;
+	readonly prompt: string | undefined;
+	readonly moment: BeatPatch["moment"];
+	readonly motion: BeatPatch["motion"];
+};
+
+/** The settings to save, from exactly one of the three forms. */
+const patchesOf = (input: BeatSetInput): Effect.Effect<ReadonlyArray<BeatPatch>, ShortsError> => {
+	const anySetting =
+		input.prompt !== undefined || input.moment !== undefined || input.motion !== undefined;
+	const singleBeat = input.beat !== undefined || anySetting;
+	const formsGiven = [input.beats !== undefined, input.from !== undefined, singleBeat].filter(
+		Boolean,
+	);
+	if (formsGiven.length === 0) return Effect.fail(fail("usage", "Nothing to set.", FORMS));
+	if (formsGiven.length > 1) {
+		return Effect.fail(
+			fail("usage", "--beats, --from and --beat each set beats; pass only one of them.", FORMS),
+		);
+	}
+	if (input.beats !== undefined) return Effect.succeed(input.beats);
+	if (input.from !== undefined) return readPatches(input.from);
+	if (input.beat === undefined || !anySetting) {
+		return Effect.fail(
+			fail(
+				"usage",
+				input.beat === undefined ? "No beat given." : `Nothing to set on beat ${input.beat}.`,
+				FORMS,
+			),
+		);
+	}
+	return Effect.succeed([
+		{
+			beat: input.beat,
+			...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
+			...(input.moment !== undefined ? { moment: input.moment } : {}),
+			...(input.motion !== undefined ? { motion: input.motion } : {}),
+		},
+	]);
+};
+
+/**
+ * Refuses settings that can't be right before anything is saved: a blank prompt would count as
+ * written, and a beat named twice would keep only its last settings.
+ */
+const checkPatches = (
+	patches: ReadonlyArray<BeatPatch>,
+): Effect.Effect<ReadonlyArray<BeatPatch>, ShortsError> => {
+	const blank = patches.filter((patch) => patch.prompt?.trim() === "").map((patch) => patch.beat);
+	if (blank.length > 0) {
+		return Effect.fail(
+			fail(
+				"usage",
+				`The prompt for beat ${blank.join(", ")} is empty.`,
+				"Give each beat a prompt that describes its image, or leave prompt out to keep the one it has.",
+			),
+		);
+	}
+	const seen = new Set<number>();
+	const twice = new Set<number>();
+	for (const { beat } of patches) (seen.has(beat) ? twice : seen).add(beat);
+	if (twice.size > 0) {
+		return Effect.fail(
+			fail(
+				"usage",
+				`Beat ${[...twice].join(", ")} is named more than once.`,
+				"Name each beat once, with all its settings in one item.",
+			),
+		);
+	}
+	return Effect.succeed(patches);
+};
 
 export const beatSet = defineOperation({
 	name: "beat_set",
-	description:
-		'Set beats\' image prompts, story moments (hook, setup, tension, twist, vulnerable, payoff, cta) and motion overrides. Set one beat with --beat, or many from a JSON file (--from) holding [{"beat": 0, "moment": "hook", "prompt": "…"}, …]. A new prompt makes that beat\'s image out of date. A new moment or motion makes the draft out of date.',
+	description: `Set beats' image prompts, story moments (hook, setup, tension, twist, vulnerable, payoff, cta) and motion overrides. Pass them inline as beats, ${BEAT_ITEM}; from a JSON file of the same shape (from); or set one beat with beat and its prompt, moment or motion. Use only one of the three. A new prompt makes that beat's image out of date. A new moment or motion makes the draft out of date.`,
 	params: {
 		post: p.string("Post slug"),
+		beats: p.optional(
+			p.json(BeatList, `The beats' settings: ${BEAT_ITEM}; each beat once, prompts not blank`),
+		),
 		beat: p.optional(p.int("Beat index (with --prompt, --moment or --motion)")),
 		prompt: p.optional(p.string("Image prompt for --beat")),
 		moment: p.optional(p.literals(Moment.literals, "Story moment for --beat")),
 		motion: p.optional(
 			p.literals(MotionType.literals, "Motion for --beat, used instead of its moment's motion"),
 		),
-		from: p.optional(p.string('JSON file: [{"beat": 0, "moment": "hook", "prompt": "…"}, …]')),
+		from: p.optional(
+			p.string(`JSON file holding the beats' settings, like --beats; ${RELATIVE_PATH}`),
+		),
 	},
 	output: Schema.Struct({
 		updated: Schema.Int,
@@ -239,24 +349,7 @@ export const beatSet = defineOperation({
 	spends: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
 	run: Effect.fn("beat_set")(function* (input, ctx) {
-		const patches =
-			input.from !== undefined
-				? yield* readPatches(input.from)
-				: input.beat !== undefined &&
-						(input.prompt !== undefined || input.moment !== undefined || input.motion !== undefined)
-					? [
-							{
-								beat: input.beat,
-								...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
-								...(input.moment !== undefined ? { moment: input.moment } : {}),
-								...(input.motion !== undefined ? { motion: input.motion } : {}),
-							},
-						]
-					: yield* fail(
-							"usage",
-							"Nothing to set.",
-							'Pass --beat N with --prompt "…", --moment or --motion, or --from beats.json.',
-						);
+		const patches = yield* checkPatches(yield* patchesOf(input));
 		const post = yield* updatePost(ctx, input.post, "beat set", (current) => {
 			if (current.archivedAt !== undefined)
 				return refuseArchived(current, "beat set").pipe(Effect.as(current));

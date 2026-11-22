@@ -27,7 +27,7 @@ import { Effect, Fiber, Schema } from "effect";
 import type { Context } from "../context.ts";
 import { ensureDir, hashBytes, writeFileAtomic } from "../files.ts";
 import { fullPrompt, imageInputHash, rerolledSeed, seedOf } from "../freshness.ts";
-import { parseBeatList, requireKey } from "../inputs.ts";
+import { beatsOfPost, requireKey } from "../inputs.ts";
 import {
 	Budget,
 	budgetFor,
@@ -44,7 +44,8 @@ import { roundUsd, usd } from "../money.ts";
 import { defineOperation, p, type RunMode } from "../operation.ts";
 import { ImageMaker, type ImageRequest } from "../ports.ts";
 import { postDir, readPost, refuseArchived, updatePost } from "../post-store.ts";
-import { agentStep, NextFields, nextAfterDryRun, nextOf, nextStep } from "./post.ts";
+import { agentStep, userStep } from "../steps.ts";
+import { NextFields, nextAfterDryRun, nextOf } from "./post.ts";
 
 type Maker = ImageMaker["Service"];
 
@@ -384,7 +385,8 @@ const checkReady = (ctx: Context, post: Post, slug: string) => {
 				changed.length === 0
 					? `${slug}'s script isn't approved, so nothing will be spent on images yet.`
 					: `${slug} changed since the user approved it (${changed.join(", ")}), so nothing will be spent on images yet.`,
-				`The user approves it after reading it, in their terminal: script approve --post ${slug}`,
+				`Ask the user to read it and approve it in their own terminal: script approve --post ${slug}`,
+				[userStep(`script approve --post ${slug}`, "the user's decision, in their own terminal")],
 			),
 		);
 	}
@@ -393,7 +395,7 @@ const checkReady = (ctx: Context, post: Post, slug: string) => {
 		.filter((b) => b.prompt === undefined && b.image?.source !== "imported")
 		.map((b) => b.index);
 	if (beats.length === 0 || withoutPrompt.length > 0) {
-		return Effect.flatMap(nextStep(ctx, post), (next) =>
+		return Effect.flatMap(nextOf(ctx, post), ({ next, nextSteps }) =>
 			Effect.fail(
 				fail(
 					"not-found",
@@ -401,6 +403,7 @@ const checkReady = (ctx: Context, post: Post, slug: string) => {
 						? `${slug} has no beats.`
 						: `Beats without a prompt: ${withoutPrompt.join(", ")}.`,
 					next,
+					nextSteps,
 				),
 			),
 		);
@@ -614,7 +617,6 @@ export const imageGenerate = defineOperation({
 	// With reroll, calling it twice pays twice, and an MCP client may retry an idempotent tool.
 	hints: { readonly: false, destructive: false, idempotent: false, openWorld: true },
 	run: Effect.fn("image_generate")(function* (input, ctx, mode: RunMode) {
-		const only = input.beat === undefined ? undefined : yield* parseBeatList(input.beat);
 		const maker = yield* ImageMaker;
 		const model = yield* chooseModel(ctx, maker, "image", input.model);
 
@@ -635,6 +637,14 @@ export const imageGenerate = defineOperation({
 		// Read first outside the lock: a post that isn't there has no folder to lock.
 		let post = yield* readPost(ctx, input.post);
 		yield* refuseArchived(post, "image generate");
+		const only =
+			input.beat === undefined
+				? undefined
+				: yield* beatsOfPost(
+						input.beat,
+						input.post,
+						(post.beats?.items ?? []).map((b) => b.index),
+					);
 		const plan = mode.dryRun
 			? yield* planFor(post)
 			: yield* withImagesLock(

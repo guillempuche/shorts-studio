@@ -4,18 +4,43 @@
  * paid for and not fetched, and waits while `image generate` runs on the post.
  */
 
-import { copyFileSync, existsSync } from "node:fs";
-import { extname, join, resolve } from "node:path";
+import { closeSync, copyFileSync, openSync, readSync } from "node:fs";
+import { join } from "node:path";
 import { fail } from "@shorts-studio/domain/errors";
 import { type Beat, mapBeats } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import { ensureDir, fileHash, fileStep, hashOf } from "../files.ts";
+import { inputFile, RELATIVE_PATH } from "../inputs.ts";
 import { defineOperation, p } from "../operation.ts";
 import { postDir, readPost, refuseArchived, updatePost } from "../post-store.ts";
 import { fetchSavedFix, withImagesLock } from "./image.ts";
 import { NextFields, nextOf } from "./post.ts";
 
-const IMAGE = /^\.(jpe?g|png|webp)$/i;
+/**
+ * The image format a file's first bytes show, or undefined for anything else: a name can say
+ * `.png` while the file holds text, and the renderer would fail on it only at the draft.
+ */
+export const imageFormatOf = (head: Uint8Array): ".jpg" | ".png" | ".webp" | undefined => {
+	const starts = (bytes: ReadonlyArray<number>, at = 0) =>
+		bytes.every((byte, i) => head[at + i] === byte);
+	const ascii = (text: string) => [...text].map((c) => c.charCodeAt(0));
+	if (starts([0xff, 0xd8, 0xff])) return ".jpg";
+	if (starts([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return ".png";
+	if (starts(ascii("RIFF")) && starts(ascii("WEBP"), 8)) return ".webp";
+	return undefined;
+};
+
+/** The first 12 bytes of `file`, enough to tell the image formats apart. */
+const headOf = (file: string): Uint8Array => {
+	const head = new Uint8Array(12);
+	const fd = openSync(file, "r");
+	try {
+		readSync(fd, head, 0, head.length, 0);
+	} finally {
+		closeSync(fd);
+	}
+	return head;
+};
 
 export const imageImport = defineOperation({
 	name: "image_import",
@@ -24,22 +49,22 @@ export const imageImport = defineOperation({
 	params: {
 		post: p.string("Post slug"),
 		beat: p.int("Beat index"),
-		file: p.string("Path to a JPEG, PNG or WebP image"),
+		file: p.string(`Path to a JPEG, PNG or WebP image; ${RELATIVE_PATH}`),
 	},
 	output: Schema.Struct({ file: Schema.String, ...NextFields }),
 	surface: "cli-and-mcp",
 	spends: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
 	run: Effect.fn("image_import")(function* (input, ctx) {
-		const source = resolve(input.file);
-		if (!existsSync(source)) {
-			return yield* fail("not-found", `No file at ${source}.`, "Check the path and try again.");
-		}
-		if (!IMAGE.test(extname(source))) {
+		const source = yield* inputFile(input.file, "Check the path and try again.");
+		const format = imageFormatOf(
+			yield* fileStep(() => headOf(source), `Check that ${source} is readable, then run it again.`),
+		);
+		if (format === undefined) {
 			return yield* fail(
 				"usage",
-				`${source} isn't a JPEG, PNG or WebP image.`,
-				"Export the image in one of those formats.",
+				`${source} isn't a JPEG, PNG or WebP image, whatever its name says.`,
+				"Export the image as JPEG, PNG or WebP.",
 			);
 		}
 		// Read first outside the lock: a post that isn't there has no folder to lock.
@@ -71,7 +96,8 @@ export const imageImport = defineOperation({
 				yield* ensureDir(join(dir, "images"));
 				const file = join(
 					"images",
-					`beat-${String(input.beat).padStart(2, "0")}-imported${extname(source).toLowerCase()}`,
+					// Named by what it holds, so a PNG called .jpg is saved as .png.
+					`beat-${String(input.beat).padStart(2, "0")}-imported${format}`,
 				);
 				yield* fileStep(
 					() => copyFileSync(source, join(dir, file)),

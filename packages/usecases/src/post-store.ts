@@ -11,10 +11,11 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fail, type ShortsError } from "@shorts-studio/domain/errors";
 import { MANIFEST_VERSION, Post, SCHEMA_URL, Slug } from "@shorts-studio/domain/post";
-import { Effect, Schema } from "effect";
+import { Effect, Result, Schema } from "effect";
 import type { Context } from "./context.ts";
 import { ensureDir, fileStep, readText, writeFileAtomic } from "./files.ts";
 import { busyPost, withLock } from "./lock.ts";
+import { agentStep, userStep } from "./steps.ts";
 
 const isSlug = Schema.is(Slug);
 
@@ -29,7 +30,7 @@ export const checkSlug = (slug: string): Effect.Effect<string, ShortsError> =>
 				fail(
 					"usage",
 					`"${slug}" is not a valid post slug.`,
-					"Use lowercase letters, digits and dashes, e.g. 2026-11-04-morning-routine.",
+					"Use lowercase letters, digits and dashes, e.g. morning-routine.",
 				),
 			);
 
@@ -45,40 +46,69 @@ const existingPost = (ctx: Context, slug: string): Effect.Effect<string, ShortsE
 	);
 
 /**
- * A post that isn't there. `post create` puts the date in front of a slug, so when exactly one
- * post is the given slug with a date in front, the fix names it.
+ * A post that isn't there. `post create` puts the date in front of a slug, so the fix names each
+ * post that is the given slug with a date in front, newest first, with a `post_show` step each.
  */
 const notFound = (ctx: Context, slug: string): Effect.Effect<never, ShortsError> =>
 	listSlugs(ctx).pipe(
 		// A folder that can't be listed only loses the suggestion; the post is still not found.
 		Effect.catch(() => Effect.succeed<ReadonlyArray<string>>([])),
 		Effect.flatMap((slugs) => {
+			// listSlugs gives them newest first.
 			const dated = slugs.filter((name) => DATED.test(name) && name.replace(DATED, "") === slug);
-			const [meant] = dated;
+			const message = `No post "${slug}" in ${minePath(ctx)}.`;
+			if (dated.length === 0) {
+				return Effect.fail(
+					fail("not-found", message, "List posts with: post list", [agentStep("post_list", {})]),
+				);
+			}
+			const fix =
+				dated.length === 1
+					? `Did you mean ${dated[0]}? Show it with: post show --post ${dated[0]}`
+					: `Did you mean one of ${dated.join(", ")}? Show one with: post show --post <slug>`;
 			return Effect.fail(
 				fail(
 					"not-found",
-					`No post "${slug}" in ${minePath(ctx)}.`,
-					dated.length === 1 && meant !== undefined
-						? `Did you mean ${meant}? Show it with: post show --post ${meant}`
-						: "List posts with: post list",
+					message,
+					fix,
+					dated.map((meant, i) => agentStep("post_show", { post: meant }, { or: i > 0 })),
 				),
 			);
 		}),
 	);
 
-const decodePost = Schema.decodeUnknownEffect(Schema.fromJsonString(Post), { errors: "all" });
+const decodePost = Schema.decodeUnknownEffect(Post, { errors: "all" });
 const encodePost = Schema.encodeEffect(Schema.fromJsonString(Post, { space: 2 }));
+
+/**
+ * A post.json that can't be read: commands write it, so a hand edit broke it. Mending it, or
+ * moving the post out of the way, is the user's: the agent doesn't edit post.json.
+ */
+const unreadable = (ctx: Context, message: string, mend: string) => {
+	const fix = `Ask the user to ${mend}, or to move the post's folder out of ${minePath(ctx)}. Commands write this file; a hand edit broke it.`;
+	return fail("failed", message, fix, [
+		userStep(undefined, `the user's: ${mend}, or move the post's folder out of ${minePath(ctx)}`),
+	]);
+};
 
 export const readPost = Effect.fn("readPost")(function* (ctx: Context, slug: string) {
 	const file = manifestPath(ctx, yield* existingPost(ctx, slug));
 	const text = yield* readText(file, "List posts with: post list");
-	return yield* decodePost(text).pipe(
+	const json = yield* Effect.try({
+		try: (): unknown => JSON.parse(text),
+		catch: (error) =>
+			unreadable(
+				ctx,
+				`${file} isn't JSON: ${error instanceof Error ? error.message : String(error)}`,
+				"restore it from a backup or version control",
+			),
+	});
+	return yield* decodePost(json).pipe(
 		Effect.mapError((error) =>
-			fail(
-				"failed",
+			unreadable(
+				ctx,
 				`${file} is not a valid post file:\n${error.message}`,
-				"Fix the fields named above, or undo the hand edit. Commands write this file.",
+				"fix the fields named in the message, or undo the hand edit",
 			),
 		),
 	);
@@ -168,6 +198,24 @@ export const refuseArchived = (post: Post, command: string): Effect.Effect<void,
 					"An archived post can't be taken out of the archive. For new work, create a post: post create --post <slug>",
 				),
 			);
+
+/**
+ * Every post, newest first, each named by its folder. The ones that can't be read are listed
+ * apart, with their error: one damaged post.json mustn't hide the others.
+ */
+export const readPosts = Effect.fn("readPosts")(function* (ctx: Context) {
+	const outcomes = yield* Effect.forEach(yield* listSlugs(ctx), (slug) =>
+		Effect.map(Effect.result(readPost(ctx, slug)), (outcome) => ({ slug, outcome })),
+	);
+	return {
+		posts: outcomes.flatMap(({ slug, outcome }) =>
+			Result.isSuccess(outcome) ? [{ slug, post: outcome.success }] : [],
+		),
+		unreadable: outcomes.flatMap(({ slug, outcome }) =>
+			Result.isFailure(outcome) ? [{ slug, error: outcome.failure }] : [],
+		),
+	};
+});
 
 /** Every post folder that holds a post.json, newest first (folder names start with a date). */
 export const listSlugs = (ctx: Context): Effect.Effect<ReadonlyArray<string>, ShortsError> => {

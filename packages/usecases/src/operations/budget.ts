@@ -5,12 +5,15 @@
  * defaults, and an MCP client sees no stderr warning.
  */
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { Effect, Schema } from "effect";
 import { CapsFrom, capSetBy, SettingsIssue } from "../context.ts";
 import { daysNow } from "../days.ts";
 import { caps, readLedger, spent } from "../ledger.ts";
 import { roundUsd, usd, usdOf } from "../money.ts";
 import { defineOperation, p } from "../operation.ts";
+import { readPost } from "../post-store.ts";
 
 export const budgetShow = defineOperation({
 	name: "budget_show",
@@ -33,11 +36,22 @@ export const budgetShow = defineOperation({
 	spends: false,
 	hints: { readonly: true, destructive: false, idempotent: true, openWorld: false },
 	run: (input, ctx) =>
-		Effect.map(readLedger(ctx), (entries) => {
+		Effect.gen(function* () {
+			const entries = yield* readLedger(ctx);
 			const days = daysNow(ctx);
 			const names = [...new Set(entries.map((e) => e.post))].filter(
 				(name) => input.post === undefined || name === input.post,
 			);
+			// A name with nothing spent is still listed, at $0, when it's a post or a saved
+			// collection; any other is a typo, which would otherwise read as nothing spent.
+			if (input.post !== undefined && names.length === 0) {
+				const collection = /^saved\/(.+)$/.exec(input.post)?.[1];
+				if (collection === undefined || !existsSync(join(ctx.paths.posts, "saved", collection))) {
+					// Only to fail when it's no post: not-found's fix names the post it may mean.
+					yield* readPost(ctx, input.post);
+				}
+				names.push(input.post);
+			}
 			const { dailyUsd, monthlyUsd, postUsd } = caps(ctx);
 			return {
 				day: days.today,

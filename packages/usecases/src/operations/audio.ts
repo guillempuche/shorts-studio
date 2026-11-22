@@ -19,7 +19,8 @@ import { roundUsd, usd } from "../money.ts";
 import { defineOperation, p, type RunMode } from "../operation.ts";
 import { Transcriber } from "../ports.ts";
 import { postDir, readPost, refuseArchived, updatePost } from "../post-store.ts";
-import { agentStep, NextFields, nextAfterDryRun, nextOf } from "./post.ts";
+import { agentStep } from "../steps.ts";
+import { NextFields, nextAfterDryRun, nextOf } from "./post.ts";
 
 export const TRANSCRIPT_FILE = "transcript.json";
 
@@ -166,6 +167,6 @@ export const audioTranscribe = defineOperation({
 		o.skipped
 			? `Transcript is up to date (${o.language}).\nNext: ${o.next}`
 			: o.dryRun
-				? `Would transcribe the audio (~${usd(o.estimateUsd)}); nothing was spent.${o.budget === undefined ? "" : ` ${budgetLine(o.budget)}`}`
+				? `Would transcribe the audio (~${usd(o.estimateUsd)}); nothing was spent.${o.budget === undefined ? "" : ` ${budgetLine(o.budget)}`}\nNext: ${o.next}`
 				: `Transcribed ${o.words} words (${o.language}) to ${o.file}\nNext: ${o.next}`,
 });

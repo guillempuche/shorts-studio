@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { BROKEN_CONFIG, tempDir, testContext } from "../test/context.ts";
 import { fakeImageMaker, fakeMediaTools, fakePorts, run, runFailure } from "../test/fakes.ts";
@@ -42,6 +43,8 @@ describe("config check (doctor)", () => {
 		// AND the fix names where every check is listed as data, not rows printed above
 		expect(error.fix).toContain("config show --json");
 		expect(error.fix).not.toContain("above");
+		// AND its step is the agent's config_show
+		expect(error.nextSteps[0]).toMatchObject({ by: "agent", tool: "config_show" });
 	});
 
 	it("should report a settings file that couldn't be read", async () => {
@@ -318,5 +321,29 @@ describe("config show", () => {
 		expect(result.imageProvider).toBe("fake-images");
 		// AND the image model stays where scripts already read it
 		expect(result.imageModel).toBe("fake-fast");
+	});
+});
+
+describe("a provider's address overridden", () => {
+	it("should list the warning, and still pass the check", async () => {
+		// GIVEN a provider whose checks warn that SHORTS_FAL_URL sends its requests elsewhere
+		const ctx = testContext();
+		const warning = {
+			name: "SHORTS_FAL_URL",
+			status: "warn" as const,
+			detail: "fal requests go to http://127.0.0.1:9, not fal's own service",
+			fix: "Unset SHORTS_FAL_URL to reach fal itself; keep it only while testing.",
+		};
+		const ports = fakePorts({
+			imageMaker: { ...fakeImageMaker(), checks: Effect.succeed([warning]) },
+		});
+
+		// WHEN the settings are shown and checked
+		const shown = await run(configShow.run({}, ctx, MODE), ports);
+		const checked = await run(configCheck.run({}, ctx, MODE), ports);
+
+		// THEN both list the warning, and the check still passes
+		expect(shown.checks).toContainEqual(expect.objectContaining(warning));
+		expect(checked.checks).toContainEqual(expect.objectContaining(warning));
 	});
 });

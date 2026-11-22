@@ -3,7 +3,7 @@
  * new day's cap, and a post made then is dated that day.
  */
 
-import { DateTime, Duration } from "effect";
+import { DateTime, Duration, Option } from "effect";
 import type { Context } from "./context.ts";
 
 /**
@@ -51,6 +51,15 @@ export const daysBetween = (from: string, to: string): number =>
 			),
 		),
 	);
+
+/** Whether `day` is written YYYY-MM-DD and exists: `2026-13-45` and `2026-02-30` don't. */
+export const isDay = (day: string): boolean =>
+	/^\d{4}-\d{2}-\d{2}$/.test(day) &&
+	Option.match(DateTime.make(`${day}T00:00:00Z`), {
+		onNone: () => false,
+		// A date past the month's end rolls over into the next, so it reads back as another day.
+		onSome: (at) => DateTime.formatIsoDateUtc(at) === day,
+	});
 
 /** The local calendar now, from one reading of the clock. */
 export const daysNow = (ctx: Context): LocalDays => localDays(ctx.timeZone, ctx.now());

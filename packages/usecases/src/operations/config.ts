@@ -20,6 +20,7 @@ import {
 	type ProviderInfo,
 	Transcriber,
 } from "../ports.ts";
+import { agentStep } from "../steps.ts";
 
 const CheckRow = Schema.Struct({
 	name: Schema.String,
@@ -273,6 +274,7 @@ export const configCheck = defineOperation({
 								"missing-tool",
 								`${blocking.length} blocking problem${blocking.length === 1 ? "" : "s"}:\n${renderChecks(blocking).join("\n")}`,
 								"Fix each problem listed, then run it again. `config show --json` lists every check with its status and fix.",
+								[agentStep("config_show", {}, { note: "every check with its status and fix" })],
 							),
 						);
 			}),

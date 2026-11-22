@@ -168,6 +168,25 @@ describe("post finalize", () => {
 });
 
 describe("post publish", () => {
+	it.each(["https://", "ftp://x.com/1", "instagram.com/p/1"])(
+		"should refuse %s, which isn't a full web address, recording nothing",
+		async (url) => {
+			// GIVEN a draft the user approved
+			const ctx = testContext();
+			await seedPost(ctx, SLUG, withDraft());
+			await run(review(ctx, "approve"));
+
+			// WHEN it is published with that address
+			const error = await runFailure(
+				postPublish.run({ post: SLUG, platform: "instagram", url }, ctx, MODE),
+			);
+
+			// THEN it is a usage error, and no platform is recorded
+			expect(error.code).toBe("usage");
+			expect((await postOf(ctx)).published).toBeUndefined();
+		},
+	);
+
 	it("should refuse a draft waiting for the user's review, recording no platform", async () => {
 		// GIVEN a draft the user hasn't reviewed
 		const ctx = testContext();

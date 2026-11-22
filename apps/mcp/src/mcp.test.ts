@@ -1,17 +1,28 @@
 import type { Context } from "@shorts-studio/usecases/context";
 import { operations } from "@shorts-studio/usecases/operations/index";
 import type { Ports } from "@shorts-studio/usecases/ports";
+import { readPost } from "@shorts-studio/usecases/post-store";
 import { testContext } from "@shorts-studio/usecases/test/context";
 import { fakeImageMaker, fakePorts } from "@shorts-studio/usecases/test/fakes";
 import { readyForImages, seedPost } from "@shorts-studio/usecases/test/posts";
 import { Effect, Fiber, Layer } from "effect";
 import { McpTest } from "effect/ai";
 import { describe, expect, it, vi } from "vitest";
-import { MCP_PROTOCOLS, mcpOperations, mcpRegistrations } from "./mcp.ts";
+import { MCP_PROTOCOLS, mcpOperations, mcpRegistrations, SERVER_INSTRUCTIONS } from "./mcp.ts";
 
 type Version = (typeof MCP_PROTOCOLS)[number]["protocolVersion"];
 
 const VERSIONS: ReadonlyArray<Version> = MCP_PROTOCOLS.map((protocol) => protocol.protocolVersion);
+
+describe("the server's instructions", () => {
+	it("should say how to read a fix and an error's next steps", () => {
+		// GIVEN the instructions a client reads when it connects
+		// THEN they say how a CLI command maps to a tool, and whose step is whose
+		expect(SERVER_INSTRUCTIONS).toContain("noun_verb");
+		expect(SERVER_INSTRUCTIONS).toContain("nextSteps");
+		expect(SERVER_INSTRUCTIONS).toContain("`user`");
+	});
+});
 
 // Every case runs once per version the server offers, against the server's own list.
 describe.each(VERSIONS)("MCP tools on %s", (version) => {
@@ -76,7 +87,7 @@ describe.each(VERSIONS)("MCP tools on %s", (version) => {
 		expect(imageGenerate?.annotations?.idempotentHint).toBe(false);
 	});
 
-	it("should return a failure as the documented code, message and fix", async () => {
+	it("should return a failure as the documented code, message, fix and next steps", async () => {
 		// GIVEN no posts
 		const ctx = testContext();
 
@@ -90,8 +101,10 @@ describe.each(VERSIONS)("MCP tools on %s", (version) => {
 		// AND its text is the same code, message and fix the CLI prints
 		const [content] = result.content;
 		const report = JSON.parse(content?.type === "text" ? content.text : "{}") as object;
-		expect(Object.keys(report).sort()).toEqual(["code", "fix", "message"]);
+		expect(Object.keys(report).sort()).toEqual(["code", "fix", "message", "nextSteps"]);
 		expect(report).toMatchObject({ code: "not-found", fix: "List posts with: post list" });
+		// AND its first step is the agent's post_list
+		expect(report).toMatchObject({ nextSteps: [{ by: "agent", tool: "post_list", args: {} }] });
 	});
 
 	it("should list in budget_show's result a config.json that can't be used, since MCP shows no stderr", async () => {
@@ -148,6 +161,49 @@ describe.each(VERSIONS)("MCP tools on %s", (version) => {
 		// AND the error names the field and the fields the tool takes
 		expect(text).toContain("dry_run");
 		expect(text).toContain("dryRun");
+	});
+
+	it("should publish every tool's input as taking no other field", async () => {
+		// GIVEN the registry
+		const ctx = testContext();
+
+		// WHEN a client lists the tools
+		const { tools } = await withClient(ctx, fakePorts(), (client) => client.listTools());
+
+		// THEN every tool's input schema says it takes no other field
+		for (const tool of tools) {
+			const schema = tool.inputSchema as { additionalProperties?: unknown };
+			expect(schema.additionalProperties, tool.name).toBe(false);
+		}
+	});
+
+	it("should refuse a field inside a list, changing no beat", async () => {
+		// GIVEN a post with beats
+		const ctx = testContext();
+		await seedPost(ctx, "2026-11-04-mcp", readyForImages());
+
+		// WHEN a client sets a beat with prompt misspelt as promt
+		const text = await withClient(ctx, fakePorts(), (client) =>
+			client
+				.callTool({
+					name: "beat_set",
+					arguments: { post: "2026-11-04-mcp", beats: [{ beat: 0, promt: "x" }] },
+				})
+				.pipe(
+					Effect.map((result) => {
+						expect(result.isError).toBe(true);
+						const [content] = result.content;
+						return content?.type === "text" ? content.text : "";
+					}),
+					Effect.catch((error) => Effect.succeed(error.message)),
+				),
+		);
+
+		// THEN the error names the field
+		expect(text).toContain("promt");
+		// AND beat 0 keeps its prompt
+		const post = await Effect.runPromise(readPost(ctx, "2026-11-04-mcp"));
+		expect(post.beats?.items[0]?.prompt).toBe("a red door");
 	});
 
 	it("should refuse a field on a tool that takes none", async () => {

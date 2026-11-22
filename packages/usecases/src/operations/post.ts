@@ -4,7 +4,8 @@
  */
 
 import { join } from "node:path";
-import { fail } from "@shorts-studio/domain/errors";
+import { ErrorReport, fail, reportOf, type ShortsError } from "@shorts-studio/domain/errors";
+import { NextStep } from "@shorts-studio/domain/next-step";
 import {
 	changesSinceApproval,
 	currentReview,
@@ -15,98 +16,15 @@ import {
 } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import type { Context } from "../context.ts";
-import { daysNow } from "../days.ts";
+import { daysNow, isDay } from "../days.ts";
 import { type Freshness, freshnessOf, UP_TO_DATE } from "../freshness.ts";
 import type { Budget } from "../ledger.ts";
-import { commandPath, defineOperation, flagName, p } from "../operation.ts";
-import { createPost, DATED, listSlugs, postDir, readPost } from "../post-store.ts";
-
-type Arg = string | boolean;
-
-/** A value the agent fills in before running the step, such as `<final.mp4>`. */
-const PLACEHOLDER = /^<[^<>]+>$/;
-
-/**
- * One step that moves a post forward. An agent's step names its MCP tool and arguments; `cli` is
- * the same command for the terminal, without the program's name, like every `fix`. A user's step
- * (an approval, watching the draft) has no tool. `or` marks a step that replaces the one before.
- */
-export const NextStep = Schema.Struct({
-	by: Schema.Literals(["agent", "user"]),
-	or: Schema.optionalKey(Schema.Boolean),
-	cli: Schema.optionalKey(Schema.String),
-	tool: Schema.optionalKey(Schema.String),
-	args: Schema.optionalKey(
-		Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Boolean])),
-	),
-	/** The arguments whose value is a placeholder (`<final.mp4>`): the agent fills them in first. */
-	fill: Schema.optionalKey(Schema.Array(Schema.String)),
-	note: Schema.optionalKey(Schema.String),
-});
-export type NextStep = typeof NextStep.Type;
+import { defineOperation, p } from "../operation.ts";
+import { createPost, DATED, postDir, readPost, readPosts } from "../post-store.ts";
+import { agentNote, agentStep, BEAT_ITEM, userStep } from "../steps.ts";
 
 /** `next` and `nextSteps`, for every output that moves a post on. */
 export const NextFields = { next: Schema.String, nextSteps: Schema.Array(NextStep) };
-
-/**
- * `value` as one shell word: as it is when that's safe, else in single quotes. A placeholder stays
- * as written, so it still reads as one.
- */
-const shellWord = (value: string): string =>
-	/^[\w@%+=:,./-]+$/.test(value) || PLACEHOLDER.test(value)
-		? value
-		: `'${value.replaceAll("'", "'\\''")}'`;
-
-/** The terminal command for a tool call: `image_generate { post, dryRun }` → `image generate --post … --dry-run`. */
-const cliOf = (tool: string, args: Readonly<Record<string, Arg>>, yes: boolean): string =>
-	[
-		...commandPath(tool),
-		...Object.entries(args).flatMap(([key, value]) =>
-			value === true
-				? [`--${flagName(key)}`]
-				: value === false
-					? []
-					: [`--${flagName(key)}`, shellWord(value)],
-		),
-		...(yes ? ["--yes"] : []),
-	].join(" ");
-
-interface StepOptions {
-	readonly note?: string;
-	readonly or?: boolean;
-	/** On the CLI the real run of a spending command needs `--yes`; over MCP the client asks. */
-	readonly yes?: boolean;
-}
-
-/** An agent's step: an MCP tool call and the same command for the terminal. */
-export const agentStep = (
-	tool: string,
-	args: Readonly<Record<string, Arg>>,
-	{ note, or, yes = false }: StepOptions = {},
-): NextStep => {
-	const fill = Object.entries(args)
-		.filter(([, value]) => typeof value === "string" && PLACEHOLDER.test(value))
-		.map(([key]) => key);
-	return {
-		by: "agent",
-		...(or ? { or } : {}),
-		cli: cliOf(tool, args, yes),
-		tool,
-		args: { ...args },
-		...(fill.length === 0 ? {} : { fill }),
-		...(note === undefined ? {} : { note }),
-	};
-};
-
-/** A step for the user to take, such as an approval, which no agent can run. */
-const userStep = (cli: string | undefined, note?: string): NextStep => ({
-	by: "user",
-	...(cli === undefined ? {} : { cli }),
-	...(note === undefined ? {} : { note }),
-});
-
-/** A step with nothing to run, such as applying review notes. */
-const agentNote = (note: string): NextStep => ({ by: "agent", note });
 
 /** `n prompt(s)`. */
 const prompts = (n: number): string => `${n} prompt${n === 1 ? "" : "s"}`;
@@ -158,7 +76,7 @@ const stepsBeforeDraft = (post: Post, fresh: Freshness): ReadonlyArray<NextStep>
 				origin: "mine",
 				kind: "speech",
 			}),
-			agentStep("script_set", { ...thisPost, file: "script.md" }, { or: true }),
+			agentStep("script_set", { ...thisPost, text: "<script>" }, { or: true }),
 		];
 	}
 	if (audio !== undefined) {
@@ -182,13 +100,14 @@ const stepsBeforeDraft = (post: Post, fresh: Freshness): ReadonlyArray<NextStep>
 				}),
 			];
 		}
-		if (beats.items.some((b) => b.prompt === undefined)) {
+		const withoutPrompt = beats.items.filter((b) => b.prompt === undefined).map((b) => b.index);
+		if (withoutPrompt.length > 0) {
 			const setPrompts = (or: boolean) =>
 				agentStep(
 					"beat_set",
-					{ ...thisPost, from: "<beats.json>" },
+					{ ...thisPost, beats: "<beats>" },
 					{
-						note: "a story moment and an image prompt for every beat: see the story-direction skill",
+						note: `a story moment and an image prompt for beat${withoutPrompt.length === 1 ? "" : "s"} ${withoutPrompt.join(", ")}, as ${BEAT_ITEM}`,
 						or,
 					},
 				);
@@ -210,7 +129,7 @@ const stepsBeforeDraft = (post: Post, fresh: Freshness): ReadonlyArray<NextStep>
 		}
 	}
 	if (post.script === undefined)
-		return [agentStep("script_set", { ...thisPost, file: "script.md" })];
+		return [agentStep("script_set", { ...thisPost, text: "<script>" })];
 	if (!isScriptApproved(post)) {
 		const changed = changesSinceApproval(post);
 		const why = changed.length === 0 ? "" : `; changed since approval: ${changed.join(", ")}`;
@@ -462,6 +381,40 @@ const summary = (post: Post): typeof PostSummary.Type => ({
 	...(post.brief?.title !== undefined ? { title: post.brief.title } : {}),
 });
 
+/** The longest slug, the date in front included; the Slug Schema allows no more. */
+const MAX_SLUG = 100;
+
+/**
+ * The slug `post create` makes from `name`: today's date in front, unless it starts with a date.
+ * Checked before any folder is made: a name, a date that exists, and a length that fits.
+ */
+const newSlug = (name: string, today: string): Effect.Effect<string, ShortsError> => {
+	const nameFix = "Name the post with lowercase letters, digits and dashes, e.g. morning-routine.";
+	if (name.replace(DATED, "") === "")
+		return Effect.fail(fail("usage", "The post has no name.", nameFix));
+	// The YYYY-MM-DD in front.
+	const date = DATED.test(name) ? name.slice(0, 10) : undefined;
+	if (date !== undefined && !isDay(date)) {
+		return Effect.fail(
+			fail(
+				"usage",
+				`"${date}" at the start of "${name}" isn't a date that exists.`,
+				"Leave the date out, and today's goes in front; or write a real one, YYYY-MM-DD.",
+			),
+		);
+	}
+	const slug = date === undefined ? `${today}-${name}` : name;
+	return slug.length > MAX_SLUG
+		? Effect.fail(
+				fail(
+					"usage",
+					`A slug holds at most ${MAX_SLUG} characters, the date included; "${slug}" has ${slug.length}.`,
+					`Use a name of at most ${MAX_SLUG - today.length - 1} characters.`,
+				),
+			)
+		: Effect.succeed(slug);
+};
+
 export const postCreate = defineOperation({
 	name: "post_create",
 	description:
@@ -478,7 +431,7 @@ export const postCreate = defineOperation({
 	run: Effect.fn("post_create")(function* (input, ctx) {
 		// One clock read, so the slug's date and createdAt agree even at midnight.
 		const { at, today } = daysNow(ctx);
-		const slug = DATED.test(input.post) ? input.post : `${today}-${input.post}`;
+		const slug = yield* newSlug(input.post, today);
 		const brief = {
 			...(input.title !== undefined ? { title: input.title } : {}),
 			...(input.notes !== undefined ? { notes: input.notes } : {}),
@@ -501,33 +454,43 @@ export const postList = defineOperation({
 	params: {
 		stage: p.optional(p.literals(Stage.literals, "Only posts at this stage")),
 	},
-	output: Schema.Struct({ posts: Schema.Array(PostSummary) }),
+	output: Schema.Struct({
+		posts: Schema.Array(PostSummary),
+		/** Posts whose post.json can't be read, whatever the stage asked for, each with its error. */
+		unreadable: Schema.optionalKey(
+			Schema.Array(Schema.Struct({ slug: Schema.String, error: ErrorReport })),
+		),
+	}),
 	surface: "cli-and-mcp",
 	spends: false,
 	hints: { readonly: true, destructive: false, idempotent: true, openWorld: false },
 	run: (input, ctx) =>
-		listSlugs(ctx).pipe(
+		Effect.map(readPosts(ctx), ({ posts, unreadable }) => ({
 			// Named by folder, the name every command takes, even when post.json was copied from another.
-			Effect.flatMap((slugs) =>
-				Effect.forEach(slugs, (slug) =>
-					Effect.map(readPost(ctx, slug), (post) => ({ ...summary(post), slug })),
-				),
-			),
-			Effect.map((posts) => ({
+			posts: posts
+				.map(({ slug, post }) => ({ ...summary(post), slug }))
 				// Archived posts show only when asked for by stage.
-				posts: posts.filter((post) =>
+				.filter((post) =>
 					input.stage === undefined ? post.stage !== "archived" : post.stage === input.stage,
 				),
-			})),
-		),
-	render: (o) =>
-		o.posts.length === 0
+			...(unreadable.length === 0
+				? {}
+				: {
+						unreadable: unreadable.map(({ slug, error }) => ({ slug, error: reportOf(error) })),
+					}),
+		})),
+	render: (o) => {
+		const posts = o.posts.map(
+			(post) => `${post.stage.padEnd(16)} ${post.slug}${post.title ? `  ${post.title}` : ""}`,
+		);
+		const broken = (o.unreadable ?? []).map(
+			({ slug, error }) =>
+				`${"can't be read".padEnd(16)} ${slug}\n  ✗ ${error.message.split("\n")[0]}\n  → ${error.fix}`,
+		);
+		return posts.length === 0 && broken.length === 0
 			? "No posts yet. Create one with: post create --post <slug>"
-			: o.posts
-					.map(
-						(post) => `${post.stage.padEnd(16)} ${post.slug}${post.title ? `  ${post.title}` : ""}`,
-					)
-					.join("\n"),
+			: [...posts, ...broken].join("\n");
+	},
 });
 
 export const postShow = defineOperation({

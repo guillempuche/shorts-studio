@@ -10,10 +10,10 @@
  * keeps one input shape and one output shape.
  */
 
-import { fail, reportOf, type ShortsError } from "@shorts-studio/domain/errors";
+import { type ErrorCode, fail, reportOf, type ShortsError } from "@shorts-studio/domain/errors";
 import { Stage, stageOf } from "@shorts-studio/domain/post";
 import { type Context, settingsIssueLine } from "@shorts-studio/usecases/context";
-import { daysNow } from "@shorts-studio/usecases/days";
+import { daysNow, isDay } from "@shorts-studio/usecases/days";
 import { Budget } from "@shorts-studio/usecases/ledger";
 import {
 	commandPath,
@@ -23,9 +23,10 @@ import {
 	type RunMode,
 } from "@shorts-studio/usecases/operation";
 import { configCheck, configShow } from "@shorts-studio/usecases/operations/config";
-import { listSlugs, readPost } from "@shorts-studio/usecases/post-store";
+import { readPosts } from "@shorts-studio/usecases/post-store";
+import { cliOf } from "@shorts-studio/usecases/steps";
 import { Console, Effect, Layer, Result, Schema } from "effect";
-import { CliOutput, Command, Flag } from "effect/cli";
+import { CliConfig, type CliError, CliOutput, Command, Flag, GlobalFlag } from "effect/cli";
 
 export const OUTPUT_VERSION = 1;
 
@@ -67,62 +68,108 @@ const envelope = (
 
 const textError = (error: ShortsError) => `✗ ${error.message}\n  → ${error.fix}`;
 
-const TRUE_WORDS = new Set(["true", "1", "y", "yes", "on"]);
 const FALSE_WORDS = new Set(["false", "0", "n", "no", "off"]);
 
 /**
  * Whether the arguments ask for `--json`, in every form effect/cli reads as on: `--json`,
  * `--json=yes`, `--json true`. Read from the raw arguments, because a command called wrong stops
- * before its flags are parsed.
+ * before its flags are parsed. A `--json=` value that's neither yes nor no, such as `maybe`, is a
+ * usage error, which then comes out as JSON too.
  */
 export const jsonRequested = (argv: ReadonlyArray<string>): boolean => {
 	let json = false;
 	argv.forEach((arg, i) => {
 		if (arg === "--json") json = !FALSE_WORDS.has(argv[i + 1] ?? "");
-		else if (arg.startsWith("--json=")) json = TRUE_WORDS.has(arg.slice("--json=".length));
+		else if (arg.startsWith("--json=")) json = !FALSE_WORDS.has(arg.slice("--json=".length));
 		else if (arg === "--no-json") json = false;
 	});
 	return json;
 };
 
 /** The usage error a command called wrong prints with `--json`, for `commandPath`. */
-const usageEnvelope = (commandPath: ReadonlyArray<string>, message: string) =>
+const usageEnvelope = (commandPath: ReadonlyArray<string>, message: string, hint?: string) =>
 	envelope(
 		// Without the program name, like `command` in every other object.
 		commandPath.slice(1).join(" "),
 		{},
-		fail("usage", message, `See what it takes with: ${commandPath.join(" ")} --help`),
+		fail("usage", message, hint ?? `See what it takes with: ${commandPath.join(" ")} --help`),
 	);
 
 /**
- * With `--json`, a command called wrong prints the one error object, instead of its help: stdout
- * must hold exactly one JSON object. So does a group of commands given no command (`post`).
- * Help asked for with `--help`, and every other output, stay the default.
+ * The flag meant, for the mix-ups the CLI can't tell apart by itself: `--stage` filters
+ * `post list`, while `--in-stage` picks posts for every other command; and several posts go in
+ * one `--post`, separated by commas.
+ */
+export const usageHint = (errors: ReadonlyArray<CliError.CliError>): string | undefined => {
+	for (const error of errors) {
+		const option = "option" in error ? String(error.option).replace(/^-+/, "") : undefined;
+		if (error._tag === "UnrecognizedOption" && option === "stage") {
+			return "Pick the posts at a stage with --in-stage <stage>; --stage is post list's.";
+		}
+		if (error._tag === "UnrecognizedOption" && option === "in-stage") {
+			return "post list shows the posts at a stage with --stage <stage>.";
+		}
+		if ((error._tag === "DuplicateOption" || error._tag === "InvalidValue") && option === "post") {
+			return "Give several posts in one --post, separated by commas: --post a,b.";
+		}
+	}
+	return undefined;
+};
+
+/**
+ * How the CLI presents what effect/cli itself prints. With `--json`, a command called wrong prints
+ * the one error object, instead of its help: stdout must hold exactly one JSON object. So do a
+ * group of commands given no command (`post`) and `--version`. Help asked for with `--help` stays
+ * text, and `--wizard`, which asks questions, isn't offered. Without `--json`, a usage error
+ * still names the flag meant, when it's a known mix-up.
  */
 export const cliOutput = (argv: ReadonlyArray<string>): Layer.Layer<never> =>
 	jsonRequested(argv)
-		? CliOutput.layerPresenter({
+		? Layer.merge(
+				CliOutput.layerPresenter({
+					present: (event) => {
+						if (event._tag === "InvalidInvocation") {
+							return Console.log(
+								usageEnvelope(
+									event.commandPath,
+									event.errors.map((error) => error.message).join(" "),
+									usageHint(event.errors),
+								),
+							);
+						}
+						if (event._tag === "Help" && event.reason === "Implicit") {
+							return Console.log(
+								usageEnvelope(
+									event.commandPath,
+									`"${event.commandPath.join(" ")}" needs one of its commands.`,
+								),
+							);
+						}
+						if (event._tag === "Version") {
+							return Console.log(
+								JSON.stringify({
+									ok: true,
+									outputVersion: OUTPUT_VERSION,
+									command: "version",
+									result: { version: event.version },
+								}),
+							);
+						}
+						return CliOutput.defaultPresenter.present(event);
+					},
+				}),
+				CliConfig.layer({
+					builtIns: GlobalFlag.BuiltIns.filter((flag) => flag !== GlobalFlag.Wizard),
+				}),
+			)
+		: CliOutput.layerPresenter({
 				present: (event) => {
-					if (event._tag === "InvalidInvocation") {
-						return Console.log(
-							usageEnvelope(
-								event.commandPath,
-								event.errors.map((error) => error.message).join(" "),
-							),
-						);
-					}
-					if (event._tag === "Help" && event.reason === "Implicit") {
-						return Console.log(
-							usageEnvelope(
-								event.commandPath,
-								`"${event.commandPath.join(" ")}" needs one of its commands.`,
-							),
-						);
-					}
-					return CliOutput.defaultPresenter.present(event);
+					const hint = event._tag === "InvalidInvocation" ? usageHint(event.errors) : undefined;
+					return CliOutput.defaultPresenter
+						.present(event)
+						.pipe(Effect.andThen(hint === undefined ? Effect.void : Console.error(`→ ${hint}`)));
 				},
-			})
-		: Layer.empty;
+			});
 
 /** The flags that pick several posts, replacing a single required `--post`. */
 const batchFlags = {
@@ -143,9 +190,20 @@ interface Selection {
 	readonly day?: string | undefined;
 }
 
-/** The posts a batch selection names; one slug means a normal single run. */
+/**
+ * The posts a batch selection names; one slug means a normal single run. Posts go by `--post`,
+ * or by `--day` and `--in-stage`, never both ways at once.
+ */
 const selectPosts = Effect.fn("selectPosts")(function* (ctx: Context, input: Selection) {
-	if (input.inStage === undefined && input.day === undefined) {
+	const byGroup = input.inStage !== undefined || input.day !== undefined;
+	if (input.post !== undefined && byGroup) {
+		return yield* fail(
+			"usage",
+			"--post names posts, and --day and --in-stage pick them; both were given.",
+			"Pick posts by --post <slug> (several separated by commas), or by --day and --in-stage.",
+		);
+	}
+	if (!byGroup) {
 		const slugs = (input.post ?? "")
 			.split(",")
 			.map((slug) => slug.trim())
@@ -158,21 +216,40 @@ const selectPosts = Effect.fn("selectPosts")(function* (ctx: Context, input: Sel
 		);
 	}
 	const day = input.day === "today" ? daysNow(ctx).today : input.day;
-	if (day !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
-		return yield* fail("usage", `"${input.day}" isn't a day.`, "Use today or YYYY-MM-DD.");
+	if (day !== undefined && !isDay(day)) {
+		return yield* fail(
+			"usage",
+			`"${input.day}" isn't a day that exists.`,
+			"Use today or a date written YYYY-MM-DD.",
+		);
 	}
 	// By folder, the name commands take, even when a post.json was copied from another post.
-	const posts = yield* Effect.forEach(yield* listSlugs(ctx), (slug) =>
-		Effect.map(readPost(ctx, slug), (post) => ({ slug, post })),
-	);
+	const { posts, unreadable } = yield* readPosts(ctx);
+	const onDay = (slug: string) => day === undefined || slug.startsWith(day);
 	// Archived posts no longer change, so a selection leaves them out unless it asks for them.
 	const matching = posts
-		.filter(({ slug }) => day === undefined || slug.startsWith(day))
+		.filter(({ slug }) => onDay(slug))
 		.filter(({ post }) =>
 			input.inStage === undefined ? stageOf(post) !== "archived" : stageOf(post) === input.inStage,
 		)
 		.map(({ slug }) => slug);
-	if (matching.length > 0) return matching;
+	// A post that can't be read has no stage. By day alone it still runs, so it fails as that
+	// post's own result; by stage it can't match, so it's named here and left out.
+	const broken = unreadable.filter(({ slug }) => onDay(slug));
+	if (input.inStage !== undefined) {
+		yield* Effect.forEach(
+			broken,
+			({ slug, error }) =>
+				Console.error(`! ${slug} left out, since it can't be read: ${error.fix}`),
+			{ discard: true },
+		);
+	}
+	// Newest first, as listSlugs gives them, with the unreadable posts back in their place.
+	const selected = [
+		...matching,
+		...(input.inStage === undefined ? broken.map(({ slug }) => slug) : []),
+	].sort((a, b) => b.localeCompare(a));
+	if (selected.length > 0) return selected;
 	return yield* fail("not-found", "No posts match.", "Check the selection with: post list");
 });
 
@@ -216,6 +293,60 @@ const refusalOf = (budget: Budget): ShortsError =>
 		budget.why ?? "The real run can't go ahead; nothing was spent.",
 		budget.fix ?? "Run the same command with --dry-run to see what stops it.",
 	);
+
+/**
+ * The code a batch with failed posts fails with: the one they share, else the one that waits on
+ * the user, a cap before an approval, else `failed`. Not the highest exit code: a `usage` error
+ * in one post would outrank everything, though the batch itself wasn't called wrong.
+ */
+export const batchCode = (codes: ReadonlyArray<ErrorCode>): ErrorCode => {
+	const [first] = codes;
+	if (first !== undefined && codes.every((code) => code === first)) return first;
+	if (codes.includes("over-budget")) return "over-budget";
+	if (codes.includes("needs-approval")) return "needs-approval";
+	return "failed";
+};
+
+/**
+ * The batch's own error. Its fix names the failed posts: for the user to see to, when they
+ * wait on a cap or an approval; else to fix and run again, by `again`, the same command on just
+ * those posts.
+ */
+export const batchError = (
+	failures: ReadonlyArray<{ readonly post: string; readonly code: ErrorCode }>,
+	total: number,
+	again: (posts: ReadonlyArray<string>) => string,
+): ShortsError => {
+	const code = batchCode(failures.map((failure) => failure.code));
+	const posts = failures.map((failure) => failure.post);
+	const named = posts.join(", ");
+	return fail(
+		code,
+		`${failures.length} of ${total} posts failed.`,
+		code === "over-budget" || code === "needs-approval"
+			? `${named} wait on the user: each post's own fix, listed with it, says what to ask them.`
+			: `Follow each post's fix, listed with it, then run the command on just those posts: ${again(posts)}`,
+	);
+};
+
+/** The command that ran, on `posts` only, with the same flags. */
+const againFor =
+	(op: Operation, input: Readonly<Record<string, unknown>>, shared: SharedFlags) =>
+	(posts: ReadonlyArray<string>): string => {
+		const args: Record<string, string | boolean> = { post: posts.join(",") };
+		for (const key of Object.keys(op.params)) {
+			const value = input[key];
+			if (key === "post" || value === undefined) continue;
+			args[key] =
+				typeof value === "string" || typeof value === "boolean"
+					? value
+					: typeof value === "number"
+						? String(value)
+						: JSON.stringify(value);
+		}
+		if (shared.dryRun) args["dryRun"] = true;
+		return cliOf(op.name, args, shared.yes);
+	};
 
 interface SharedFlags {
 	readonly json: boolean;
@@ -319,7 +450,9 @@ const leaf = (op: Operation, ctx: Context, name?: string) => {
 				Effect.map((outcome) => ({ post, outcome })),
 			),
 		);
-		const failed = results.filter(({ outcome }) => Result.isFailure(outcome)).length;
+		const failures = results.flatMap(({ post, outcome }) =>
+			Result.isFailure(outcome) ? [{ post, code: outcome.failure.code }] : [],
+		);
 		return {
 			fields: () => ({
 				results: results.map(({ post, outcome }) =>
@@ -331,13 +464,9 @@ const leaf = (op: Operation, ctx: Context, name?: string) => {
 			error:
 				unconfirmed > 0
 					? confirmationError(label)
-					: failed === 0
+					: failures.length === 0
 						? undefined
-						: fail(
-								"failed",
-								`${failed} of ${posts.length} posts failed.`,
-								"Each post's error is listed with it; run the command again to retry them.",
-							),
+						: batchError(failures, posts.length, againFor(op, input, shared)),
 		};
 	});
 

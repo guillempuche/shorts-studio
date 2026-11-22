@@ -105,5 +105,7 @@ describe("chooseModel", () => {
 		expect(error.fix).toBe(
 			"Use one of: fake-fast, fake-fine. Or add it under models in config.json.",
 		);
+		// AND a name asked for by the caller points it at the models it can use
+		expect(error.nextSteps[0]?.tool).toBe("models_list");
 	});
 });

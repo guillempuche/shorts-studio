@@ -304,6 +304,13 @@ describe("audio transcribe", () => {
 		// THEN it names the key
 		expect(error.code).toBe("missing-key");
 		expect(error.message).toContain("FAKE_EARS_KEY");
+		// AND the fix says to ask the user, and when a running MCP server sees the key
+		expect(error.fix).toMatch(/^Ask the user to set FAKE_EARS_KEY/);
+		expect(error.fix).toContain("security add-generic-password");
+		expect(error.fix).toContain("restart");
+		// AND the first step is the user's, with no tool
+		expect(error.nextSteps[0]?.by).toBe("user");
+		expect(error.nextSteps[0]?.tool).toBeUndefined();
 		// AND nothing was reserved or sent
 		expect(await ledgerOf(ctx)).toHaveLength(0);
 		expect(transcriber.calls).toHaveLength(0);
@@ -329,6 +336,10 @@ describe("audio transcribe", () => {
 			tool: "audio_transcribe",
 			args: { post: SLUG },
 		});
+		// AND its text ends with that step
+		expect(audioTranscribe.render?.(planned).split("\n").at(-1)).toBe(
+			`Next: audio transcribe --post ${SLUG}`,
+		);
 	});
 
 	it("should leave it to the user when a dry run doesn't fit the caps", async () => {

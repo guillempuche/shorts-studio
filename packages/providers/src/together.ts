@@ -15,7 +15,7 @@ import { requireKey } from "@shorts-studio/usecases/inputs";
 import { Transcriber } from "@shorts-studio/usecases/ports";
 import { Effect, Layer, Schema } from "effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
-import { type PaidService, ProviderEnv, providerFailure } from "./env.ts";
+import { addressChecks, type PaidService, ProviderEnv, providerFailure } from "./env.ts";
 
 export const TOGETHER_KEY: KeySpec = { env: "TOGETHER_API_KEY", keychain: "together-api-key" };
 const TOGETHER: PaidService = { id: "together", name: "Together", key: TOGETHER_KEY };
@@ -114,7 +114,7 @@ export const togetherLayer = Layer.effect(
 		return Transcriber.of({
 			provider: "together",
 			keys: [TOGETHER_KEY],
-			checks: Effect.succeed([]),
+			checks: Effect.succeed(addressChecks(env, "together")),
 			models: TOGETHER_MODELS,
 			defaultModel: "openai/whisper-large-v3",
 			transcribe,

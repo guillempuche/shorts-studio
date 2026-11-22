@@ -65,3 +65,61 @@ describe("schema show", () => {
 		expect(error.fix).toContain("schema show");
 	});
 });
+
+describe("schema show, by either name", () => {
+	it.each(["image generate", "image-generate"])(
+		"should read %s as the tool image_generate",
+		async (name) => {
+			// GIVEN the registry
+			// WHEN a command's schema is asked for as the CLI writes it
+			const [asCli, asTool] = await Promise.all([
+				run(schemaShow.run({ name }, testContext(), MODE)),
+				run(schemaShow.run({ name: "image_generate" }, testContext(), MODE)),
+			]);
+
+			// THEN it is the tool's schema
+			expect(asCli.schema).toEqual(asTool.schema);
+		},
+	);
+
+	it("should mark the commands that aren't MCP tools", async () => {
+		// GIVEN the registry
+		// WHEN the names are listed
+		const result = await run(schemaShow.run({ name: undefined }, testContext(), MODE));
+
+		// THEN the user's approvals are CLI only, and the shared commands aren't
+		expect(result.cliOnly).toContain("script_approve");
+		expect(result.cliOnly).toContain("post_review");
+		expect(result.cliOnly).not.toContain("post_show");
+		// AND the text marks them
+		expect(schemaShow.render?.(result)).toContain("script_approve (CLI only)");
+	});
+});
+
+describe("schema show, closed inputs", () => {
+	it("should publish a command's input, and each beat in it, as taking no other field", async () => {
+		// GIVEN the registry
+		// WHEN beat_set's schema is shown
+		const result = await run(schemaShow.run({ name: "beat_set" }, testContext(), MODE));
+
+		// THEN its input takes no other field
+		const { input } = result.schema as {
+			input: {
+				additionalProperties?: unknown;
+				properties: { beats: { items?: { additionalProperties?: unknown } } };
+			};
+		};
+		expect(input.additionalProperties).toBe(false);
+		// AND neither does each item of beats
+		expect(input.properties.beats.items?.additionalProperties).toBe(false);
+	});
+
+	it("should leave the post file's schema as it is", async () => {
+		// GIVEN the registry
+		// WHEN the post's schema is shown
+		const result = await run(schemaShow.run({ name: "post" }, testContext(), MODE));
+
+		// THEN it is the committed file schema, which stays open
+		expect(result.schema).toEqual(fileSchema("post"));
+	});
+});

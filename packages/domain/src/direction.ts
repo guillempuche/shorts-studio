@@ -156,6 +156,9 @@ export const HOOK_LAYOUT = {
 	maxSec: 3,
 	/** Reading time per word, the BBC rule of thumb. */
 	secPerWord: 0.3,
+	/** A hook short enough to read in its 2–3 seconds, and long enough to say something. */
+	minWords: 3,
+	maxWords: 7,
 } as const;
 
 /** How long the hook title stays: enough to read it, within the first 3 seconds. */

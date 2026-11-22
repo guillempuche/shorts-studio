@@ -43,6 +43,16 @@ const versionCheck = async (ctx: ProviderContext): Promise<Check> => {
 		: { name: "yt-dlp", status: "ok", detail: version };
 };
 
+/**
+ * What went wrong, from yt-dlp's stderr: its ERROR lines, or its last 5 lines when none says
+ * ERROR, so a failure that names no error, such as a bad cookies setting, still says something.
+ */
+export const errorLines = (stderr: string): string => {
+	const lines = stderr.split("\n").filter((line) => line.trim() !== "");
+	const errors = lines.filter((line) => line.includes("ERROR"));
+	return (errors.length > 0 ? errors : lines.slice(-5)).join("\n");
+};
+
 const downloader = (ctx: ProviderContext): Downloader["Service"] => {
 	const common = (): ReadonlyArray<string> => [
 		...(ctx.config.download?.cookiesFromBrowser !== undefined
@@ -62,13 +72,7 @@ const downloader = (ctx: ProviderContext): Downloader["Service"] => {
 		attempt(
 			async (signal): Promise<DownloadResult> => {
 				const result = await ctx.run("yt-dlp", [...common(), ...args], { signal, cwd });
-				return {
-					ok: result.code === 0,
-					errors: result.stderr
-						.split("\n")
-						.filter((line) => line.includes("ERROR"))
-						.join("\n"),
-				};
+				return { ok: result.code === 0, errors: errorLines(result.stderr) };
 			},
 			failWith("missing-tool", "Install yt-dlp: pip install -U yt-dlp"),
 		);

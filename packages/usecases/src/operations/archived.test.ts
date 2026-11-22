@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { readLedger } from "../ledger.ts";
 import { readPost } from "../post-store.ts";
 import { testContext } from "../test/context.ts";
-import { runFailure } from "../test/fakes.ts";
+import { fakePng, runFailure } from "../test/fakes.ts";
 import { seedUpToDate, withDraft } from "../test/posts.ts";
 import { imageGenerate } from "./image.ts";
 import { operations } from "./index.ts";
@@ -38,14 +38,14 @@ const argumentsFor = (files: { script: string; audio: string; image: string; vid
 /** Writes the user's own files outside the posts folder. */
 const userFiles = (dir: string) => {
 	mkdirSync(dir, { recursive: true });
-	const write = (name: string) => {
-		writeFileSync(join(dir, name), "x");
+	const write = (name: string, bytes: Uint8Array | string = "x") => {
+		writeFileSync(join(dir, name), bytes);
 		return join(dir, name);
 	};
 	return {
 		script: write("script.md"),
 		audio: write("voice.m4a"),
-		image: write("mine.png"),
+		image: write("mine.png", fakePng("mine")),
 		video: write("final.mp4"),
 	};
 };

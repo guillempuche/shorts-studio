@@ -64,6 +64,18 @@ export const p = {
 		field: Schema.Literals(values).annotate({ description }),
 		flag: (name) => described(Flag.Literals(name, values), description),
 	}),
+	/**
+	 * A structured value, such as a list: the Schema itself over MCP, and JSON text on the CLI. A
+	 * flag that isn't valid JSON, or doesn't match, is a usage error before anything runs.
+	 */
+	json: <A>(schema: Schema.Codec<A, unknown>, description: string): Param<A> => ({
+		field: schema.annotate({ description }),
+		flag: (name) =>
+			described(
+				Flag.String(name).pipe(Flag.withSchema(Schema.fromJsonString(schema))),
+				`${description} (JSON text)`,
+			),
+	}),
 	optional: <A>(param: Param<A>): Param<A | undefined> => ({
 		field: Schema.optionalKey(param.field),
 		flag: (name) => param.flag(name).pipe(Flag.optional, Flag.map(Option.getOrUndefined)),
@@ -160,10 +172,21 @@ const otherThan = (names: ReadonlyArray<string>) =>
 	);
 
 /**
- * A tool's input: its parameters, plus `dryRun` when it spends. A field it doesn't take fails,
- * naming the fields it does: Effect would otherwise drop it, so a misspelt `dry_run` would be
- * ignored and the call would spend.
+ * A Struct that refuses a field it doesn't have, naming the fields it does: Effect would
+ * otherwise drop it, so a misspelt `dry_run` would be ignored and the call would spend. `what`
+ * names the object in the message, e.g. "This tool".
  */
+export const closedStruct = <const F extends Schema.Struct.Fields>(fields: F, what: string) => {
+	const names = Object.keys(fields);
+	const unknownField = Schema.Never.annotate({
+		message: `${what} doesn't take this field. It takes: ${names.join(", ") || "nothing"}`,
+	});
+	return Schema.StructWithRest(Schema.Struct(fields), [
+		Schema.Record(otherThan(names), unknownField),
+	]);
+};
+
+/** A tool's input: its parameters, plus `dryRun` when it spends, and no other field. */
 export const toolInputSchema = (op: Operation) => {
 	const fields: Record<string, Field> = {};
 	for (const [key, param] of Object.entries(op.params)) fields[key] = param.field;
@@ -172,11 +195,5 @@ export const toolInputSchema = (op: Operation) => {
 			"Describe the files and estimated cost without spending anything",
 		);
 	}
-	const names = Object.keys(fields);
-	const unknownField = Schema.Never.annotate({
-		message: `This tool doesn't take this field. It takes: ${names.join(", ") || "nothing"}`,
-	});
-	return Schema.StructWithRest(Schema.Struct(fields), [
-		Schema.Record(otherThan(names), unknownField),
-	]);
+	return closedStruct(fields, "This tool");
 };

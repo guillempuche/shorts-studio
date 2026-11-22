@@ -13,6 +13,7 @@ import {
 	type ShortsError,
 } from "@shorts-studio/domain/errors";
 import type { KeySpec } from "@shorts-studio/usecases/context";
+import type { Check } from "@shorts-studio/usecases/ports";
 import { Context, Effect, Layer } from "effect";
 import { FetchHttpClient, type HttpClient, HttpClientError } from "effect/http";
 import { type ProviderContext, urlVariable } from "./node.ts";
@@ -27,6 +28,24 @@ export const withEnv = <A, E>(
 	ctx: ProviderContext,
 ): Layer.Layer<A, E> =>
 	layer.pipe(Layer.provide(Layer.succeed(ProviderEnv, ctx)), Layer.provide(FetchHttpClient.layer));
+
+/**
+ * A warning row when `SHORTS_<PROVIDER>_URL` sends a paid provider's requests elsewhere: a test
+ * address left set would make every real run fail, or reach a service that isn't the provider.
+ */
+export const addressChecks = (ctx: ProviderContext, provider: string): ReadonlyArray<Check> => {
+	const address = ctx.endpoints[provider];
+	if (address === undefined) return [];
+	const variable = urlVariable(provider);
+	return [
+		{
+			name: variable,
+			status: "warn",
+			detail: `${provider} requests go to ${address}, not ${provider}'s own service`,
+			fix: `Unset ${variable} to reach ${provider} itself; keep it only while testing.`,
+		},
+	];
+};
 
 /** A paid service, as the fix messages name it. */
 export interface PaidService {

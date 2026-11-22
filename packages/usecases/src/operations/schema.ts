@@ -10,9 +10,18 @@ import { Effect, JsonSchema, Schema } from "effect";
 import { Brand, Config } from "../context.ts";
 import { defineOperation, type Operation, p, toolInputSchema } from "../operation.ts";
 
-/** A standalone draft 2020-12 JSON Schema file for one Effect Schema. */
-export const toJsonSchemaFile = (schema: Schema.Top): Record<string, unknown> => {
-	const document = Schema.toJsonSchemaDocument(schema);
+/**
+ * A standalone draft 2020-12 JSON Schema file for one Effect Schema. `closed` publishes every
+ * object as taking no other field, as a command's input does.
+ */
+export const toJsonSchemaFile = (
+	schema: Schema.Top,
+	{ closed = false }: { readonly closed?: boolean } = {},
+): Record<string, unknown> => {
+	const document = Schema.toJsonSchemaDocument(
+		schema,
+		closed ? { onExcessProperty: "error" } : undefined,
+	);
 	return {
 		$schema: JsonSchema.META_SCHEMA_URI_DRAFT_2020_12,
 		...document.schema,
@@ -34,7 +43,7 @@ export const makeSchemaShow = (operations: () => ReadonlyArray<Operation>) =>
 	defineOperation({
 		name: "schema_show",
 		description:
-			'Show the JSON Schema of post.json, config.json or brand.json (names "post", "config", "brand"), or of one command\'s input and output (e.g. "image_generate"). Without a name, list the names.',
+			'Show the JSON Schema of post.json, config.json or brand.json (names "post", "config", "brand"), or of one command\'s input and output (e.g. "image_generate" or "image generate"). Without a name, list the names, and which commands are CLI only.',
 		params: {
 			name: p.optional(
 				p.string('"post", "config", "brand" or a command name such as image_generate'),
@@ -42,6 +51,8 @@ export const makeSchemaShow = (operations: () => ReadonlyArray<Operation>) =>
 		},
 		output: Schema.Struct({
 			names: Schema.optionalKey(Schema.Array(Schema.String)),
+			/** The commands that aren't MCP tools. */
+			cliOnly: Schema.optionalKey(Schema.Array(Schema.String)),
 			schema: Schema.optionalKey(Schema.Unknown),
 		}),
 		surface: "cli-and-mcp",
@@ -51,10 +62,15 @@ export const makeSchemaShow = (operations: () => ReadonlyArray<Operation>) =>
 			Effect.gen(function* () {
 				const ops = operations();
 				if (input.name === undefined) {
-					return { names: [...Object.keys(FILE_SCHEMAS), ...ops.map((op) => op.name)] };
+					return {
+						names: [...Object.keys(FILE_SCHEMAS), ...ops.map((op) => op.name)],
+						cliOnly: ops.filter((op) => op.surface === "cli-only").map((op) => op.name),
+					};
 				}
 				if (isFileSchema(input.name)) return { schema: fileSchema(input.name) };
-				const op = ops.find((candidate) => candidate.name === input.name);
+				// A command as the CLI writes it, `image generate`, is the tool `image_generate`.
+				const name = input.name.trim().replace(/[\s-]+/g, "_");
+				const op = ops.find((candidate) => candidate.name === name);
 				if (op === undefined) {
 					return yield* fail(
 						"not-found",
@@ -64,10 +80,15 @@ export const makeSchemaShow = (operations: () => ReadonlyArray<Operation>) =>
 				}
 				return {
 					schema: {
-						input: toJsonSchemaFile(toolInputSchema(op)),
+						input: toJsonSchemaFile(toolInputSchema(op), { closed: true }),
 						output: toJsonSchemaFile(op.output),
 					},
 				};
 			}),
-		render: (o) => (o.names ? o.names.join("\n") : JSON.stringify(o.schema, null, 2)),
+		render: (o) =>
+			o.names
+				? o.names
+						.map((name) => (o.cliOnly?.includes(name) ? `${name} (CLI only)` : name))
+						.join("\n")
+				: JSON.stringify(o.schema, null, 2),
 	});

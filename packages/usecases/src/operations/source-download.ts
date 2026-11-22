@@ -9,20 +9,29 @@
 
 import { existsSync, mkdtempSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
-import { fail, type ShortsError } from "@shorts-studio/domain/errors";
+import {
+	ErrorReport,
+	fail,
+	failBecause,
+	OverBudget,
+	reportOf,
+	type ShortsError,
+} from "@shorts-studio/domain/errors";
 import { audioAmount } from "@shorts-studio/domain/models";
+import { NextStep } from "@shorts-studio/domain/next-step";
 import { Kind, Origin, Transcript } from "@shorts-studio/domain/post";
-import { Effect, Schema } from "effect";
+import { Effect, Result, Schema } from "effect";
 import type { Context } from "../context.ts";
 import { ensureDir, fileStep, readText, writeFileAtomic, writeJsonFile } from "../files.ts";
-import { checkLanguage, requireKey } from "../inputs.ts";
+import { checkLanguage, inputFile, requireKey } from "../inputs.ts";
 import { Budget, budgetFor, budgetLine, paidCall, settingsRefusal } from "../ledger.ts";
 import { chooseModel, costOf } from "../models.ts";
 import { roundUsd, usd } from "../money.ts";
 import { defineOperation, p, type RunMode } from "../operation.ts";
 import { Downloader, MediaTools, Transcriber } from "../ports.ts";
 import { postDir, readPost, refuseArchived } from "../post-store.ts";
-import { NextStep } from "./post.ts";
+import { agentStep, userStep } from "../steps.ts";
+import { nextAfterDryRun } from "./post.ts";
 import { sourceImport } from "./source.ts";
 
 const COLLECTION_NAME = /^[a-z0-9][a-z0-9-]{0,99}$/;
@@ -85,11 +94,16 @@ export const sourceDownload = defineOperation({
 		if (input.collection !== undefined) {
 			const name = yield* checkCollection(input.collection);
 			const dir = savedPath(ctx, name);
-			if (!existsSync(join(dir, "urls.txt"))) {
+			const urlsFile = yield* inputFile(
+				join(dir, "urls.txt"),
+				"Collect the post URLs first (see docs/getting-started.md), one per line.",
+			);
+			const urls = (yield* readText(urlsFile, "Check that urls.txt can be read.")).split("\n");
+			if (!urls.some((line) => line.trim() !== "" && !line.trim().startsWith("#"))) {
 				return yield* fail(
 					"not-found",
-					`No ${join(dir, "urls.txt")}.`,
-					"Collect the post URLs first (see docs/getting-started.md), one per line.",
+					`${urlsFile} holds no URL.`,
+					"Put the post URLs in urls.txt, one per line; a line starting with # is skipped.",
 				);
 			}
 			const before = yield* countDownloaded(dir);
@@ -101,8 +115,17 @@ export const sourceDownload = defineOperation({
 				output: "audio/%(id)s.%(ext)s",
 			});
 			if (!result.ok) ctx.log(result.errors);
+			const downloaded = (yield* countDownloaded(dir)) - before;
+			// Nothing came down: that's a failure, like a single URL's, not a result to read.
+			if (!result.ok && downloaded === 0) {
+				return yield* fail(
+					"provider",
+					`Nothing new could be downloaded into ${dir}:\n${result.errors || "yt-dlp printed no error."}`,
+					downloadFix,
+				);
+			}
 			return {
-				downloaded: (yield* countDownloaded(dir)) - before,
+				downloaded,
 				failed: !result.ok,
 				dir,
 				next: result.ok
@@ -111,6 +134,15 @@ export const sourceDownload = defineOperation({
 			};
 		}
 
+		if ((input.url === undefined) !== (input.post === undefined)) {
+			return yield* fail(
+				"usage",
+				input.url === undefined
+					? "--post needs --url: the URL to download into it."
+					: "--url needs --post: the post to import it into.",
+				"Pass --url <url> with --post <slug>, or --collection <name>.",
+			);
+		}
 		if (input.url !== undefined && input.post !== undefined) {
 			yield* refuseArchived(yield* readPost(ctx, input.post), "source download");
 			const audioDir = join(postDir(ctx, input.post), "audio");
@@ -171,13 +203,21 @@ export const sourceTranscribe = defineOperation({
 	output: Schema.Struct({
 		transcribed: Schema.Int,
 		skipped: Schema.Int,
+		/** Each failed file and its error's message, as lines. */
 		failed: Schema.Array(Schema.String),
+		/** Each failed file with its error's code, message and fix. */
+		failures: Schema.optionalKey(
+			Schema.Array(Schema.Struct({ file: Schema.String, error: ErrorReport })),
+		),
 		/** Files left to transcribe; on a dry run, the ones the estimate covers. */
 		toTranscribe: Schema.Int,
 		estimateUsd: Schema.Finite,
 		dryRun: Schema.Boolean,
 		/** On a dry run: whether the estimate fits the caps, and what's left under each. */
 		budget: Schema.optionalKey(Budget),
+		/** After a dry run, and after a run with failed files: what to run next. */
+		next: Schema.optionalKey(Schema.String),
+		nextSteps: Schema.optionalKey(Schema.Array(NextStep)),
 	}),
 	surface: "cli-and-mcp",
 	spends: true,
@@ -192,7 +232,13 @@ export const sourceTranscribe = defineOperation({
 			return yield* fail(
 				"not-found",
 				`No audio in ${dir}.`,
-				`Download it first: source download --collection ${name}`,
+				`Ask the user to put the post URLs in ${join(dir, "urls.txt")}, one per line, then download them in their own terminal (CLI only): source download --collection ${name}`,
+				[
+					userStep(
+						`source download --collection ${name}`,
+						"CLI only: it downloads with the user's own browser session, after they fill urls.txt",
+					),
+				],
 			);
 		}
 
@@ -213,22 +259,40 @@ export const sourceTranscribe = defineOperation({
 				.duration(join(audioDir, file))
 				.pipe(Effect.map((seconds) => costOf(model, audioAmount(model, seconds))));
 
+		// The same run without dryRun; transcription needs no `--yes`.
+		const again = agentStep("source_transcribe", {
+			collection: name,
+			...(input.language === undefined ? {} : { language: input.language }),
+		});
+
 		if (mode.dryRun) {
-			const costs = yield* Effect.forEach(todo, costOfFile);
+			// A file whose length can't be read is listed as failed; the others are still estimated.
+			const outcomes = yield* Effect.forEach(todo, (file) =>
+				Effect.map(Effect.result(costOfFile(file)), (outcome) => ({ file, outcome })),
+			);
+			const costs = outcomes.flatMap(({ outcome }) =>
+				Result.isSuccess(outcome) ? [outcome.success] : [],
+			);
+			const failures = outcomes.flatMap(({ file, outcome }) =>
+				Result.isFailure(outcome) ? [{ file, error: reportOf(outcome.failure) }] : [],
+			);
 			const estimateUsd = roundUsd(costs.reduce((sum, cost) => sum + cost.usd, 0));
+			const budget = yield* budgetFor(
+				ctx,
+				{ post: `saved/${name}`, usd: estimateUsd },
+				// The key matters only when there's a file to send.
+				{ plannedUsd: mode.plannedUsd, keys: costs.length > 0 ? transcriber.keys : [] },
+			);
 			return {
 				transcribed: 0,
 				skipped: files.length - todo.length,
-				failed: [],
-				toTranscribe: todo.length,
+				failed: failures.map(({ file, error }) => `${file}: ${error.message}`),
+				...(failures.length === 0 ? {} : { failures }),
+				toTranscribe: costs.length,
 				estimateUsd,
 				dryRun: true,
-				budget: yield* budgetFor(
-					ctx,
-					{ post: `saved/${name}`, usd: estimateUsd },
-					// The key matters only when there's a file to send.
-					{ plannedUsd: mode.plannedUsd, keys: todo.length > 0 ? transcriber.keys : [] },
-				),
+				budget,
+				...nextAfterDryRun(budget, again),
 			};
 		}
 
@@ -260,34 +324,68 @@ export const sourceTranscribe = defineOperation({
 		// Every file is tried. A failed one is listed, and the next run tries it again. Past a
 		// spending cap, or with a provider that can't be reached, every later file would fail the
 		// same way, so the run stops there instead. The transcripts already written stay.
+		let transcribedSoFar = 0;
 		const outcomes = yield* Effect.forEach(todo, (file) =>
 			transcribeOne(file).pipe(
-				Effect.map((usd) => ({ usd })),
+				Effect.map((usd) => {
+					transcribedSoFar++;
+					return { usd };
+				}),
 				Effect.catch((error) =>
 					error.code === "over-budget" || error.reason._tag === "NotSent"
 						? Effect.fail(error)
-						: Effect.succeed({ failure: `${file}: ${error.message}` }),
+						: Effect.succeed({ file, error }),
+				),
+			),
+		).pipe(
+			Effect.catchReason("ShortsError", "OverBudget", (reason) =>
+				Effect.fail(
+					failBecause(
+						new OverBudget({
+							...reason,
+							message: `${reason.message} Transcribed ${transcribedSoFar} of ${todo.length} files before the cap; they're kept.`,
+						}),
+					),
 				),
 			),
 		);
-		const failed = outcomes.flatMap((outcome) => ("failure" in outcome ? [outcome.failure] : []));
+		const failures = outcomes.flatMap((outcome) =>
+			"error" in outcome ? [{ file: outcome.file, error: reportOf(outcome.error) }] : [],
+		);
 		return {
-			transcribed: todo.length - failed.length,
+			transcribed: todo.length - failures.length,
 			skipped: files.length - todo.length,
-			failed,
-			toTranscribe: failed.length,
+			failed: failures.map(({ file, error }) => `${file}: ${error.message}`),
+			...(failures.length === 0
+				? {}
+				: {
+						failures,
+						next: again.cli ?? "",
+						nextSteps: [{ ...again, note: "tries only the failed files again" }],
+					}),
+			toTranscribe: failures.length,
 			estimateUsd: roundUsd(
 				outcomes.reduce((sum, outcome) => sum + ("usd" in outcome ? outcome.usd : 0), 0),
 			),
 			dryRun: false,
 		};
 	}),
-	render: (o) =>
-		o.dryRun
-			? `Would transcribe ${o.toTranscribe} file${o.toTranscribe === 1 ? "" : "s"} (~${usd(o.estimateUsd)}), already done ${o.skipped}; nothing was spent.${o.budget === undefined ? "" : ` ${budgetLine(o.budget)}`}`
+	render: (o) => {
+		const failed = (o.failures ?? []).map(
+			({ file, error }) => `  ✗ ${file}: ${error.message}\n    → ${error.fix}`,
+		);
+		return o.dryRun
+			? [
+					`Would transcribe ${o.toTranscribe} file${o.toTranscribe === 1 ? "" : "s"} (~${usd(o.estimateUsd)}), already done ${o.skipped}; nothing was spent.${o.budget === undefined ? "" : ` ${budgetLine(o.budget)}`}`,
+					...(failed.length > 0 ? [`Can't read ${failed.length}:`, ...failed] : []),
+					`Next: ${o.next}`,
+				].join("\n")
 			: [
 					`Transcribed ${o.transcribed}, already done ${o.skipped}, failed ${o.failed.length}.`,
-					...o.failed.map((line) => `  ✗ ${line}`),
-					...(o.failed.length > 0 ? ["Run it again to retry only the failed files."] : []),
-				].join("\n"),
+					...failed,
+					...(o.next === undefined
+						? []
+						: [`Next: ${o.next}   (tries only the failed files again)`]),
+				].join("\n");
+	},
 });
