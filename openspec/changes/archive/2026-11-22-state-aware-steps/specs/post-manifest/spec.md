@@ -23,7 +23,7 @@ Each transcript, beat plan, image and draft SHALL store an `inputHash` of its in
 
 ### Requirement: A post SHALL record what happens after the draft
 
-`post.json` SHALL record the review, the final video, each platform the post was published on (one record per platform) and when it was archived. The stage SHALL follow these: `needs-fix`, `rejected`, `approved`, `final`, `posted`, `archived`. Archived posts SHALL be listed only when someone asks for them by stage. A platform SHALL be recorded only for an approved draft, a final video or a post already published, and a final video only before the post is published. Archiving again SHALL keep the first time.
+`post.json` SHALL record the review, the final video, each platform the post was published on (one per platform) and when it was archived. The stage SHALL follow these: `needs-fix`, `rejected`, `approved`, `final`, `posted`, `archived`. Archived posts SHALL be listed only when asked for by stage. A platform SHALL be recorded only for an approved draft, a final video or a post already published, and a final video only before the post is published. Archiving again SHALL keep the first time.
 
 #### Scenario: Finalizing before approval
 
