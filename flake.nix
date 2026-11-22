@@ -5,7 +5,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     # Spec-driven planning CLI, pinned so every shell gets the same version.
-    openspec.url = "github:Fission-AI/OpenSpec/v1.16.0";
+    openspec.url = "github:Fission-AI/OpenSpec/v2.1.1";
   };
 
   outputs = { self, nixpkgs, flake-utils, openspec }:
