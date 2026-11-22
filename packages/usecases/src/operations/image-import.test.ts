@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { Context } from "../context.ts";
 import { postDir, readPost } from "../post-store.ts";
 import { testContext } from "../test/context.ts";
-import { fakePorts, run, runFailure } from "../test/fakes.ts";
+import { fakePng, fakePorts, run, runFailure } from "../test/fakes.ts";
 import { failurePastLockWait } from "../test/lock.ts";
 import { readyForImages, seedPost } from "../test/posts.ts";
 import { imageImport } from "./image-import.ts";
@@ -39,11 +39,15 @@ const withSavedRequest = () => {
 	};
 };
 
-/** A file the user made elsewhere, outside the posts folder. */
-const ownImage = (ctx: Context, name: string): string => {
+/** A file the user made elsewhere, outside the posts folder: a PNG unless `bytes` says otherwise. */
+const ownImage = (
+	ctx: Context,
+	name: string,
+	bytes: Uint8Array | string = fakePng("my picture"),
+): string => {
 	mkdirSync(ctx.paths.data, { recursive: true });
 	const file = join(ctx.paths.data, name);
-	writeFileSync(file, "my picture");
+	writeFileSync(file, bytes);
 	return file;
 };
 
@@ -60,7 +64,7 @@ describe("image import", () => {
 		// THEN a copy sits in the post's images folder
 		const copy = join(postDir(ctx, SLUG), "images", "beat-01-imported.png");
 		expect(result.file).toBe(copy);
-		expect(readFileSync(copy, "utf8")).toBe("my picture");
+		expect(readFileSync(copy)).toEqual(Buffer.from(fakePng("my picture")));
 		// AND beat 1 records it as imported, while beat 0 is untouched
 		const beats = (await Effect.runPromise(readPost(ctx, SLUG))).beats?.items;
 		expect(beats?.[1]?.image).toMatchObject({
@@ -74,7 +78,7 @@ describe("image import", () => {
 		// GIVEN a post and a GIF
 		const ctx = testContext();
 		await seedPost(ctx, SLUG, readyForImages());
-		const gif = ownImage(ctx, "loop.gif");
+		const gif = ownImage(ctx, "loop.gif", "GIF89a…");
 
 		// WHEN it is imported
 		const error = await runFailure(imageImport.run({ post: SLUG, beat: 0, file: gif }, ctx, MODE));
@@ -82,6 +86,40 @@ describe("image import", () => {
 		// THEN it is a usage error and nothing is copied
 		expect(error.code).toBe("usage");
 		expect(existsSync(join(postDir(ctx, SLUG), "images"))).toBe(false);
+	});
+
+	it("should refuse text named as a PNG, keeping the beat's image", async () => {
+		// GIVEN a post whose beat 0 has an image, and notes saved as notes.png
+		const ctx = testContext();
+		await seedPost(ctx, SLUG, readyForImages());
+		await run(
+			imageImport.run({ post: SLUG, beat: 0, file: ownImage(ctx, "first.png") }, ctx, MODE),
+		);
+		const before = (await Effect.runPromise(readPost(ctx, SLUG))).beats?.items[0]?.image;
+		const notes = ownImage(ctx, "notes.png", "just some notes");
+
+		// WHEN the notes are imported for beat 0
+		const error = await runFailure(
+			imageImport.run({ post: SLUG, beat: 0, file: notes }, ctx, MODE),
+		);
+
+		// THEN it is a usage error, and beat 0 keeps the image it had
+		expect(error.code).toBe("usage");
+		expect(error.message).toContain(notes);
+		expect((await Effect.runPromise(readPost(ctx, SLUG))).beats?.items[0]?.image).toEqual(before);
+	});
+
+	it("should name the copy by what the file holds", async () => {
+		// GIVEN a PNG saved with a .jpg name
+		const ctx = testContext();
+		await seedPost(ctx, SLUG, readyForImages());
+		const png = ownImage(ctx, "photo.jpg");
+
+		// WHEN it is imported for beat 1
+		const result = await run(imageImport.run({ post: SLUG, beat: 1, file: png }, ctx, MODE));
+
+		// THEN the copy is a .png
+		expect(result.file).toBe(join(postDir(ctx, SLUG), "images", "beat-01-imported.png"));
 	});
 
 	it("should refuse a beat the plan doesn't have", async () => {

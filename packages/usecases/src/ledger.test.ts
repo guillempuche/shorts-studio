@@ -440,6 +440,11 @@ describe("settings that can't be used", () => {
 		// AND the fix names doctor in both forms, and the MCP server's restart
 		expect(error.fix).toContain("doctor (`config_check` over MCP)");
 		expect(error.fix).toContain("restart it after the fix");
+		// AND the first step is the agent's config_check, then the user's fix
+		expect(error.nextSteps.map((step) => [step.by, step.tool])).toEqual([
+			["agent", "config_check"],
+			["user", undefined],
+		]);
 		// AND the dry run says it doesn't fit, for the same reason
 		expect(budget).toMatchObject({ fits: false, stoppedBy: "settings" });
 	});

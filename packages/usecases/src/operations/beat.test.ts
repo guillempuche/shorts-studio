@@ -1,14 +1,15 @@
 import { writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { planInputHash, recutInputHash } from "../freshness.ts";
 import { postDir, readPost } from "../post-store.ts";
-import { testContext } from "../test/context.ts";
+import { tempDir, testContext } from "../test/context.ts";
 import { fakePorts, run, runFailure } from "../test/fakes.ts";
 import { failurePastLockWait } from "../test/lock.ts";
 import { type PostFields, seedPost } from "../test/posts.ts";
-import { beatPlan } from "./beat.ts";
+import { expectValidStep } from "../test/steps.ts";
+import { beatPlan, beatSet } from "./beat.ts";
 
 const SLUG = "2026-11-04-plan";
 const MODE = { dryRun: false, confirmed: true } as const;
@@ -244,5 +245,202 @@ describe("beat plan, against the current transcript", () => {
 		expect(error.code).toBe("stale");
 		expect(error.fix).toContain(`beat plan --post ${SPEECH} --force`);
 		expect(await revisionOf(ctx)).toBe(before);
+	});
+});
+
+describe("beat plan without what it needs", () => {
+	it("should give the source_import step when the post has no audio, with the file to fill", async () => {
+		// GIVEN a post with no audio
+		const ctx = testContext();
+		await seedPost(ctx, SLUG);
+
+		// WHEN its beats are planned
+		const error = await runFailure(
+			beatPlan.run({ post: SLUG, byMoment: false, force: false }, ctx, MODE),
+		);
+
+		// THEN its first step imports the audio, with the file left for the agent to fill
+		expect(error.code).toBe("not-found");
+		expect(error.nextSteps[0]).toMatchObject({ by: "agent", tool: "source_import" });
+		expect(error.nextSteps[0]?.fill).toContain("file");
+		expectValidStep(error.nextSteps[0] ?? { by: "agent" }, "source_import");
+		// AND the fix is written out in full
+		expect(error.fix).not.toMatch(/…$/);
+		expect(error.fix).toContain(`source import --post ${SLUG} --file <audio-or-video>`);
+	});
+});
+
+describe("beat set", () => {
+	const set = (
+		ctx: ReturnType<typeof testContext>,
+		input: Partial<{
+			beats: ReadonlyArray<{ beat: number; prompt?: string; moment?: "hook" | "payoff" }>;
+			from: string;
+			beat: number;
+			prompt: string;
+		}>,
+	) =>
+		beatSet.run(
+			{
+				post: SLUG,
+				beats: input.beats,
+				from: input.from,
+				beat: input.beat,
+				prompt: input.prompt,
+				moment: undefined,
+				motion: undefined,
+			},
+			ctx,
+			MODE,
+		);
+	const ready = async () => {
+		const ctx = testContext();
+		await seedPost(ctx, SLUG, withOldPlan());
+		return ctx;
+	};
+	const postOf = (ctx: ReturnType<typeof testContext>) => Effect.runPromise(readPost(ctx, SLUG));
+
+	it("should set beats passed inline", async () => {
+		// GIVEN a post with two beats
+		const ctx = await ready();
+
+		// WHEN beat 0 gets a moment and a prompt inline
+		await run(set(ctx, { beats: [{ beat: 0, moment: "hook", prompt: "a green door" }] }));
+
+		// THEN beat 0 has them, and beat 1 is as it was
+		const [first, second] = (await postOf(ctx)).beats?.items ?? [];
+		expect(first).toMatchObject({ moment: "hook", prompt: "a green door" });
+		expect(second?.prompt).toBe("a blue sky");
+	});
+
+	it("should set beats from a JSON file", async () => {
+		// GIVEN a post with two beats, and a file of settings
+		const ctx = await ready();
+		const file = join(tempDir(), "beats.json");
+		writeFileSync(file, JSON.stringify([{ beat: 1, prompt: "a grey sky" }]));
+
+		// WHEN the beats are set from it
+		await run(set(ctx, { from: file }));
+
+		// THEN beat 1 has the new prompt
+		expect((await postOf(ctx)).beats?.items[1]?.prompt).toBe("a grey sky");
+	});
+
+	it("should set one beat's prompt", async () => {
+		// GIVEN a post with two beats
+		const ctx = await ready();
+
+		// WHEN beat 1 gets a prompt
+		await run(set(ctx, { beat: 1, prompt: "a grey sky" }));
+
+		// THEN beat 1 has it
+		expect((await postOf(ctx)).beats?.items[1]?.prompt).toBe("a grey sky");
+	});
+
+	it("should refuse two forms at once, changing nothing", async () => {
+		// GIVEN a post with two beats
+		const ctx = await ready();
+		const before = (await postOf(ctx)).revision;
+
+		// WHEN beats come inline and as one beat at once
+		const error = await runFailure(
+			set(ctx, { beats: [{ beat: 0, prompt: "x" }], beat: 1, prompt: "y" }),
+		);
+
+		// THEN it is a usage error naming the three forms, and nothing is saved
+		expect(error.code).toBe("usage");
+		expect(error.fix).toContain("--beats");
+		expect(error.fix).toContain("--from");
+		expect(error.fix).toContain("--beat <n>");
+		expect((await postOf(ctx)).revision).toBe(before);
+	});
+
+	it("should refuse when nothing is given, naming the three forms", async () => {
+		// GIVEN a post with two beats
+		const ctx = await ready();
+
+		// WHEN nothing is set
+		const error = await runFailure(set(ctx, {}));
+
+		// THEN it is a usage error naming each form
+		expect(error.code).toBe("usage");
+		expect(error.fix).toContain("--beats");
+		expect(error.fix).toContain("--from <beats.json>");
+	});
+
+	it("should name the full path of a relative file that isn't there", async () => {
+		// GIVEN a post with two beats
+		const ctx = await ready();
+
+		// WHEN the beats are set from a relative path with no file
+		const error = await runFailure(set(ctx, { from: "missing-beats.json" }));
+
+		// THEN it is not found, naming the full path it looked at
+		expect(error.code).toBe("not-found");
+		expect(error.message).toBe(`No file at ${resolve("missing-beats.json")}.`);
+	});
+
+	it("should refuse a blank prompt, keeping the one there", async () => {
+		// GIVEN a post whose beat 0 has a prompt
+		const ctx = await ready();
+		const before = (await postOf(ctx)).revision;
+
+		// WHEN beat 0 gets a prompt of spaces
+		const error = await runFailure(set(ctx, { beat: 0, prompt: "   " }));
+
+		// THEN it is a usage error naming beat 0, and nothing is saved
+		expect(error.code).toBe("usage");
+		expect(error.message).toContain("beat 0");
+		expect((await postOf(ctx)).revision).toBe(before);
+	});
+
+	it("should refuse a beat named twice inline, changing nothing", async () => {
+		// GIVEN a post with two beats
+		const ctx = await ready();
+		const before = (await postOf(ctx)).revision;
+
+		// WHEN beat 1 is named twice
+		const error = await runFailure(
+			set(ctx, {
+				beats: [
+					{ beat: 1, prompt: "x" },
+					{ beat: 1, moment: "payoff" },
+				],
+			}),
+		);
+
+		// THEN it is a usage error naming beat 1, and nothing is saved
+		expect(error.code).toBe("usage");
+		expect(error.message).toBe("Beat 1 is named more than once.");
+		expect((await postOf(ctx)).revision).toBe(before);
+	});
+
+	it("should refuse a beat named twice in a file, and a key a beat doesn't take", async () => {
+		// GIVEN a post with two beats, a file that names beat 0 twice, and one with a misspelt key
+		const ctx = await ready();
+		const before = (await postOf(ctx)).revision;
+		const twice = join(tempDir(), "twice.json");
+		writeFileSync(
+			twice,
+			JSON.stringify([
+				{ beat: 0, prompt: "x" },
+				{ beat: 0, prompt: "y" },
+			]),
+		);
+		const misspelt = join(tempDir(), "misspelt.json");
+		writeFileSync(misspelt, JSON.stringify([{ beat: 0, promt: "x" }]));
+
+		// WHEN the beats are set from each
+		const errors = [
+			await runFailure(set(ctx, { from: twice })),
+			await runFailure(set(ctx, { from: misspelt })),
+		];
+
+		// THEN both are usage errors, the second naming the key and the keys a beat takes
+		expect(errors.map((error) => error.code)).toEqual(["usage", "usage"]);
+		expect(errors[1]?.message).toContain("promt");
+		expect(errors[1]?.message).toContain("It takes: beat, prompt, moment, motion");
+		// AND nothing is saved
+		expect((await postOf(ctx)).revision).toBe(before);
 	});
 });

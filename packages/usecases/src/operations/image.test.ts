@@ -19,6 +19,7 @@ import {
 	type FakeImageMaker,
 	fakeImageBytes,
 	fakeImageMaker,
+	fakePng,
 	fakePorts,
 	run,
 	runFailure,
@@ -28,6 +29,7 @@ import { approveAsIs, approvedAsIs, readyForImages, seedPost } from "../test/pos
 import { expectValidStep } from "../test/steps.ts";
 import { imageGenerate } from "./image.ts";
 import { imageImport } from "./image-import.ts";
+import { postShow } from "./post.ts";
 
 const SLUG = "2026-11-04-spend";
 
@@ -701,6 +703,10 @@ describe("image generate", () => {
 		// THEN it stops before the provider, asking for the user's approval
 		expect(error.code).toBe("needs-approval");
 		expect(maker.submits).toHaveLength(0);
+		// AND the fix says to ask the user, whose step it is, with no tool
+		expect(error.fix).toMatch(/^Ask the user to /);
+		expect(error.nextSteps[0]).toMatchObject({ by: "user", cli: `script approve --post ${SLUG}` });
+		expect(error.nextSteps[0]?.tool).toBeUndefined();
 	});
 
 	it("should refuse to spend when a prompt changed after the script was approved", async () => {
@@ -730,6 +736,66 @@ describe("image generate", () => {
 		expect(error.message).toContain("prompt of beat 1");
 		expect(error.fix).toContain("script approve");
 		expect(maker.submits).toHaveLength(0);
+	});
+
+	it.each(["7", "0x", "1.5", "-1"])(
+		"should refuse --beat %s before anything is reserved or sent",
+		async (beat) => {
+			// GIVEN a post ready for images, with beats 0 and 1
+			const { ctx, maker, ports } = await ready();
+			const seeds = (await postOf(ctx)).beats?.items.map((b) => b.seed);
+
+			// WHEN images are generated for a value that isn't one of its beats, as a dry run and for real
+			const errors = [
+				await runFailure(generate(ctx, { beat }, true), ports),
+				await runFailure(generate(ctx, { beat, reroll: true }), ports),
+			];
+
+			// THEN both are usage errors naming the value and the post's beats
+			for (const error of errors) {
+				expect(error.code).toBe("usage");
+				expect(error.message).toContain(`"${beat}"`);
+				expect(error.message).toContain("beats 0–1");
+			}
+			// AND nothing was reserved, sent or rerolled
+			expect(await ledgerOf(ctx)).toEqual([]);
+			expect(maker.submits).toHaveLength(0);
+			expect((await postOf(ctx)).beats?.items.map((b) => b.seed)).toEqual(seeds);
+		},
+	);
+
+	it("should give the post's own next steps when a beat has no prompt", async () => {
+		// GIVEN beat 1 lost its prompt, and the user approved the post as it now stands
+		const { ctx, maker, ports } = await ready();
+		await Effect.runPromise(
+			updatePost(ctx, SLUG, "test", (post) =>
+				Effect.succeed({
+					...post,
+					...(post.beats && {
+						beats: {
+							...post.beats,
+							items: post.beats.items.map(({ prompt, ...b }) =>
+								b.index === 1 || prompt === undefined ? b : { ...b, prompt },
+							),
+						},
+					}),
+				}),
+			),
+		);
+		await approveAsIs(ctx, SLUG);
+
+		// WHEN images are generated
+		const error = await runFailure(generate(ctx), ports);
+
+		// THEN it names the beat, sends nothing, and gives post show's steps as data
+		expect(error.message).toContain("Beats without a prompt: 1.");
+		expect(maker.submits).toHaveLength(0);
+		const shown = await run(
+			postShow.run({ post: SLUG }, ctx, { dryRun: false, confirmed: true }),
+			ports,
+		);
+		expect(error.nextSteps).toEqual(shown.nextSteps);
+		expect(error.nextSteps.length).toBeGreaterThan(0);
 	});
 
 	it("should never send a beat that has no prompt, even when rerolled", async () => {
@@ -778,7 +844,7 @@ describe("image generate", () => {
 		const { ctx, maker, ports } = await ready();
 		const ownImage = join(ctx.paths.data, "mj.png");
 		mkdirSync(ctx.paths.data, { recursive: true });
-		writeFileSync(ownImage, "png");
+		writeFileSync(ownImage, fakePng("mj"));
 		await run(
 			imageImport.run({ post: SLUG, beat: 0, file: ownImage }, ctx, {
 				dryRun: false,
@@ -854,6 +920,8 @@ describe("image generate", () => {
 		expect(error.code).toBe("usage");
 		expect(error.message).toContain('"nope"');
 		expect(error.fix).toContain("image.provider in config.json");
+		// AND the step is the agent's config_check, which shows what's wrong
+		expect(error.nextSteps[0]).toMatchObject({ by: "agent", tool: "config_check" });
 	});
 
 	it("should refuse a model the provider doesn't offer, listing the ones it does", async () => {

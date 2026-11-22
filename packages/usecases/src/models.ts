@@ -12,6 +12,7 @@ import type { Context } from "./context.ts";
 import { daysBetween, daysNow } from "./days.ts";
 import type { PaidCall } from "./ledger.ts";
 import { type Check, ImageMaker, type OwnModels, type ProviderInfo, Transcriber } from "./ports.ts";
+import { agentStep } from "./steps.ts";
 
 /** A model and the name it was chosen by, which is what post.json and the ledger record. */
 export type NamedModel = Model & { readonly name: string };
@@ -99,7 +100,8 @@ export const chooseModel = Effect.fn("chooseModel")(function* (
 		return yield* fail(
 			"usage",
 			`The ${job} provider "${offer.provider}" offers no models.`,
-			`Check ${job}.provider in config.json; doctor shows what's wrong with it.`,
+			`Check ${job}.provider in config.json; doctor (\`config_check\` over MCP) shows what's wrong with it.`,
+			[agentStep("config_check", {})],
 		);
 	}
 
@@ -110,6 +112,8 @@ export const chooseModel = Effect.fn("chooseModel")(function* (
 			"usage",
 			`The ${offer.provider} ${job} provider has no model "${name}".`,
 			`Use one of: ${available.join(", ")}. Or add it under models in config.json.`,
+			// A model asked for by name is the caller's to change; one from the settings, the user's.
+			[wanted === undefined ? agentStep("config_check", {}) : agentStep("models_list", {})],
 		);
 	}
 	return { ...model, name } satisfies NamedModel;

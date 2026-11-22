@@ -5,8 +5,8 @@
  * told to.
  */
 
-import { copyFileSync, existsSync } from "node:fs";
-import { extname, join, resolve } from "node:path";
+import { copyFileSync } from "node:fs";
+import { extname, join } from "node:path";
 import { fail, type ShortsError } from "@shorts-studio/domain/errors";
 import {
 	currentReview,
@@ -18,7 +18,7 @@ import {
 } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import { fileHash, fileStep } from "../files.ts";
-import { parseBeatList, requireUser } from "../inputs.ts";
+import { inputFile, parseBeatList, RELATIVE_PATH, requireUser } from "../inputs.ts";
 import { defineOperation, p } from "../operation.ts";
 import { MediaTools } from "../ports.ts";
 import { postDir, readPost, refuseArchived, updatePost } from "../post-store.ts";
@@ -141,21 +141,17 @@ export const postFinalize = defineOperation({
 		"Record the finished video (usually exported from CapCut) as the post's final.mp4. The draft should be approved first.",
 	params: {
 		post: p.string("Post slug"),
-		file: p.string("Path to the finished video"),
+		file: p.string(`Path to the finished video; ${RELATIVE_PATH}`),
 	},
 	output: Schema.Struct({ file: Schema.String, durationSec: Schema.Finite, ...NextFields }),
 	surface: "cli-and-mcp",
 	spends: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
 	run: Effect.fn("post_finalize")(function* (input, ctx) {
-		const source = resolve(input.file);
-		if (!existsSync(source)) {
-			return yield* fail(
-				"not-found",
-				`No file at ${source}.`,
-				"Export the video from CapCut first, then pass its path.",
-			);
-		}
+		const source = yield* inputFile(
+			input.file,
+			"Export the video from CapCut first, then pass its path.",
+		);
 		const before = yield* readPost(ctx, input.post);
 		yield* refuseArchived(before, "post finalize");
 		const platforms = (before.published ?? []).map((entry) => entry.platform);
@@ -190,6 +186,14 @@ export const postFinalize = defineOperation({
 	render: (o) => `Final video saved: ${o.file} (${o.durationSec.toFixed(1)} s)\nNext: ${o.next}`,
 });
 
+/** An http or https address with a host: `https://` alone isn't one. */
+const isAddress = (text: string): boolean => {
+	const url = URL.parse(text);
+	return (
+		url !== null && (url.protocol === "https:" || url.protocol === "http:") && url.hostname !== ""
+	);
+};
+
 export const postPublish = defineOperation({
 	name: "post_publish",
 	description: "Record where the post was published (platform and URL). Run once per platform.",
@@ -203,11 +207,11 @@ export const postPublish = defineOperation({
 	spends: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
 	run: Effect.fn("post_publish")(function* (input, ctx) {
-		if (!/^https?:\/\//.test(input.url)) {
+		if (!isAddress(input.url)) {
 			return yield* fail(
 				"usage",
-				`"${input.url}" isn't a URL.`,
-				"Pass the post's full https:// address.",
+				`"${input.url}" isn't a full web address.`,
+				"Pass the post's full address, e.g. https://www.instagram.com/p/<id>/.",
 			);
 		}
 		// An approved draft may be published as it is; a final video, or a platform already recorded,

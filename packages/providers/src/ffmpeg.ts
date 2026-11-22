@@ -44,6 +44,13 @@ const runFfmpeg = async (
 	}
 };
 
+/** The `max_volume` ffmpeg's volumedetect prints, in dBFS; -inf (pure zeros) as -Infinity. */
+export const peakOf = (stderr: string): number | undefined => {
+	const match = /max_volume:\s*(-?inf|-?[\d.]+) dB/.exec(stderr);
+	if (match?.[1] === undefined) return undefined;
+	return match[1].endsWith("inf") ? Number.NEGATIVE_INFINITY : Number.parseFloat(match[1]);
+};
+
 const ffmpegCheck = async (ctx: ProviderContext): Promise<Check> => {
 	const version = await tryRun(ctx, "ffmpeg", ["-hide_banner", "-version"]);
 	if (version === undefined || version.code !== 0) {
@@ -99,6 +106,44 @@ const mediaTools = (ctx: ProviderContext): MediaTools["Service"] => ({
 			}
 			return seconds;
 		}, failure("Check that the file is audio or video ffprobe can read.")),
+
+	audioStreams: (file) =>
+		attempt(async (signal) => {
+			const result = await ctx.run(
+				"ffprobe",
+				[
+					"-v",
+					"error",
+					"-select_streams",
+					"a",
+					"-show_entries",
+					"stream=index",
+					"-of",
+					"csv=p=0",
+					file,
+				],
+				{ signal },
+			);
+			// ffprobe refusing the file means it isn't audio or video, not that ffprobe is missing.
+			if (result.code !== 0) return undefined;
+			return result.stdout.split("\n").filter((line) => line.trim() !== "").length;
+		}, failure("Check that ffprobe works: doctor")),
+
+	peakDb: (file) =>
+		attempt(async (signal) => {
+			const result = await ctx.run(
+				"ffmpeg",
+				["-hide_banner", "-nostats", "-i", file, "-vn", "-af", "volumedetect", "-f", "null", "-"],
+				{ signal },
+			);
+			const peak = peakOf(result.stderr);
+			if (result.code !== 0 || peak === undefined) {
+				throw new ToolRefused(
+					`ffmpeg couldn't measure the level of ${file}: ${result.stderr.trim().split("\n").slice(-3).join(" ") || `exit ${result.code}`}`,
+				);
+			}
+			return peak;
+		}, failure("Check that the file is audio ffmpeg can read.")),
 
 	extractAudio: (input, output) =>
 		attempt(

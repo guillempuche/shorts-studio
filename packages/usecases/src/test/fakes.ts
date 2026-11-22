@@ -5,7 +5,7 @@
  */
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fail, failBecause, NotSent, Refused, RequestEnded } from "@shorts-studio/domain/errors";
 import type { Model } from "@shorts-studio/domain/models";
 import type { Transcript } from "@shorts-studio/domain/post";
@@ -14,6 +14,7 @@ import type { KeySpec } from "../context.ts";
 import {
 	type Check,
 	Downloader,
+	type DownloadResult,
 	ImageMaker,
 	type ImageRequest,
 	MediaTools,
@@ -67,6 +68,10 @@ const paidCallFailure = (answer: "refused" | "dropped" | "unreachable") => {
 /** The bytes the fake returns for a request: they change with the prompt and the seed. */
 export const fakeImageBytes = (prompt: string, seed: number): Uint8Array =>
 	new TextEncoder().encode(`${prompt} #${seed}`);
+
+/** A PNG's signature, then `text`: enough for `image import`, which reads only the first bytes. */
+export const fakePng = (text: string): Uint8Array =>
+	Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...new TextEncoder().encode(text));
 
 /** The fake's own image models, priced per image so a test's estimate is easy to read. */
 export const FAKE_IMAGE_MODELS = {
@@ -165,11 +170,29 @@ export type FakeMediaTools = MediaTools["Service"] & {
 
 /**
  * Media tools in memory: every file is `durationSec` long (4 s unless set), audio is copied
- * rather than converted, and a rendered video is a small JSON file of the job's beats.
+ * rather than converted, and a rendered video is a small JSON file of the job's beats. Every
+ * file has one audio track peaking at −3 dBFS, unless `audioStreams` or `peakDb` says otherwise
+ * for its name.
  */
 export const fakeMediaTools = (
-	options: { readonly durationSec?: number; readonly checks?: ReadonlyArray<Check> } = {},
+	options: {
+		readonly durationSec?: number;
+		readonly checks?: ReadonlyArray<Check>;
+		/** Audio tracks by file name; undefined for a file that isn't audio or video. */
+		readonly audioStreams?: Readonly<Record<string, number | undefined>>;
+		/** Peak level in dBFS by file name, before or after conversion. */
+		readonly peakDb?: Readonly<Record<string, number>>;
+		/** Names of files whose length can't be read. */
+		readonly unreadable?: ReadonlyArray<string>;
+	} = {},
 ): FakeMediaTools => {
+	/** The value `table` gives the file's name, or `fallback`. */
+	const byName = <A>(table: Readonly<Record<string, A>> | undefined, file: string, fallback: A) =>
+		table !== undefined && Object.hasOwn(table, basename(file))
+			? (table[basename(file)] as A)
+			: fallback;
+	/** A converted file keeps the level of the file it came from. */
+	const levels = new Map<string, number>();
 	const copy = (from: string, to: string) =>
 		Effect.sync(() => {
 			mkdirSync(dirname(to), { recursive: true });
@@ -182,8 +205,18 @@ export const fakeMediaTools = (
 		checks: Effect.succeed(options.checks ?? []),
 		rendererVersion: 1,
 		renders: [],
-		duration: () => Effect.succeed(options.durationSec ?? 4),
-		extractAudio: copy,
+		duration: (file) =>
+			options.unreadable?.includes(basename(file))
+				? Effect.fail(
+						fail("failed", `ffprobe couldn't read ${file}.`, "Check that the file is audio."),
+					)
+				: Effect.succeed(options.durationSec ?? 4),
+		audioStreams: (file) => Effect.succeed(byName(options.audioStreams, file, 1)),
+		peakDb: (file) => Effect.succeed(levels.get(file) ?? byName(options.peakDb, file, -3)),
+		extractAudio: (from, to) =>
+			copy(from, to).pipe(
+				Effect.tap(() => Effect.sync(() => levels.set(to, byName(options.peakDb, from, -3)))),
+			),
 		copyAudio: (cwd, input, output) => copy(join(cwd, input), join(cwd, output)),
 		renderVideo: (job) =>
 			Effect.sync(() => {
@@ -253,14 +286,30 @@ export const fakeTranscriber = (
 	return transcriber;
 };
 
-/** A downloader in memory that reports every download as done. */
-export const fakeDownloader = (): Downloader["Service"] => ({
-	provider: "fake-downloader",
-	keys: [],
-	checks: Effect.succeed([]),
-	downloadList: () => Effect.succeed({ ok: true, errors: "" }),
-	downloadOne: () => Effect.succeed({ ok: true, errors: "" }),
-});
+export type FakeDownloader = Downloader["Service"] & {
+	/** The folder of every download asked for, in order. */
+	readonly calls: Array<string>;
+};
+
+/** A downloader in memory that downloads nothing and answers `result`: done, unless set. */
+export const fakeDownloader = (
+	result: DownloadResult = { ok: true, errors: "" },
+): FakeDownloader => {
+	const calls: Array<string> = [];
+	const answer = (job: { readonly cwd: string }) =>
+		Effect.sync(() => {
+			calls.push(job.cwd);
+			return result;
+		});
+	return {
+		provider: "fake-downloader",
+		keys: [],
+		checks: Effect.succeed([]),
+		calls,
+		downloadList: answer,
+		downloadOne: answer,
+	};
+};
 
 /** Every port, each an in-memory fake unless replaced. */
 export const fakePorts = (

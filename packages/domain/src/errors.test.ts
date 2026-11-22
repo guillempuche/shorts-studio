@@ -132,4 +132,32 @@ describe("reportOf", () => {
 			fix: "Raise the cap.",
 		});
 	});
+
+	it("should carry the steps its fix names, as data", () => {
+		// GIVEN a failure whose fix names a step
+		const step = { by: "agent", cli: "post list", tool: "post_list", args: {} } as const;
+		const error = fail("not-found", "No post x.", "List posts with: post list", [step]);
+
+		// WHEN it is reported
+		// THEN the report holds the step after the three fields
+		expect(reportOf(error)).toEqual({
+			code: "not-found",
+			message: "No post x.",
+			fix: "List posts with: post list",
+			nextSteps: [step],
+		});
+		// AND the error itself gives them
+		expect(error.nextSteps).toEqual([step]);
+	});
+
+	it("should leave out nextSteps when there are none", () => {
+		// GIVEN failures made with no steps and with an empty list
+		const reports = [
+			reportOf(fail("failed", "Broke.", "Run it again.")),
+			reportOf(fail("failed", "Broke.", "Run it again.", [])),
+		];
+
+		// THEN neither report has the key
+		for (const report of reports) expect(Object.keys(report)).not.toContain("nextSteps");
+	});
 });

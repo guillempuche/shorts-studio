@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { NextStep } from "@shorts-studio/domain/next-step";
 import { type Post, type Stage, stageOf } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import { describe, expect, it } from "vitest";
@@ -11,7 +12,6 @@ import { fakeImageMaker, fakePorts, run, runFailure } from "../test/fakes.ts";
 import { approveAsIs } from "../test/posts.ts";
 import { imageGenerate } from "./image.ts";
 import { operations } from "./index.ts";
-import type { NextStep } from "./post.ts";
 
 const SLUG = "2026-11-04-loop";
 
@@ -109,17 +109,20 @@ describe("the daily loop", () => {
 			moment: b.index < beats.length / 2 ? "hook" : "payoff",
 		}));
 		await w.follow(
-			{ by: "agent", tool: "beat_set", args: { post: SLUG, from: "<moments.json>" } },
-			{ from: userFile(ctx, "moments.json", JSON.stringify(moments)) },
+			{ by: "agent", tool: "beat_set", args: { post: SLUG, beats: "<beats>" } },
+			{ beats: moments },
 		);
 		expect(w.nextTool()).toMatchObject({ tool: "beat_plan", args: { byMoment: true } });
 		await w.follow(w.nextTool());
 		expect(w.nextTool()?.tool).toBe("beat_set");
 		const recut = (await w.postOf()).beats?.items ?? [];
 		const prompts = recut.map((b) => ({ beat: b.index, prompt: `a door, beat ${b.index}` }));
-		await w.follow(w.nextTool(), { from: userFile(ctx, "beats.json", JSON.stringify(prompts)) });
+		// Inline, as an agent with only the MCP tools passes them.
+		expect(w.nextTool()?.fill).toEqual(["beats"]);
+		await w.follow(w.nextTool(), { beats: prompts });
 		expect(w.nextTool()?.tool).toBe("script_set");
-		await w.follow(w.nextTool(), { file: userFile(ctx, "script.md", "# Loop\n") });
+		expect(w.nextTool()?.fill).toEqual(["text"]);
+		await w.follow(w.nextTool(), { text: "# Loop\n" });
 		expect(await w.stage()).toBe("script-ready");
 
 		// AND the user approves it, and the images' dry run, the images and the render run

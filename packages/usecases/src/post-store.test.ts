@@ -92,8 +92,31 @@ describe("readPost", () => {
 		// THEN the error points at both fields
 		expect(error.message).toContain('["slug"]');
 		expect(error.message).toContain('["revision"]');
-		// AND says how to recover
+		// AND says how to recover, without pointing at text above the fix
 		expect(error.fix).toContain("hand edit");
+		expect(error.fix).toContain("named in the message");
+		expect(error.fix).not.toContain("named above");
+		// AND the step is the user's
+		expect(error.nextSteps[0]?.by).toBe("user");
+	});
+
+	it("should tell a post.json that isn't JSON from one with bad fields", async () => {
+		// GIVEN a post.json cut off half-way
+		const ctx = testContext();
+		await seedPost(ctx, SLUG);
+		writeFileSync(join(postDir(ctx, SLUG), "post.json"), '{"manifestVersion": 1, "slug":');
+
+		// WHEN it is read
+		const error = await Effect.runPromise(Effect.flip(readPost(ctx, SLUG)));
+
+		// THEN it says the file isn't JSON
+		expect(error.message).toContain("isn't JSON");
+		// AND the fix says to restore it or move the folder, naming no fields
+		expect(error.fix).toContain("restore it");
+		expect(error.fix).toContain("move the post's folder out of");
+		expect(error.fix).not.toContain("fields");
+		// AND the step is the user's
+		expect(error.nextSteps[0]?.by).toBe("user");
 	});
 
 	it("should refuse a slug that isn't lowercase words and dashes", async () => {
@@ -117,6 +140,10 @@ describe("readPost", () => {
 		// THEN it is not found, and the fix lists the posts
 		expect(error.code).toBe("not-found");
 		expect(error.fix).toContain("post list");
+		// AND its one step is the agent's post_list
+		expect(error.nextSteps).toEqual([
+			{ by: "agent", cli: "post list", tool: "post_list", args: {} },
+		]);
 	});
 
 	it("should name the post meant when it's the slug given with a date in front", async () => {
@@ -131,9 +158,18 @@ describe("readPost", () => {
 		// THEN it is not found, and the fix names the dated post
 		expect(error.code).toBe("not-found");
 		expect(error.fix).toContain("post show --post 2026-11-08-ax-test");
+		// AND its one step shows that post
+		expect(error.nextSteps).toEqual([
+			{
+				by: "agent",
+				cli: "post show --post 2026-11-08-ax-test",
+				tool: "post_show",
+				args: { post: "2026-11-08-ax-test" },
+			},
+		]);
 	});
 
-	it("should not guess when the slug given matches posts from several days", async () => {
+	it("should name every post from several days, newest first, with a step each", async () => {
 		// GIVEN two posts named "ax-test" on different days
 		const ctx = testContext();
 		await seedPost(ctx, "2026-11-07-ax-test");
@@ -142,8 +178,14 @@ describe("readPost", () => {
 		// WHEN it is read without a date
 		const error = await Effect.runPromise(Effect.flip(readPost(ctx, "ax-test")));
 
-		// THEN the fix lists the posts instead of picking one
-		expect(error.fix).toBe("List posts with: post list");
+		// THEN the fix names both, newest first
+		expect(error.code).toBe("not-found");
+		expect(error.fix).toContain("2026-11-08-ax-test, 2026-11-07-ax-test");
+		// AND there's a post_show step for each, the second one in place of the first
+		expect(error.nextSteps.map((step) => [step.tool, step.args?.["post"], step.or])).toEqual([
+			["post_show", "2026-11-08-ax-test", undefined],
+			["post_show", "2026-11-07-ax-test", true],
+		]);
 	});
 });
 

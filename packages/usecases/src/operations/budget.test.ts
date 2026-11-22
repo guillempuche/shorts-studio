@@ -1,9 +1,12 @@
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { DateTime, Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import type { Context } from "../context.ts";
 import { type PaidCall, reserve } from "../ledger.ts";
 import { BROKEN_CONFIG, testContext } from "../test/context.ts";
-import { run } from "../test/fakes.ts";
+import { run, runFailure } from "../test/fakes.ts";
+import { seedPost } from "../test/posts.ts";
 import { budgetShow } from "./budget.ts";
 
 const MODE = { dryRun: false, confirmed: true } as const;
@@ -157,5 +160,43 @@ describe("budget show", () => {
 
 		// THEN today's total is exact, without the float sum's noise
 		expect(result.todayUsd).toBe(0.07215);
+	});
+});
+
+describe("budget show for one post", () => {
+	it("should fail with not-found for a name no post, collection or spending goes by", async () => {
+		// GIVEN no posts and nothing spent
+		const ctx = testContext();
+
+		// WHEN the budget of a misspelt post is shown
+		const error = await runFailure(budgetShow.run({ post: "nope" }, ctx, MODE));
+
+		// THEN it is not found, with the step that lists the posts
+		expect(error.code).toBe("not-found");
+		expect(error.nextSteps[0]?.tool).toBe("post_list");
+	});
+
+	it("should list a post that has spent nothing at $0", async () => {
+		// GIVEN a post with nothing spent
+		const ctx = testContext();
+		await seedPost(ctx, "2026-11-04-quiet");
+
+		// WHEN its budget is shown
+		const result = await run(budgetShow.run({ post: "2026-11-04-quiet" }, ctx, MODE));
+
+		// THEN it is listed at $0
+		expect(result.posts).toEqual([{ post: "2026-11-04-quiet", usd: 0 }]);
+	});
+
+	it("should list a saved collection that has spent nothing at $0", async () => {
+		// GIVEN a saved collection's folder, with nothing spent on it
+		const ctx = testContext();
+		mkdirSync(join(ctx.paths.posts, "saved", "faves"), { recursive: true });
+
+		// WHEN its budget is shown
+		const result = await run(budgetShow.run({ post: "saved/faves" }, ctx, MODE));
+
+		// THEN it is listed at $0
+		expect(result.posts).toEqual([{ post: "saved/faves", usd: 0 }]);
 	});
 });

@@ -8,6 +8,7 @@
  */
 
 import { Runtime, Schema, SchemaIssue } from "effect";
+import { NextStep } from "./next-step.ts";
 
 export const ErrorCode = Schema.Literals([
 	"failed",
@@ -25,7 +26,15 @@ export const ErrorCode = Schema.Literals([
 ]);
 export type ErrorCode = typeof ErrorCode.Type;
 
-const said = { message: Schema.String, fix: Schema.String };
+/**
+ * What every reason says. `nextSteps` gives the steps its fix names as data, in the shape results
+ * use, so an agent can tell its own step from the user's without reading the fix.
+ */
+const said = {
+	message: Schema.String,
+	fix: Schema.String,
+	nextSteps: Schema.optionalKey(Schema.Array(NextStep)),
+};
 
 export class Failed extends Schema.TaggedError<Failed>()("Failed", said) {}
 export class Usage extends Schema.TaggedError<Usage>()("Usage", said) {}
@@ -93,7 +102,11 @@ const CODE: Readonly<Record<Reason["_tag"], ErrorCode>> = {
 	Interrupted: "interrupted",
 };
 
-type Said = { readonly message: string; readonly fix: string };
+type Said = {
+	readonly message: string;
+	readonly fix: string;
+	readonly nextSteps?: ReadonlyArray<NextStep>;
+};
 
 /**
  * The reason `fail` builds for each code. `provider` builds `ProviderFailed`, the outcome-unknown
@@ -143,6 +156,9 @@ export class ShortsError extends Schema.TaggedError<ShortsError>()("ShortsError"
 	get fix(): string {
 		return this.reason.fix;
 	}
+	get nextSteps(): ReadonlyArray<NextStep> {
+		return this.reason.nextSteps ?? [];
+	}
 	get code(): ErrorCode {
 		return CODE[this.reason._tag];
 	}
@@ -158,8 +174,19 @@ export class ShortsError extends Schema.TaggedError<ShortsError>()("ShortsError"
 
 export const failBecause = (reason: Reason): ShortsError => new ShortsError({ reason });
 
-export const fail = (code: ErrorCode, message: string, fix: string): ShortsError =>
-	failBecause(new REASON[code]({ message, fix }));
+export const fail = (
+	code: ErrorCode,
+	message: string,
+	fix: string,
+	nextSteps?: ReadonlyArray<NextStep>,
+): ShortsError =>
+	failBecause(
+		new REASON[code]({
+			message,
+			fix,
+			...(nextSteps === undefined || nextSteps.length === 0 ? {} : { nextSteps }),
+		}),
+	);
 
 const formatIssues = SchemaIssue.makeFormatterStandardSchemaV1();
 
@@ -186,10 +213,13 @@ export const ErrorReport = Schema.Struct({
 	code: ErrorCode,
 	message: Schema.String,
 	fix: Schema.String,
+	nextSteps: Schema.optionalKey(Schema.Array(NextStep)),
 });
 
+/** The error as it's reported; `nextSteps` only when there are some. */
 export const reportOf = (error: ShortsError): typeof ErrorReport.Type => ({
 	code: error.code,
 	message: error.message,
 	fix: error.fix,
+	...(error.nextSteps.length === 0 ? {} : { nextSteps: error.nextSteps }),
 });

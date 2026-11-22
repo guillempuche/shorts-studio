@@ -1,7 +1,11 @@
-import { Cause, Effect } from "effect";
+import { ImageMaker, Transcriber } from "@shorts-studio/usecases/ports";
+import { Cause, Effect, Layer } from "effect";
 import { HttpClientError, HttpClientRequest } from "effect/http";
 import { describe, expect, it } from "vitest";
-import { type PaidService, providerFailure, readFailure } from "./env.ts";
+import { type PaidService, providerFailure, readFailure, withEnv } from "./env.ts";
+import { falLayer } from "./fal.ts";
+import { providerContext } from "./test/context.ts";
+import { togetherLayer } from "./together.ts";
 
 const FAL: PaidService = { id: "fal", name: "FAL", key: { env: "FAL_KEY", keychain: "fal-key" } };
 const request = HttpClientRequest.post("https://example.invalid/submit");
@@ -180,5 +184,44 @@ describe("readFailure", () => {
 		// THEN it is ProviderFailed: the job was taken on, so it may have been billed
 		expect(failure.reason._tag).toBe("ProviderFailed");
 		expect(failure.fix).toContain("its cost stays counted");
+	});
+});
+
+describe("addressChecks", () => {
+	/** The checks of FAL and Together, with these addresses. */
+	const checksWith = (endpoints: Readonly<Record<string, string>>) =>
+		Effect.runPromise(
+			Effect.gen(function* () {
+				const fal = yield* ImageMaker;
+				const together = yield* Transcriber;
+				return { fal: yield* fal.checks, together: yield* together.checks };
+			}).pipe(
+				Effect.provide(
+					withEnv(Layer.merge(falLayer, togetherLayer), providerContext({ endpoints })),
+				),
+			),
+		);
+
+	it.each(["fal", "together"] as const)(
+		"should warn when SHORTS_<P>_URL sends %s's requests elsewhere",
+		async (provider) => {
+			// GIVEN the provider's address overridden
+			// WHEN its checks run
+			const checks = (await checksWith({ [provider]: "http://127.0.0.1:9" }))[provider];
+
+			// THEN one warning names the variable and the address
+			const variable = `SHORTS_${provider.toUpperCase()}_URL`;
+			expect(checks).toHaveLength(1);
+			expect(checks[0]).toMatchObject({ name: variable, status: "warn" });
+			expect(checks[0]?.detail).toContain("http://127.0.0.1:9");
+			expect(checks[0]?.fix).toContain(`Unset ${variable}`);
+		},
+	);
+
+	it("should give no row for a provider at its own address", async () => {
+		// GIVEN no address overridden
+		// WHEN the checks run
+		// THEN neither provider has a row
+		expect(await checksWith({})).toEqual({ fal: [], together: [] });
 	});
 });

@@ -22,6 +22,7 @@ export const SERVER_INSTRUCTIONS = [
 	"Start with post_list or post_show: post_show always returns `next`, the exact step to take.",
 	"Approving a script or a draft is the user's decision and isn't available as a tool.",
 	"Tools that spend money take dryRun: call them with dryRun first and show the user the estimate.",
+	"Fixes name CLI commands: `noun verb --some-flag` is the tool noun_verb with someFlag. An error's `nextSteps` give the tool and its arguments; a step by `user` is the user's to take, so ask them.",
 ].join(" ");
 
 export const mcpOperations = (operations: ReadonlyArray<Operation>): ReadonlyArray<Operation> =>
@@ -41,7 +42,9 @@ const toTool = (op: Operation) =>
 		.annotate(Tool.Readonly, op.hints.readonly)
 		.annotate(Tool.Destructive, op.hints.destructive)
 		.annotate(Tool.Idempotent, op.hints.idempotent)
-		.annotate(Tool.OpenWorld, op.hints.openWorld);
+		.annotate(Tool.OpenWorld, op.hints.openWorld)
+		// Published with `additionalProperties: false`, which toolInputSchema already enforces.
+		.annotate(Tool.Strict, true);
 
 /**
  * The toolkit and its handlers, as one registration layer for any MCP transport. The ports are

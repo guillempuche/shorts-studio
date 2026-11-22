@@ -1,10 +1,12 @@
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { type Post, Stage, stageOf } from "@shorts-studio/domain/post";
 import { DateTime, Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { type Freshness, UP_TO_DATE } from "../freshness.ts";
-import { readPost } from "../post-store.ts";
+import { postDir, readPost } from "../post-store.ts";
 import { testContext } from "../test/context.ts";
-import { run } from "../test/fakes.ts";
+import { fakePorts, run } from "../test/fakes.ts";
 import { approvedAsIs, type PostFields, seedPost, seedUpToDate, withDraft } from "../test/posts.ts";
 import { expectValidStep } from "../test/steps.ts";
 import { imageGenerate } from "./image.ts";
@@ -12,6 +14,58 @@ import { postArchive } from "./lifecycle.ts";
 import { nextStepsOf, nextText, postCreate, postList, postShow } from "./post.ts";
 
 const MODE = { dryRun: false, confirmed: true } as const;
+
+describe("post create, checking the name", () => {
+	const create = (post: string) =>
+		Effect.gen(function* () {
+			const ctx = testContext();
+			const error = yield* Effect.flip(
+				postCreate.run({ post, title: undefined, notes: undefined }, ctx, MODE),
+			);
+			return {
+				error,
+				folders: existsSync(join(ctx.paths.posts, "mine"))
+					? readdirSync(join(ctx.paths.posts, "mine"))
+					: [],
+			};
+		}).pipe(Effect.provide(fakePorts()), Effect.runPromise);
+
+	it.each(["", "2026-11-04-"])(
+		"should refuse %j, which has no name, making no folder",
+		async (name) => {
+			// GIVEN no posts
+			// WHEN a post is created with no name
+			const { error, folders } = await create(name);
+
+			// THEN it is a usage error, and no folder is made
+			expect(error.code).toBe("usage");
+			expect(folders).toEqual([]);
+		},
+	);
+
+	it("should refuse a slug longer than 100 characters, saying how long it is", async () => {
+		// GIVEN no posts
+		// WHEN a post is created with a name of 120 characters
+		const { error, folders } = await create("a".repeat(120));
+
+		// THEN it is a usage error saying the limit, the date included, and this slug's length
+		expect(error.code).toBe("usage");
+		expect(error.message).toContain("at most 100 characters, the date included");
+		expect(error.message).toContain("has 131");
+		expect(folders).toEqual([]);
+	});
+
+	it("should refuse a slug that starts with a date that doesn't exist", async () => {
+		// GIVEN no posts
+		// WHEN a post is created as 2026-13-45-x
+		const { error, folders } = await create("2026-13-45-x");
+
+		// THEN it is a usage error naming the date, and no folder is made
+		expect(error.code).toBe("usage");
+		expect(error.message).toContain("2026-13-45");
+		expect(folders).toEqual([]);
+	});
+});
 
 describe("post create", () => {
 	it("should put today's date in front of a slug that has none", async () => {
@@ -75,6 +129,29 @@ describe("post create", () => {
 });
 
 describe("post list", () => {
+	it("should list every post it can read, and name the one it can't, whatever the stage", async () => {
+		// GIVEN three posts, one of whose post.json isn't JSON
+		const ctx = testContext();
+		await seedPost(ctx, "2026-11-04-a");
+		await seedPost(ctx, "2026-11-04-b");
+		await seedPost(ctx, "2026-11-04-c");
+		writeFileSync(join(postDir(ctx, "2026-11-04-b"), "post.json"), "{ cut off");
+
+		// WHEN posts are listed, then listed by stage
+		const all = await run(postList.run({ stage: undefined }, ctx, MODE));
+		const ideas = await run(postList.run({ stage: "idea" }, ctx, MODE));
+
+		// THEN both list the two others, and name the damaged one with its error and fix
+		for (const listed of [all, ideas]) {
+			expect(listed.posts.map((post) => post.slug)).toEqual(["2026-11-04-c", "2026-11-04-a"]);
+			expect(listed.unreadable?.map((post) => post.slug)).toEqual(["2026-11-04-b"]);
+			expect(listed.unreadable?.[0]?.error.fix).toContain("restore it");
+		}
+		// AND the text lists it last
+		const lines = postList.render?.(all).split("\n") ?? [];
+		expect(lines[2]).toContain("2026-11-04-b");
+	});
+
 	it("should list posts newest first, with their stage and title", async () => {
 		// GIVEN an older post with a script and a newer one with a title
 		const ctx = testContext();
@@ -450,6 +527,35 @@ describe("nextStepsOf, following what's out of date", () => {
 		expect(steps[1]).toMatchObject({ tool: "beat_set", or: true });
 		// AND once re-cut, only the prompts are left
 		expect(nextStepsOf(post, { ...UP_TO_DATE, recut: true })[0]?.tool).toBe("beat_set");
+	});
+
+	it("should pass the beats inline when they have no moments and no prompts", () => {
+		// GIVEN beats with no moments and no prompts
+		const post = postOf({ audio, transcript, beats: beatsWith() });
+
+		// WHEN its steps are worked out
+		const [step] = nextStepsOf(post, UP_TO_DATE);
+
+		// THEN the step is beat_set with the beats to fill in, and no file to write first
+		expect(step).toMatchObject({ tool: "beat_set", args: { post: SLUG, beats: "<beats>" } });
+		expect(step?.fill).toEqual(["beats"]);
+		// AND its note names the beats to fill and the shape of each item
+		expect(step?.note).toContain("beats 0, 1");
+		expect(step?.note).toContain('{"beat": 0, "moment": "hook", "prompt": ');
+		expectValidStep(step ?? { by: "agent" }, "beat_set");
+	});
+
+	it("should pass the script inline once every beat has a prompt", () => {
+		// GIVEN beats that all have prompts, and no script
+		const post = postOf({ audio, transcript, beats: beatsWith({ prompt: true }) });
+
+		// WHEN its steps are worked out
+		const [step] = nextStepsOf(post, UP_TO_DATE);
+
+		// THEN the step is script_set with the text to fill in
+		expect(step).toMatchObject({ tool: "script_set", args: { post: SLUG, text: "<script>" } });
+		expect(step?.fill).toEqual(["text"]);
+		expectValidStep(step ?? { by: "agent" }, "script_set");
 	});
 
 	it("should name only the beat whose prompt changed after its image", () => {

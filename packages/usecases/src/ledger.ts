@@ -28,6 +28,7 @@ import { appendText, ensureDir, readText } from "./files.ts";
 import { requireKey } from "./inputs.ts";
 import { lockBusy, withLock } from "./lock.ts";
 import { roundUsd, usd, usdOf } from "./money.ts";
+import { agentStep, userStep } from "./steps.ts";
 
 /**
  * An instant written exactly as `toISOString` writes it (2026-11-04T09:00:00.000Z). `spent`
@@ -277,7 +278,11 @@ export const settingsRefusal = (ctx: Context): ShortsError | undefined => {
 	return fail(
 		"failed",
 		`A setting can't be used, so ${atRisk(leading)}, and nothing was spent: ${settingsIssueLine(leading)}${others}`,
-		`Run doctor (\`config_check\` over MCP) and fix the settings it names, then run this again. ${MCP_RESTART}`,
+		`Run doctor (\`config_check\` over MCP) and ask the user to fix the settings it names, then run this again. ${MCP_RESTART}`,
+		[
+			agentStep("config_check", {}, { note: "lists every setting that can't be used" }),
+			userStep(undefined, `the user fixes the setting: ${settingsIssueLine(leading)}`),
+		],
 	);
 };
 

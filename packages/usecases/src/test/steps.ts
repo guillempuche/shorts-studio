@@ -1,9 +1,9 @@
 /** Checks that a next step can be taken as written, over MCP and on the CLI. */
 
+import type { NextStep } from "@shorts-studio/domain/next-step";
 import { expect } from "vitest";
 import { commandPath, flagName } from "../operation.ts";
 import { operations } from "../operations/index.ts";
-import type { NextStep } from "../operations/post.ts";
 
 /** The operations an MCP client can call, by tool name. */
 const tools = new Map(

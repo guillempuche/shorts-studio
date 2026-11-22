@@ -14,7 +14,14 @@ import { requireKey } from "@shorts-studio/usecases/inputs";
 import { ImageMaker, type ImageRequest } from "@shorts-studio/usecases/ports";
 import { Effect, Layer, Redacted, Schedule, Schema } from "effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
-import { endedFix, type PaidService, ProviderEnv, providerFailure, readFailure } from "./env.ts";
+import {
+	addressChecks,
+	endedFix,
+	type PaidService,
+	ProviderEnv,
+	providerFailure,
+	readFailure,
+} from "./env.ts";
 
 export const FAL_KEY: KeySpec = { env: "FAL_KEY", keychain: "fal-key" };
 const FAL: PaidService = { id: "fal", name: "FAL", key: FAL_KEY };
@@ -173,7 +180,7 @@ export const falLayer = Layer.effect(
 		return ImageMaker.of({
 			provider: "fal",
 			keys: [FAL_KEY],
-			checks: Effect.succeed([]),
+			checks: Effect.succeed(addressChecks(env, "fal")),
 			models: FAL_MODELS,
 			defaultModel: "flux-schnell",
 			submit,

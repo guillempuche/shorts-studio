@@ -88,6 +88,10 @@ export class MediaTools extends Context.Service<
 		readonly rendererVersion: number;
 		/** How long `file` is, in seconds. */
 		duration(file: string): Effect.Effect<number, ShortsError>;
+		/** How many audio tracks `file` has, or undefined when it isn't audio or video at all. */
+		audioStreams(file: string): Effect.Effect<number | undefined, ShortsError>;
+		/** The loudest point of `file`'s audio, in dBFS: 0 at full scale, about −91 for silence. */
+		peakDb(file: string): Effect.Effect<number, ShortsError>;
 		/** Converts any audio or video file to AAC audio in an .m4a file. Takes absolute paths. */
 		extractAudio(input: string, output: string): Effect.Effect<void, ShortsError>;
 		renderVideo(job: VideoJob): Effect.Effect<void, ShortsError>;
