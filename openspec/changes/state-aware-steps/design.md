@@ -124,7 +124,7 @@ Alternative: change the hash formulas to hold these inputs. Rejected: every save
 12. The stage:
     - `draft`: when `f.draft` is stale, `draft_render`; then the user watches it and runs `post review --decision <decision>`.
     - `approved`: when `exportMatches` is false, `draft_render`; otherwise `capcut_export`, polishing in CapCut, then `post_finalize`.
-    - `needs-fix`: `draft_render`.
+    - `needs-fix`: when `f.draft` is stale, `draft_render`; until then, a note to render once the fixes are made, since rendering would do nothing.
     - `rejected`: when `f.draft` is stale (the agent reworked it), `draft_render`; otherwise the user's call to rework or archive.
 
 At `needs-fix`, the review's notes go in front of whatever step comes out of this list (see below). After a fix, the next step can then be the user's `script approve` or an images dry run, with the notes still shown.
@@ -183,7 +183,7 @@ Whether each command may go ahead:
 | --------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `capcut export` | the current review approves the draft (stages `approved`, `final` or `posted`) and `exportMatches`               |
 | `post finalize` | the current review approves, or a final video exists; at `posted` it fails with `conflict`, naming the platforms |
-| `post publish`  | the current review approves, or a final video exists (so a published post can add another platform)              |
+| `post publish`  | the current review approves, a final video exists, or the post is already published (to add another platform)    |
 
 `needs-fix` moves from `needs-approval` (exit 3) to `conflict` (exit 1). It's marked **BREAKING** in the CHANGELOG. Exit 3 tells an agent to stop and ask the user, but the user already answered: the fixes are the agent's.
 
