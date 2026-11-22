@@ -1,5 +1,6 @@
+import { Result, Schema } from "effect";
 import { describe, expect, it } from "vitest";
-import { approvalOf, changesSinceApproval, type Post, stageOf } from "./post.ts";
+import { approvalOf, changesSinceApproval, Post, stageOf } from "./post.ts";
 
 const post = (fields: Partial<Post> = {}): Post => ({
 	manifestVersion: 1,
@@ -77,5 +78,66 @@ describe("stageOf", () => {
 		expect(changesSinceApproval(reprompted)).toEqual(["the prompt of beat 1"]);
 		expect(stageOf(newAudio)).toBe("script-ready");
 		expect(changesSinceApproval(newAudio)).toEqual(["the audio"]);
+	});
+});
+
+describe("Post", () => {
+	const decode = Schema.decodeUnknownResult(Post);
+	const transcript = {
+		file: "transcript.json",
+		hash: "t",
+		inputHash: "ti",
+		provider: "fake",
+		model: "m",
+		language: "en",
+	};
+	const image = {
+		file: "images/beat-00.jpg",
+		hash: "i",
+		inputHash: "ii",
+		provider: "fake",
+		model: "m",
+		seed: 1,
+		source: "generated",
+	};
+	const withBeats = (extra: { sourceHash?: string; prompt?: string; audioHash?: string }) => ({
+		...post(),
+		transcript: {
+			...transcript,
+			...(extra.audioHash === undefined ? {} : { audioHash: extra.audioHash }),
+		},
+		beats: {
+			inputHash: "b",
+			...(extra.sourceHash === undefined ? {} : { sourceHash: extra.sourceHash }),
+			items: [
+				{
+					index: 0,
+					start: 0,
+					end: 2,
+					text: "one",
+					prompt: "a red door",
+					image: { ...image, ...(extra.prompt === undefined ? {} : { prompt: extra.prompt }) },
+				},
+			],
+		},
+	});
+
+	it("should read a post that records what its outputs were made from", () => {
+		// GIVEN a post with the audio's hash, the plan's source and the image's prompt
+		const result = decode(withBeats({ audioHash: "a", sourceHash: "s", prompt: "a red door" }));
+
+		// THEN it decodes with each of them
+		expect(Result.isSuccess(result)).toBe(true);
+		const decoded = Result.getOrThrow(result);
+		expect(decoded.transcript?.audioHash).toBe("a");
+		expect(decoded.beats?.sourceHash).toBe("s");
+		expect(decoded.beats?.items[0]?.image?.prompt).toBe("a red door");
+	});
+
+	it("should read a post made before outputs recorded what they were made from", () => {
+		// GIVEN a post without those fields
+		// WHEN it is decoded
+		// THEN it decodes all the same
+		expect(Result.isSuccess(decode(withBeats({})))).toBe(true);
 	});
 });

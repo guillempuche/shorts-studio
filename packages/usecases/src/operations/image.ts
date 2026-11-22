@@ -11,8 +11,8 @@
  * request before it sends a new one. No command drops a saved request before it's fetched.
  */
 
+import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { IMAGE_SIZE } from "@shorts-studio/domain/direction";
 import { fail, failBecause, RequestEnded, type ShortsError } from "@shorts-studio/domain/errors";
 import { imageAmount } from "@shorts-studio/domain/models";
 import {
@@ -25,7 +25,8 @@ import {
 } from "@shorts-studio/domain/post";
 import { Effect, Fiber, Schema } from "effect";
 import type { Context } from "../context.ts";
-import { ensureDir, hashBytes, hashOf, writeFileAtomic } from "../files.ts";
+import { ensureDir, hashBytes, writeFileAtomic } from "../files.ts";
+import { fullPrompt, imageInputHash, rerolledSeed, seedOf } from "../freshness.ts";
 import { parseBeatList, requireKey } from "../inputs.ts";
 import {
 	Budget,
@@ -42,7 +43,7 @@ import { chooseModel, costOf, type NamedModel } from "../models.ts";
 import { roundUsd, usd } from "../money.ts";
 import { defineOperation, p, type RunMode } from "../operation.ts";
 import { ImageMaker, type ImageRequest } from "../ports.ts";
-import { postDir, readPost, updatePost } from "../post-store.ts";
+import { postDir, readPost, refuseArchived, updatePost } from "../post-store.ts";
 import { agentStep, NextFields, nextAfterDryRun, nextOf, nextStep } from "./post.ts";
 
 type Maker = ImageMaker["Service"];
@@ -53,33 +54,8 @@ const CONCURRENCY = 3;
 /** How long sending one request may take. A Ctrl-C waits up to this for the answer to save. */
 const SUBMIT_DEADLINE = "60 seconds";
 
-const SEED_LIMIT = 2_147_483_647;
-
-/** A fixed default seed for each beat, so running again without --reroll gives the same image. */
-const defaultSeed = (slug: string, index: number): number =>
-	Number.parseInt(hashOf(slug, index).slice(0, 8), 16) % SEED_LIMIT;
-
-/** The seed a beat's image is made with: its own, else its default. */
-const seedOf = (slug: string, beat: Beat): number => beat.seed ?? defaultSeed(slug, beat.index);
-
-/** The seed a reroll makes a beat's image with. */
-const rerolledSeed = (slug: string, beat: Beat): number => (seedOf(slug, beat) + 1) % SEED_LIMIT;
-
-const fullPrompt = (ctx: Context, prompt: string): string => {
-	const suffix = ctx.brand.imagePrompt?.suffix?.trim();
-	return suffix ? `${prompt}, ${suffix}` : prompt;
-};
-
 /** What one image at `IMAGE_SIZE` costs with `model`. */
 const imageCost = (model: NamedModel) => costOf(model, imageAmount(model));
-
-/**
- * Hashes the model's name, as earlier versions did: hashing anything else would make saved
- * images look out of date, and they would be paid for again. Beats without a prompt are always
- * skipped, so the empty fallback is never sent.
- */
-const imageInputHash = (ctx: Context, modelName: string, beat: Beat, seed: number) =>
-	hashOf(fullPrompt(ctx, beat.prompt ?? ""), modelName, seed, IMAGE_SIZE);
 
 /** `beat 4`, or `beats 1, 4`. */
 const beatsNamed = (beats: ReadonlyArray<number>): string =>
@@ -253,6 +229,8 @@ interface MadeWith {
 	readonly provider: string;
 	readonly model: string;
 	readonly seed: number;
+	/** The beat's prompt, without the brand's style; unknown for a request sent for an older one. */
+	readonly prompt?: string;
 }
 
 /**
@@ -359,7 +337,18 @@ const fetchSaved = (ctx: Context, maker: Maker, slug: string, step: Step) => {
 		slug,
 		step.beat.index,
 		saved,
-		step.action === "skip" ? undefined : { inputHash, provider, model, seed },
+		step.action === "skip"
+			? undefined
+			: {
+					inputHash,
+					provider,
+					model,
+					seed,
+					// A resumed request was sent for the beat's prompt as it is; an older one's is unknown.
+					...(step.action === "resume" && step.beat.prompt !== undefined
+						? { prompt: step.beat.prompt }
+						: {}),
+				},
 	);
 };
 
@@ -378,6 +367,7 @@ const generateOne = Effect.fn("generateOne")(function* (
 		provider: maker.provider,
 		model: model.name,
 		seed: step.seed,
+		prompt: step.beat.prompt ?? "",
 	});
 });
 
@@ -385,7 +375,7 @@ const withBeat = (post: Post, index: number, change: (beat: Beat) => Beat): Post
 	mapBeats(post, (b) => (b.index === index ? change(b) : b));
 
 /** Fails unless the user approved the post as it stands and every beat can be made. */
-const checkReady = (post: Post, slug: string): Effect.Effect<void, ShortsError> => {
+const checkReady = (ctx: Context, post: Post, slug: string) => {
 	if (!isScriptApproved(post)) {
 		const changed = changesSinceApproval(post);
 		return Effect.fail(
@@ -403,13 +393,15 @@ const checkReady = (post: Post, slug: string): Effect.Effect<void, ShortsError> 
 		.filter((b) => b.prompt === undefined && b.image?.source !== "imported")
 		.map((b) => b.index);
 	if (beats.length === 0 || withoutPrompt.length > 0) {
-		return Effect.fail(
-			fail(
-				"not-found",
-				beats.length === 0
-					? `${slug} has no beats.`
-					: `Beats without a prompt: ${withoutPrompt.join(", ")}.`,
-				nextStep(post),
+		return Effect.flatMap(nextStep(ctx, post), (next) =>
+			Effect.fail(
+				fail(
+					"not-found",
+					beats.length === 0
+						? `${slug} has no beats.`
+						: `Beats without a prompt: ${withoutPrompt.join(", ")}.`,
+					next,
+				),
 			),
 		);
 	}
@@ -484,12 +476,15 @@ const planOf = (
 		// without a prompt (allowed only with an imported image) is never sent, rerolled or not.
 		const keepsImported = beat.image?.source === "imported" && !reroll;
 		const resumes = beat.pending?.inputHash === inputHash;
+		// A generated image whose file is gone is made again, with the same seed.
+		const fileThere =
+			beat.image === undefined || existsSync(join(postDir(ctx, post.slug), beat.image.file));
 		const action =
 			beat.prompt === undefined
 				? "skip"
 				: resumes
 					? "resume"
-					: keepsImported || beat.image?.inputHash === inputHash
+					: keepsImported || (beat.image?.inputHash === inputHash && fileThere)
 						? "skip"
 						: "generate";
 		return { beat, seed, action, fetchesSaved: beat.pending !== undefined && !resumes };
@@ -625,7 +620,7 @@ export const imageGenerate = defineOperation({
 
 		/** Checks the post can have images made now, then plans each chosen beat. */
 		const planFor = Effect.fnUntraced(function* (post: Post) {
-			yield* checkReady(post, input.post);
+			yield* checkReady(ctx, post, input.post);
 			const chosen = (post.beats?.items ?? []).filter(
 				(b) => only === undefined || only.includes(b.index),
 			);
@@ -639,6 +634,7 @@ export const imageGenerate = defineOperation({
 
 		// Read first outside the lock: a post that isn't there has no folder to lock.
 		let post = yield* readPost(ctx, input.post);
+		yield* refuseArchived(post, "image generate");
 		const plan = mode.dryRun
 			? yield* planFor(post)
 			: yield* withImagesLock(
@@ -712,7 +708,7 @@ export const imageGenerate = defineOperation({
 						realRunOf(post.slug, input, total > 0),
 						fetchOnly.length === 0 ? undefined : freeFetchStep(post.slug, fetchOnly, input.model),
 					)
-				: nextOf(post)),
+				: yield* nextOf(ctx, post)),
 		};
 	}),
 	render: (o) => {

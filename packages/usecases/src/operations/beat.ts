@@ -8,15 +8,16 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { PLANNER_VERSION, planBeats, planByMoment, sectionsOf } from "@shorts-studio/domain/beats";
+import { planBeats, planByMoment, sectionsOf } from "@shorts-studio/domain/beats";
 import { Moment, MotionType } from "@shorts-studio/domain/direction";
 import { fail, type ShortsError } from "@shorts-studio/domain/errors";
 import { type Beat, mapBeats, type Post, type Word } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import type { Context } from "../context.ts";
-import { hashOf, readText } from "../files.ts";
+import { readText } from "../files.ts";
+import { freshnessOf, planInputHash, recutInputHash } from "../freshness.ts";
 import { defineOperation, p } from "../operation.ts";
-import { postDir, readPost, updatePost } from "../post-store.ts";
+import { postDir, readPost, refuseArchived, updatePost } from "../post-store.ts";
 import { readTranscript, TRANSCRIPT_FILE } from "./audio.ts";
 import { fetchSavedFix, withImagesLock } from "./image.ts";
 import { NextFields, nextOf } from "./post.ts";
@@ -26,15 +27,6 @@ const readWords = (ctx: Context, post: Post): Effect.Effect<ReadonlyArray<Word>,
 	post.audio?.kind === "music" || !existsSync(join(postDir(ctx, post.slug), TRANSCRIPT_FILE))
 		? Effect.succeed([])
 		: Effect.map(readTranscript(ctx, post.slug), (transcript) => transcript.words);
-
-/** What the plan is made from: the transcript for speech, the audio itself for music. */
-const planInputHash = (post: Post): string | undefined => {
-	if (post.audio === undefined) return undefined;
-	if (post.audio.kind === "music") return hashOf("music", post.audio.hash, PLANNER_VERSION);
-	return post.transcript === undefined
-		? undefined
-		: hashOf("speech", post.transcript.hash, post.audio.durationSec, PLANNER_VERSION);
-};
 
 /**
  * Saves a new plan, whose beats start afresh. A saved request would be lost with its paid image,
@@ -89,6 +81,7 @@ export const beatPlan = defineOperation({
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
 	run: Effect.fn("beat_plan")(function* (input, ctx) {
 		const post = yield* readPost(ctx, input.post);
+		yield* refuseArchived(post, "beat plan");
 		const inputHash = planInputHash(post);
 		if (post.audio === undefined || inputHash === undefined) {
 			return yield* fail(
@@ -96,10 +89,21 @@ export const beatPlan = defineOperation({
 				`${input.post} needs ${post.audio === undefined ? "audio" : "a transcript"} before beats can be planned.`,
 				post.audio === undefined
 					? `source import --post ${input.post} …`
-					: `audio transcribe --post ${input.post}`,
+					: `audio transcribe --post ${input.post} --dry-run`,
+			);
+		}
+		// Words from other audio would cut beats in the wrong places, or past the audio's end.
+		const fresh = yield* freshnessOf(ctx, post);
+		if (fresh.transcript === "other-audio") {
+			return yield* fail(
+				"stale",
+				`${input.post}'s transcript was made from other audio than the post has now, so beats can't be cut from it.`,
+				`Transcribe the new audio first: audio transcribe --post ${input.post} --dry-run, then beat plan --post ${input.post}`,
 			);
 		}
 		const existing = post.beats;
+		const withPrompts = existing?.items.filter((b) => b.prompt !== undefined).length ?? 0;
+		const cutFrom = post.audio.kind === "music" ? "earlier audio" : "an earlier transcript";
 		if (input.byMoment) {
 			if (existing === undefined || existing.items.every((b) => b.moment === undefined)) {
 				return yield* fail(
@@ -108,10 +112,18 @@ export const beatPlan = defineOperation({
 					`Plan beats, then mark moments: beat set --post ${input.post} --from moments.json`,
 				);
 			}
+			// The moments mark time ranges of the old words, so a re-cut of them would mean nothing.
+			if (fresh.beats === "stale") {
+				return yield* fail(
+					"stale",
+					`${input.post}'s beats were cut from ${cutFrom}, so their story moments can't be re-cut.`,
+					`Plan the beats again: beat plan --post ${input.post}${withPrompts > 0 ? " --force" : ""}, then mark the moments again.`,
+				);
+			}
 			const sections = sectionsOf(existing.items);
-			const recutHash = hashOf("by-moment", inputHash, sections);
+			const recutHash = recutInputHash(inputHash, existing.items);
 			if (existing.inputHash === recutHash && !input.force) {
-				return { beats: existing.items.map(row), skipped: true, ...nextOf(post) };
+				return { beats: existing.items.map(row), skipped: true, ...(yield* nextOf(ctx, post)) };
 			}
 			if (existing.items.some((b) => b.prompt !== undefined) && !input.force) {
 				return yield* fail(
@@ -122,23 +134,32 @@ export const beatPlan = defineOperation({
 			}
 			const spans = planByMoment(yield* readWords(ctx, post), sections);
 			const items: ReadonlyArray<Beat> = spans.map((span) => ({ ...span }));
-			const updated = yield* replaceBeats(ctx, input.post, { inputHash: recutHash, items });
-			return { beats: items.map(row), skipped: false, ...nextOf(updated) };
+			const updated = yield* replaceBeats(ctx, input.post, {
+				inputHash: recutHash,
+				sourceHash: inputHash,
+				items,
+			});
+			return { beats: items.map(row), skipped: false, ...(yield* nextOf(ctx, updated)) };
 		}
-		if (existing !== undefined && existing.inputHash === inputHash && !input.force) {
-			return { beats: existing.items.map(row), skipped: true, ...nextOf(post) };
+		// A current plan stays, also when it was re-cut by moment: planning again would undo the re-cut.
+		if (existing !== undefined && fresh.beats === "current" && !input.force) {
+			return { beats: existing.items.map(row), skipped: true, ...(yield* nextOf(ctx, post)) };
 		}
-		if (existing?.items.some((b) => b.prompt !== undefined) && !input.force) {
+		if (withPrompts > 0 && !input.force) {
 			return yield* fail(
 				"stale",
-				`The beat plan is out of date because the audio or transcript changed. Planning again drops its ${existing.items.filter((b) => b.prompt).length} prompts.`,
+				`${input.post}'s beats were cut from ${cutFrom}. Planning again drops their ${withPrompts} prompt${withPrompts === 1 ? "" : "s"}.`,
 				`Run beat plan --post ${input.post} --force, then set the prompts again.`,
 			);
 		}
 		const spans = planBeats(yield* readWords(ctx, post), post.audio.durationSec);
 		const items: ReadonlyArray<Beat> = spans.map((span) => ({ ...span }));
-		const updated = yield* replaceBeats(ctx, input.post, { inputHash, items });
-		return { beats: items.map(row), skipped: false, ...nextOf(updated) };
+		const updated = yield* replaceBeats(ctx, input.post, {
+			inputHash,
+			sourceHash: inputHash,
+			items,
+		});
+		return { beats: items.map(row), skipped: false, ...(yield* nextOf(ctx, updated)) };
 	}),
 	render: (o) =>
 		[
@@ -237,6 +258,8 @@ export const beatSet = defineOperation({
 							'Pass --beat N with --prompt "…", --moment or --motion, or --from beats.json.',
 						);
 		const post = yield* updatePost(ctx, input.post, "beat set", (current) => {
+			if (current.archivedAt !== undefined)
+				return refuseArchived(current, "beat set").pipe(Effect.as(current));
 			const beats = current.beats;
 			if (beats === undefined) {
 				return Effect.fail(
@@ -273,7 +296,7 @@ export const beatSet = defineOperation({
 		const missing = (post.beats?.items ?? [])
 			.filter((b) => b.prompt === undefined)
 			.map((b) => b.index);
-		return { updated: patches.length, missing, ...nextOf(post) };
+		return { updated: patches.length, missing, ...(yield* nextOf(ctx, post)) };
 	}),
 	render: (o) =>
 		`Updated ${o.updated} beat${o.updated === 1 ? "" : "s"}.${o.missing.length > 0 ? ` Still without a prompt: ${o.missing.join(", ")}.` : ""}\nNext: ${o.next}`,

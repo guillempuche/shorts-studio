@@ -165,9 +165,12 @@ const selectPosts = Effect.fn("selectPosts")(function* (ctx: Context, input: Sel
 	const posts = yield* Effect.forEach(yield* listSlugs(ctx), (slug) =>
 		Effect.map(readPost(ctx, slug), (post) => ({ slug, post })),
 	);
+	// Archived posts no longer change, so a selection leaves them out unless it asks for them.
 	const matching = posts
 		.filter(({ slug }) => day === undefined || slug.startsWith(day))
-		.filter(({ post }) => input.inStage === undefined || stageOf(post) === input.inStage)
+		.filter(({ post }) =>
+			input.inStage === undefined ? stageOf(post) !== "archived" : stageOf(post) === input.inStage,
+		)
 		.map(({ slug }) => slug);
 	if (matching.length > 0) return matching;
 	return yield* fail("not-found", "No posts match.", "Check the selection with: post list");

@@ -8,14 +8,21 @@
 import { copyFileSync, existsSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
 import { fail, type ShortsError } from "@shorts-studio/domain/errors";
-import { Decision, Platform, Stage, stageOf } from "@shorts-studio/domain/post";
+import {
+	currentReview,
+	Decision,
+	Platform,
+	type Post,
+	Stage,
+	stageOf,
+} from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
 import { fileHash, fileStep } from "../files.ts";
 import { parseBeatList, requireUser } from "../inputs.ts";
 import { defineOperation, p } from "../operation.ts";
 import { MediaTools } from "../ports.ts";
-import { postDir, readPost, updatePost } from "../post-store.ts";
-import { NextFields, nextOf, nextStep } from "./post.ts";
+import { postDir, readPost, refuseArchived, updatePost } from "../post-store.ts";
+import { NextFields, nextOf, nextStep, refuseUnapproved } from "./post.ts";
 
 /** `"3:too dark;5:wrong face"` → per-beat notes. */
 const parseBeatNotes = (
@@ -40,6 +47,37 @@ const parseBeatNotes = (
 			);
 };
 
+/** A platform may be recorded for an approved draft, a final video, or a post already published. */
+const publishable = (post: Post): boolean =>
+	(post.published ?? []).length > 0 ||
+	post.final !== undefined ||
+	currentReview(post)?.decision === "approve";
+
+/**
+ * Why the post no longer allows `command`, checked again under its lock: another command may have
+ * archived it, or a new render dropped its review, after the first read.
+ */
+const changedMeanwhile = (
+	post: Post,
+	command: string,
+	allowed: (post: Post) => boolean,
+): ShortsError | undefined => {
+	if (post.archivedAt !== undefined) {
+		return fail(
+			"conflict",
+			`${post.slug} was archived while ${command} ran, so nothing was recorded.`,
+			"An archived post no longer changes.",
+		);
+	}
+	return allowed(post)
+		? undefined
+		: fail(
+				"conflict",
+				`${post.slug} changed while ${command} ran, so nothing was recorded.`,
+				`Show what it needs now with: post show --post ${post.slug}`,
+			);
+};
+
 export const postReview = defineOperation({
 	name: "post_review",
 	description:
@@ -59,11 +97,13 @@ export const postReview = defineOperation({
 		yield* requireUser(ctx, `post review --post ${input.post} --decision ${input.decision}`);
 		const beatNotes = yield* parseBeatNotes(input.beatNotes);
 		const animate = yield* parseBeatList(input.animate);
+		// Read before the post's lock: the change made under it can't ask for services.
+		const before = yield* readPost(ctx, input.post);
+		yield* refuseArchived(before, "post review");
+		const noDraftFix = yield* nextStep(ctx, before);
 		const post = yield* updatePost(ctx, input.post, "post review", (current) => {
 			if (current.draft === undefined) {
-				return Effect.fail(
-					fail("not-found", `${input.post} has no draft to review.`, nextStep(current)),
-				);
+				return Effect.fail(fail("not-found", `${input.post} has no draft to review.`, noDraftFix));
 			}
 			const known = new Set((current.beats?.items ?? []).map((b) => b.index));
 			const unknown = [...beatNotes.map((n) => n.beat), ...animate].filter(
@@ -90,7 +130,7 @@ export const postReview = defineOperation({
 				},
 			});
 		});
-		return { stage: stageOf(post), ...nextOf(post) };
+		return { stage: stageOf(post), ...(yield* nextOf(ctx, post)) };
 	}),
 	render: (o) => `Review recorded: ${o.stage}.\nNext: ${o.next}`,
 });
@@ -117,13 +157,20 @@ export const postFinalize = defineOperation({
 			);
 		}
 		const before = yield* readPost(ctx, input.post);
-		if (stageOf(before) !== "approved" && stageOf(before) !== "final") {
+		yield* refuseArchived(before, "post finalize");
+		const platforms = (before.published ?? []).map((entry) => entry.platform);
+		if (platforms.length > 0) {
 			return yield* fail(
-				"needs-approval",
-				`${input.post} is at "${stageOf(before)}", not approved.`,
-				`The user reviews the draft first: post review --post ${input.post} --decision approve`,
+				"conflict",
+				`${input.post} is already published on ${platforms.join(", ")}, so its final video stays as it is.`,
+				`Record another platform with: post publish --post ${input.post} --platform <platform> --url <url>`,
 			);
 		}
+		// A final video replaces the one before; the first needs the user's approval.
+		if (before.final === undefined) yield* refuseUnapproved(ctx, before, "post finalize");
+		const finalizable = (post: Post) =>
+			(post.published ?? []).length === 0 &&
+			(post.final !== undefined || currentReview(post)?.decision === "approve");
 		const file = `final${extname(source) || ".mp4"}`;
 		const target = join(postDir(ctx, input.post), file);
 		const media = yield* MediaTools;
@@ -133,10 +180,12 @@ export const postFinalize = defineOperation({
 			`Check that ${target} can be written, then run it again.`,
 		);
 		const hash = yield* fileHash(target);
-		const post = yield* updatePost(ctx, input.post, "post finalize", (current) =>
-			Effect.succeed({ ...current, final: { file, hash, at: ctx.now().toISOString() } }),
-		);
-		return { file: target, durationSec, ...nextOf(post) };
+		const post = yield* updatePost(ctx, input.post, "post finalize", (current) => {
+			const changed = changedMeanwhile(current, "post finalize", finalizable);
+			if (changed !== undefined) return Effect.fail(changed);
+			return Effect.succeed({ ...current, final: { file, hash, at: ctx.now().toISOString() } });
+		});
+		return { file: target, durationSec, ...(yield* nextOf(ctx, post)) };
 	}),
 	render: (o) => `Final video saved: ${o.file} (${o.durationSec.toFixed(1)} s)\nNext: ${o.next}`,
 });
@@ -161,7 +210,14 @@ export const postPublish = defineOperation({
 				"Pass the post's full https:// address.",
 			);
 		}
+		// An approved draft may be published as it is; a final video, or a platform already recorded,
+		// passed that check before.
+		const before = yield* readPost(ctx, input.post);
+		yield* refuseArchived(before, "post publish");
+		if (!publishable(before)) yield* refuseUnapproved(ctx, before, "post publish");
 		const post = yield* updatePost(ctx, input.post, "post publish", (current) => {
+			const changed = changedMeanwhile(current, "post publish", publishable);
+			if (changed !== undefined) return Effect.fail(changed);
 			const others = (current.published ?? []).filter((entry) => entry.platform !== input.platform);
 			return Effect.succeed({
 				...current,
@@ -173,7 +229,7 @@ export const postPublish = defineOperation({
 		});
 		return {
 			platforms: (post.published ?? []).map((entry) => entry.platform),
-			...nextOf(post),
+			...(yield* nextOf(ctx, post)),
 		};
 	}),
 	render: (o) => `Published on: ${o.platforms.join(", ")}.\nNext: ${o.next}`,
@@ -184,16 +240,16 @@ export const postArchive = defineOperation({
 	description:
 		"Archive a post. It no longer shows in post list, unless you list by stage archived. Its files stay where they are.",
 	params: { post: p.string("Post slug") },
-	output: Schema.Struct({ archivedAt: Schema.String }),
+	output: Schema.Struct({ archivedAt: Schema.String, ...NextFields }),
 	surface: "cli-and-mcp",
 	spends: false,
 	hints: { readonly: false, destructive: false, idempotent: true, openWorld: false },
 	run: Effect.fn("post_archive")(function* (input, ctx) {
-		const archivedAt = ctx.now().toISOString();
-		yield* updatePost(ctx, input.post, "post archive", (current) =>
-			Effect.succeed({ ...current, archivedAt: current.archivedAt ?? archivedAt }),
+		// Archiving again keeps the first time.
+		const post = yield* updatePost(ctx, input.post, "post archive", (current) =>
+			Effect.succeed({ ...current, archivedAt: current.archivedAt ?? ctx.now().toISOString() }),
 		);
-		return { archivedAt };
+		return { archivedAt: post.archivedAt ?? "", ...(yield* nextOf(ctx, post)) };
 	}),
-	render: (o) => `Archived at ${o.archivedAt}.`,
+	render: (o) => `Archived at ${o.archivedAt}.\nNext: ${o.next}`,
 });

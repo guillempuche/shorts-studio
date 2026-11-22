@@ -66,12 +66,20 @@ const beatCount = (length: number, rules: BeatRules): number => {
 const ownBeats = (silence: number, spare: number, beatLength: number, rules: BeatRules): boolean =>
 	spare >= rules.minSec && (silence > rules.maxSec || beatLength > rules.maxSec * 1.5);
 
+/**
+ * Beats from 0 to the end of the audio, never past it: a word that starts at or after the end
+ * (from older, longer audio) is left out, and one that runs past it is cut back to it.
+ */
 export const planBeats = (
 	words: ReadonlyArray<Word>,
 	durationSec: number,
 	rules: BeatRules = DEFAULT_RULES,
-): ReadonlyArray<BeatSpan> =>
-	planSpan(words, 0, Math.max(durationSec, words.at(-1)?.end ?? 0), rules);
+): ReadonlyArray<BeatSpan> => {
+	const inside = words
+		.filter((word) => word.start < durationSec)
+		.map((word) => (word.end > durationSec ? { ...word, end: durationSec } : word));
+	return planSpan(inside, 0, durationSec, rules);
+};
 
 /** Beats covering exactly [start, end], cut at the boundaries of the words inside it. */
 const planSpan = (

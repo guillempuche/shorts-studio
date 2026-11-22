@@ -1,14 +1,15 @@
 import { type Post, Stage, stageOf } from "@shorts-studio/domain/post";
 import { DateTime, Effect } from "effect";
 import { describe, expect, it } from "vitest";
+import { type Freshness, UP_TO_DATE } from "../freshness.ts";
 import { readPost } from "../post-store.ts";
 import { testContext } from "../test/context.ts";
 import { run } from "../test/fakes.ts";
-import { approvedAsIs, type PostFields, seedPost, withDraft } from "../test/posts.ts";
+import { approvedAsIs, type PostFields, seedPost, seedUpToDate, withDraft } from "../test/posts.ts";
 import { expectValidStep } from "../test/steps.ts";
 import { imageGenerate } from "./image.ts";
 import { postArchive } from "./lifecycle.ts";
-import { nextStepsOf, postCreate, postList, postShow } from "./post.ts";
+import { nextStepsOf, nextText, postCreate, postList, postShow } from "./post.ts";
 
 const MODE = { dryRun: false, confirmed: true } as const;
 
@@ -136,7 +137,7 @@ describe("next steps", () => {
 	};
 	const show = async (fields: PostFields) => {
 		const ctx = testContext();
-		await seedPost(ctx, SLUG, fields);
+		await seedUpToDate(ctx, SLUG, fields);
 		return { ctx, shown: await run(postShow.run({ post: SLUG }, ctx, MODE)) };
 	};
 
@@ -145,13 +146,13 @@ describe("next steps", () => {
 		// WHEN it is shown
 		const { shown } = await show({ audio });
 
-		// THEN `next` is the command, and the first step is the same call as an MCP tool
-		expect(shown.next).toBe(`audio transcribe --post ${SLUG}`);
+		// THEN `next` is the dry run's command, and the first step is the same call as an MCP tool
+		expect(shown.next).toBe(`audio transcribe --post ${SLUG} --dry-run`);
 		expect(shown.nextSteps[0]).toEqual({
 			by: "agent",
-			cli: `audio transcribe --post ${SLUG}`,
+			cli: `audio transcribe --post ${SLUG} --dry-run`,
 			tool: "audio_transcribe",
-			args: { post: SLUG },
+			args: { post: SLUG, dryRun: true },
 		});
 	});
 
@@ -193,7 +194,7 @@ describe("next steps", () => {
 	it("should leave the next step to the user after a dry run that won't fit", async () => {
 		// GIVEN a post ready for images, and a daily cap below what they cost
 		const ctx = testContext({ config: { caps: { dailyUsd: 0.001 } } });
-		await seedPost(ctx, SLUG, approvedAsIs({ script, audio, transcript, beats }));
+		await seedUpToDate(ctx, SLUG, approvedAsIs({ script, audio, transcript, beats }));
 
 		// WHEN images are planned with a dry run
 		const planned = await run(
@@ -211,7 +212,7 @@ describe("next steps", () => {
 	it("should quote an argument the shell would split", async () => {
 		// GIVEN a post ready for images
 		const ctx = testContext();
-		await seedPost(ctx, SLUG, approvedAsIs({ script, audio, transcript, beats }));
+		await seedUpToDate(ctx, SLUG, approvedAsIs({ script, audio, transcript, beats }));
 
 		// WHEN two beats are planned, written with a space after the comma
 		const planned = await run(
@@ -310,16 +311,336 @@ describe("nextStepsOf", () => {
 		expect([...stages].sort()).toEqual([...Stage.literals].sort());
 	});
 
+	/** Each kind of out-of-date output, one at a time. */
+	const FRESHNESS: ReadonlyArray<readonly [string, Freshness]> = [
+		["up to date", UP_TO_DATE],
+		["transcript from other audio", { ...UP_TO_DATE, transcript: "other-audio" }],
+		["no transcript", { ...UP_TO_DATE, transcript: "none" }],
+		["stale beats", { ...UP_TO_DATE, beats: "stale" }],
+		["re-cut beats", { ...UP_TO_DATE, recut: true }],
+		...(["none", "changed", "pending", "file-gone"] as const).map(
+			(why): readonly [string, Freshness] => [
+				`an image ${why}`,
+				{ ...UP_TO_DATE, images: [{ beat: 1, imported: false, why }] },
+			],
+		),
+		[
+			"an imported image gone",
+			{ ...UP_TO_DATE, images: [{ beat: 0, imported: true, why: "file-gone" }] },
+		],
+		["a stale draft", { ...UP_TO_DATE, draft: "stale", exportMatches: false }],
+	];
+
 	it("should only name MCP tools the server offers, with their own fields and command", () => {
 		for (const fields of FIXTURES) {
-			// GIVEN a post at each stage
-			const post = postOf(fields);
-			// WHEN its next steps are worked out
-			for (const step of nextStepsOf(post)) {
-				// THEN each is the user's or a note, or names a tool the server offers, with that
-				// tool's fields, its command, and a placeholder for each value to fill in
-				expectValidStep(step, `${stageOf(post)}: ${step.cli ?? step.note}`);
+			for (const [what, freshness] of FRESHNESS) {
+				// GIVEN a post at each stage, with each kind of out-of-date output
+				const post = postOf(fields);
+				// WHEN its next steps are worked out
+				for (const step of nextStepsOf(post, freshness)) {
+					// THEN each is the user's or a note, or names a tool the server offers, with that
+					// tool's fields, its command, and a placeholder for each value to fill in
+					expectValidStep(step, `${stageOf(post)}, ${what}: ${step.cli ?? step.note}`);
+				}
 			}
 		}
+	});
+
+	it("should catch a step that names a tool the server doesn't offer", () => {
+		// GIVEN a step naming a tool that doesn't exist
+		const step = { by: "agent" as const, tool: "image_paint", cli: "image paint", args: {} };
+
+		// WHEN it is checked
+		// THEN the check fails on it
+		expect(() => expectValidStep(step, "made up")).toThrow();
+	});
+});
+
+describe("nextStepsOf, following what's out of date", () => {
+	const SLUG = "2026-11-04-fresh";
+	const audio = {
+		file: "audio/audio.m4a",
+		hash: "a",
+		origin: "mine",
+		kind: "speech",
+		durationSec: 4,
+		source: "recording.m4a",
+	} as const;
+	const transcript = {
+		file: "transcript.json",
+		hash: "t",
+		inputHash: "ti",
+		provider: "fake-transcriber",
+		model: "fake",
+		language: "en",
+	};
+	const script = { file: "script.md", hash: "s" };
+	const beatsWith = (fields: { prompt?: boolean; moment?: boolean } = {}) => ({
+		inputHash: "b",
+		items: [0, 1].map((index) => ({
+			index,
+			start: index * 2,
+			end: index * 2 + 2,
+			text: "words",
+			...(fields.prompt ? { prompt: `prompt ${index}` } : {}),
+			...(fields.moment ? { moment: index === 0 ? ("hook" as const) : ("payoff" as const) } : {}),
+		})),
+	});
+	const postOf = (fields: PostFields): Post => ({
+		manifestVersion: 1,
+		slug: SLUG,
+		createdAt: "2026-11-04T09:00:00.000Z",
+		revision: 1,
+		...fields,
+	});
+	const review = (decision: "approve" | "fix" | "reject", extra = {}) => ({
+		review: { decision, at: "2026-11-04T20:00:00.000Z", draftHash: "d1", ...extra },
+	});
+	const withImages = approvedAsIs({
+		script,
+		audio,
+		transcript,
+		beats: beatsWith({ prompt: true }),
+	});
+
+	it("should send new audio after the beats to a transcription dry run", () => {
+		// GIVEN a post whose transcript was made from other audio than the new one
+		const post = postOf({ audio, transcript, beats: beatsWith({ prompt: true }) });
+
+		// WHEN its steps are worked out
+		const [step] = nextStepsOf(post, { ...UP_TO_DATE, transcript: "other-audio" });
+
+		// THEN the first is the transcription's dry run
+		expect(step).toMatchObject({ tool: "audio_transcribe", args: { post: SLUG, dryRun: true } });
+	});
+
+	it("should plan beats cut from an earlier transcript again, saying how many prompts it drops", () => {
+		// GIVEN beats with two prompts cut from an earlier transcript
+		const post = postOf({ audio, transcript, beats: beatsWith({ prompt: true }) });
+
+		// WHEN its steps are worked out
+		const [step] = nextStepsOf(post, { ...UP_TO_DATE, beats: "stale" });
+
+		// THEN the first plans again with force, and its note counts the prompts it drops
+		expect(step).toMatchObject({ tool: "beat_plan", args: { post: SLUG, force: true } });
+		expect(step?.note).toContain("drops their 2 prompts");
+	});
+
+	it("should send a music post to beat plan, with no step that transcribes it", () => {
+		// GIVEN a music post without a transcript or beats
+		const post = postOf({ audio: { ...audio, kind: "music" } });
+
+		// WHEN its steps are worked out
+		const steps = nextStepsOf(post, { ...UP_TO_DATE, transcript: "none", beats: "none" });
+
+		// THEN the next step is beat plan, and nothing transcribes
+		expect(nextText(steps)).toBe(`beat plan --post ${SLUG}`);
+		expect(steps.some((step) => step.tool === "audio_transcribe")).toBe(false);
+	});
+
+	it("should offer the re-cut by moment when beats have moments and no prompts", () => {
+		// GIVEN beats with story moments and no prompts, not re-cut yet
+		const post = postOf({ audio, transcript, beats: beatsWith({ moment: true }) });
+
+		// WHEN its steps are worked out
+		const steps = nextStepsOf(post, UP_TO_DATE);
+
+		// THEN the re-cut comes first, and writing the prompts is the alternative
+		expect(steps[0]).toMatchObject({ tool: "beat_plan", args: { post: SLUG, byMoment: true } });
+		expect(steps[1]).toMatchObject({ tool: "beat_set", or: true });
+		// AND once re-cut, only the prompts are left
+		expect(nextStepsOf(post, { ...UP_TO_DATE, recut: true })[0]?.tool).toBe("beat_set");
+	});
+
+	it("should name only the beat whose prompt changed after its image", () => {
+		// GIVEN an approved post whose beat 1's prompt changed after its image
+		const post = postOf(withImages);
+
+		// WHEN its steps are worked out
+		const steps = nextStepsOf(post, {
+			...UP_TO_DATE,
+			images: [{ beat: 1, imported: false, why: "changed" }],
+		});
+
+		// THEN the next step is the images dry run for beat 1
+		expect(nextText(steps)).toBe(`image generate --post ${SLUG} --beat 1 --dry-run`);
+	});
+
+	it("should name a beat with a request in flight, and one whose file is gone", () => {
+		// GIVEN an approved post whose beat 0 has a request in flight, then one whose file is gone
+		const post = postOf(withImages);
+		const stepFor = (why: "pending" | "file-gone", beat: number) =>
+			nextStepsOf(post, { ...UP_TO_DATE, images: [{ beat, imported: false, why }] })[0];
+
+		// THEN each first step is the images dry run for that beat alone
+		expect(stepFor("pending", 0)).toMatchObject({
+			tool: "image_generate",
+			args: { post: SLUG, beat: "0", dryRun: true },
+		});
+		expect(stepFor("file-gone", 1)).toMatchObject({
+			tool: "image_generate",
+			args: { post: SLUG, beat: "1", dryRun: true },
+		});
+	});
+
+	it("should name image import for an imported image whose file is gone", () => {
+		// GIVEN an approved post whose beat 1's imported image file is gone
+		const post = postOf(withImages);
+
+		// WHEN its steps are worked out
+		const steps = nextStepsOf(post, {
+			...UP_TO_DATE,
+			images: [{ beat: 1, imported: true, why: "file-gone" }],
+		});
+
+		// THEN the step is a note naming image import for beat 1, and nothing generates
+		expect(steps).toHaveLength(1);
+		expect(steps[0]?.note).toContain(`image import --post ${SLUG} --beat 1`);
+		expect(steps[0]?.tool).toBeUndefined();
+	});
+
+	it("should render a draft out of date before its review, then leave the review to the user", () => {
+		// GIVEN a draft whose beats changed before the user reviewed it
+		const post = postOf(withDraft());
+
+		// WHEN its steps are worked out
+		const steps = nextStepsOf(post, { ...UP_TO_DATE, draft: "stale", exportMatches: false });
+
+		// THEN the draft is rendered first, and the user's review comes after
+		expect(steps[0]?.tool).toBe("draft_render");
+		expect(steps.at(-1)).toMatchObject({ by: "user", cli: expect.stringContaining("post review") });
+	});
+
+	it("should render an approved draft whose beats changed, not export it", () => {
+		// GIVEN an approved draft whose beats changed after the approval
+		const post = postOf({ ...withDraft(), ...review("approve") });
+
+		// WHEN its steps are worked out
+		const steps = nextStepsOf(post, { ...UP_TO_DATE, draft: "stale", exportMatches: false });
+
+		// THEN the first step renders it, and nothing exports
+		expect(steps[0]?.tool).toBe("draft_render");
+		expect(steps.some((step) => step.tool === "capcut_export")).toBe(false);
+	});
+
+	it("should put each of the user's notes first when they asked for fixes", () => {
+		// GIVEN a review asking for fixes, with notes on beats 1 and 3
+		const post = postOf({
+			...withDraft(),
+			...review("fix", {
+				beatNotes: [
+					{ beat: 1, note: "too dark" },
+					{ beat: 3, note: "wrong face" },
+				],
+			}),
+		});
+
+		// WHEN its steps are worked out
+		const steps = nextStepsOf(post, UP_TO_DATE);
+
+		// THEN the first steps are the agent's, one per note, each naming its beat, note and tools
+		expect(steps[0]).toMatchObject({ by: "agent" });
+		expect(steps[0]?.note).toContain('beat 1: "too dark"');
+		expect(steps[0]?.note).toContain("image generate");
+		expect(steps[1]?.note).toContain('beat 3: "wrong face"');
+		// AND, while nothing has changed, a note says to render the draft once the fixes are made,
+		// since rendering now would do nothing
+		expect(steps[2]?.tool).toBeUndefined();
+		expect(steps[2]?.note).toContain(`draft render --post ${SLUG}`);
+		// AND once a fix changed the draft's inputs, draft render comes after the notes
+		const fixed = nextStepsOf(post, { ...UP_TO_DATE, draft: "stale", exportMatches: false });
+		expect(fixed[2]?.tool).toBe("draft_render");
+	});
+
+	it("should keep the notes in front of the images dry run after a fix", () => {
+		// GIVEN a review asking for fixes, and beat 1's prompt changed and approved since
+		const post = postOf({
+			...withDraft(),
+			...review("fix", { beatNotes: [{ beat: 1, note: "too dark" }] }),
+		});
+
+		// WHEN its steps are worked out
+		const steps = nextStepsOf(post, {
+			...UP_TO_DATE,
+			images: [{ beat: 1, imported: false, why: "changed" }],
+		});
+
+		// THEN the note comes first, then the images dry run
+		expect(steps[0]?.note).toContain('beat 1: "too dark"');
+		expect(steps[1]).toMatchObject({ tool: "image_generate", args: { beat: "1", dryRun: true } });
+	});
+
+	it("should leave a rejected draft to the user, to rework or archive", () => {
+		// GIVEN a draft the user rejected
+		const post = postOf({ ...withDraft(), ...review("reject") });
+
+		// WHEN its steps are worked out
+		const steps = nextStepsOf(post, UP_TO_DATE);
+
+		// THEN the step is the user's, asking whether to rework or archive, with no tool
+		expect(steps).toHaveLength(1);
+		expect(steps[0]).toMatchObject({ by: "user" });
+		expect(steps[0]?.note).toContain("rework");
+		expect(steps[0]?.tool).toBeUndefined();
+	});
+
+	it("should offer publishing or archiving a published post, whatever is out of date before", () => {
+		// GIVEN a published post whose beat 1's image no longer matches its prompt
+		const post = postOf({
+			...withDraft(),
+			...review("approve"),
+			final: { file: "final.mp4", hash: "f", at: "2026-11-05T09:00:00.000Z" },
+			published: [{ platform: "instagram", url: "https://x", at: "2026-11-05T10:00:00.000Z" }],
+		});
+
+		// WHEN its steps are worked out
+		const steps = nextStepsOf(post, {
+			...UP_TO_DATE,
+			images: [{ beat: 1, imported: false, why: "changed" }],
+		});
+
+		// THEN they're publishing on another platform, or archiving
+		expect(steps.map((step) => step.tool)).toEqual(["post_publish", "post_archive"]);
+	});
+
+	it("should have no steps for an archived post, and say it's archived", () => {
+		// GIVEN an archived post
+		const post = postOf({ ...withDraft(), archivedAt: "2026-11-06T09:00:00.000Z" });
+
+		// WHEN its steps are worked out
+		const steps = nextStepsOf(post, { ...UP_TO_DATE, draft: "stale" });
+
+		// THEN there are none, and the text says the post is archived
+		expect(steps).toEqual([]);
+		expect(nextText(steps)).toContain("archived");
+	});
+
+	it("should print the user's review in post show's text", async () => {
+		// GIVEN a review asking for fixes, with "too dark" on beat 1
+		const ctx = testContext();
+		await seedUpToDate(ctx, SLUG, {
+			...withDraft(),
+			...review("fix", { beatNotes: [{ beat: 1, note: "too dark" }] }),
+		});
+
+		// WHEN it is shown as text
+		const text = postShow.render?.(await run(postShow.run({ post: SLUG }, ctx, MODE))) ?? "";
+
+		// THEN the text shows the decision, and beat 1's note
+		expect(text).toContain("review: fix");
+		expect(text).toContain("beat 1: too dark");
+	});
+
+	it("should keep images up to date after config.json names another image model", async () => {
+		// GIVEN a post whose images were made with fake-fast, and config.json naming fake-fine
+		const ctx = testContext({ config: { image: { model: "fake-fine" } } });
+		const { draft: _, ...noDraft } = withDraft();
+		await seedUpToDate(ctx, SLUG, noDraft);
+
+		// WHEN it is shown
+		const shown = await run(postShow.run({ post: SLUG }, ctx, MODE));
+
+		// THEN the next step renders the draft, not images
+		expect(shown.next).toBe(`draft render --post ${SLUG}`);
 	});
 });

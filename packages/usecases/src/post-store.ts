@@ -153,6 +153,22 @@ export const updatePost = <E>(
 		),
 	);
 
+/**
+ * Fails when `post` is archived: an archived post no longer changes or spends. Commands call it
+ * right after their first read, before they reserve or write anything. `updatePost` itself doesn't,
+ * so a command already running when the post was archived still saves what it paid for.
+ */
+export const refuseArchived = (post: Post, command: string): Effect.Effect<void, ShortsError> =>
+	post.archivedAt === undefined
+		? Effect.void
+		: Effect.fail(
+				fail(
+					"conflict",
+					`${post.slug} is archived; it no longer changes, so ${command} didn't run.`,
+					"An archived post can't be taken out of the archive. For new work, create a post: post create --post <slug>",
+				),
+			);
+
 /** Every post folder that holds a post.json, newest first (folder names start with a date). */
 export const listSlugs = (ctx: Context): Effect.Effect<ReadonlyArray<string>, ShortsError> => {
 	const dir = minePath(ctx);

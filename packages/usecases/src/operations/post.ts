@@ -4,15 +4,19 @@
  */
 
 import { join } from "node:path";
+import { fail } from "@shorts-studio/domain/errors";
 import {
 	changesSinceApproval,
+	currentReview,
 	isScriptApproved,
 	type Post,
 	Stage,
 	stageOf,
 } from "@shorts-studio/domain/post";
 import { Effect, Schema } from "effect";
+import type { Context } from "../context.ts";
 import { daysNow } from "../days.ts";
+import { type Freshness, freshnessOf, UP_TO_DATE } from "../freshness.ts";
 import type { Budget } from "../ledger.ts";
 import { commandPath, defineOperation, flagName, p } from "../operation.ts";
 import { createPost, DATED, listSlugs, postDir, readPost } from "../post-store.ts";
@@ -104,10 +108,49 @@ const userStep = (cli: string | undefined, note?: string): NextStep => ({
 /** A step with nothing to run, such as applying review notes. */
 const agentNote = (note: string): NextStep => ({ by: "agent", note });
 
-/** What to do next, given what's recorded. Approval steps are the user's. */
-export const nextStepsOf = (post: Post): ReadonlyArray<NextStep> => {
+/** `n prompt(s)`. */
+const prompts = (n: number): string => `${n} prompt${n === 1 ? "" : "s"}`;
+
+/** The user's notes on a draft that needs fixes, one step each, in front of whatever comes next. */
+const reviewNotes = (post: Post): ReadonlyArray<NextStep> => {
+	const review = currentReview(post);
+	if (review?.decision !== "fix") return [];
+	return [
+		...(review.note === undefined ? [] : [agentNote(`the user's note: "${review.note}"`)]),
+		...(review.beatNotes ?? []).map(({ beat, note }) =>
+			agentNote(
+				`beat ${beat}: "${note}": change it with beat set (prompt, moment or motion; a new prompt needs the user's script approve), image generate --post ${post.slug} --beat ${beat} --reroll --dry-run, or image import --post ${post.slug} --beat ${beat} --file <image>`,
+			),
+		),
+	];
+};
+
+/** What a finished video leads to: publishing it, then archiving it. */
+const finishedSteps = (post: Post, stage: Stage): ReadonlyArray<NextStep> => {
 	const thisPost = { post: post.slug };
-	if (post.audio === undefined && post.script === undefined) {
+	return stage === "final"
+		? [
+				agentStep(
+					"post_publish",
+					{ ...thisPost, platform: "<platform>", url: "<url>" },
+					{ note: "instagram, tiktok or youtube" },
+				),
+			]
+		: [
+				agentStep(
+					"post_publish",
+					{ ...thisPost, platform: "<another platform>", url: "<url>" },
+					{ note: "for another platform" },
+				),
+				agentStep("post_archive", thisPost, { or: true }),
+			];
+};
+
+/** The steps before the draft that redo what's missing or out of date, or none once all is there. */
+const stepsBeforeDraft = (post: Post, fresh: Freshness): ReadonlyArray<NextStep> | undefined => {
+	const thisPost = { post: post.slug };
+	const { audio, beats } = post;
+	if (audio === undefined && post.script === undefined) {
 		return [
 			agentStep("source_import", {
 				...thisPost,
@@ -118,22 +161,53 @@ export const nextStepsOf = (post: Post): ReadonlyArray<NextStep> => {
 			agentStep("script_set", { ...thisPost, file: "script.md" }, { or: true }),
 		];
 	}
-	if (post.audio !== undefined && post.transcript === undefined) {
-		return [agentStep("audio_transcribe", thisPost)];
-	}
-	if (post.transcript !== undefined && post.beats === undefined) {
-		return [agentStep("beat_plan", thisPost)];
-	}
-	if (post.beats?.items.some((b) => b.prompt === undefined)) {
-		return [
-			agentStep(
-				"beat_set",
-				{ ...thisPost, from: "<beats.json>" },
-				{
-					note: "a story moment and an image prompt for every beat: see the story-direction skill",
-				},
-			),
-		];
+	if (audio !== undefined) {
+		// Music skips transcription: neither its beats nor its captions use words.
+		if (audio.kind === "speech" && fresh.transcript !== "current") {
+			return [agentStep("audio_transcribe", { ...thisPost, dryRun: true })];
+		}
+		if (beats === undefined) return [agentStep("beat_plan", thisPost)];
+		if (fresh.beats === "stale") {
+			const withPrompts = beats.items.filter((b) => b.prompt !== undefined).length;
+			const from = audio.kind === "music" ? "earlier audio" : "an earlier transcript";
+			const moments = beats.items.some((b) => b.moment !== undefined)
+				? "; mark the story moments again after it"
+				: "";
+			return [
+				agentStep("beat_plan", withPrompts > 0 ? { ...thisPost, force: true } : thisPost, {
+					note:
+						withPrompts > 0
+							? `the beats were cut from ${from}; planning again drops their ${prompts(withPrompts)}${moments}`
+							: `the beats were cut from ${from}${moments}`,
+				}),
+			];
+		}
+		if (beats.items.some((b) => b.prompt === undefined)) {
+			const setPrompts = (or: boolean) =>
+				agentStep(
+					"beat_set",
+					{ ...thisPost, from: "<beats.json>" },
+					{
+						note: "a story moment and an image prompt for every beat: see the story-direction skill",
+						or,
+					},
+				);
+			// A re-cut by moment drops prompts, so it's offered only before any are written.
+			const reCut =
+				beats.items.every((b) => b.prompt === undefined) &&
+				beats.items.some((b) => b.moment !== undefined) &&
+				!fresh.recut;
+			return reCut
+				? [
+						agentStep(
+							"beat_plan",
+							{ ...thisPost, byMoment: true },
+							{ note: "re-cut each story moment to its beat length, before writing the prompts" },
+						),
+						setPrompts(true),
+					]
+				: [setPrompts(false)];
+		}
 	}
 	if (post.script === undefined)
 		return [agentStep("script_set", { ...thisPost, file: "script.md" })];
@@ -147,57 +221,97 @@ export const nextStepsOf = (post: Post): ReadonlyArray<NextStep> => {
 			),
 		];
 	}
-	if (post.audio === undefined) {
+	if (audio === undefined) {
 		return [
 			agentStep("source_import", { ...thisPost, file: "<audio>", origin: "ai", kind: "speech" }),
 		];
 	}
-	if (post.beats?.items.some((b) => b.image === undefined)) {
-		// A dry run first, so the user sees the estimate; its own next step is the real run.
-		return [agentStep("image_generate", { ...thisPost, dryRun: true })];
+	const toMake = fresh.images.filter((image) => !(image.imported && image.why === "file-gone"));
+	const toImport = fresh.images.filter((image) => image.imported && image.why === "file-gone");
+	if (toMake.length > 0 || toImport.length > 0) {
+		// A dry run first, so the user sees the estimate; its own next step is the real run. It
+		// names the beats only while some beat has a usable image, so the rest aren't planned.
+		const all = toMake.length === (beats?.items.length ?? 0);
+		const beatList = toMake.map((image) => image.beat).join(",");
+		return [
+			...(toMake.length === 0
+				? []
+				: [
+						agentStep(
+							"image_generate",
+							all ? { ...thisPost, dryRun: true } : { ...thisPost, beat: beatList, dryRun: true },
+						),
+					]),
+			...toImport.map(({ beat }) =>
+				agentNote(
+					`beat ${beat}'s imported image is gone: import it again with image import --post ${post.slug} --beat ${beat} --file <image>`,
+				),
+			),
+		];
 	}
 	if (post.draft === undefined) return [agentStep("draft_render", thisPost)];
-	switch (stageOf(post)) {
+	return undefined;
+};
+
+/** The user's evening check of the draft. */
+const reviewSteps = (post: Post): ReadonlyArray<NextStep> => [
+	userStep(
+		undefined,
+		`watch ${join("<posts>", "mine", post.slug, post.draft?.file ?? "draft.mp4")}`,
+	),
+	userStep(
+		`post review --post ${post.slug} --decision <decision>`,
+		"approve, fix or reject: the user's evening check, CLI only",
+	),
+];
+
+/**
+ * What to do next, given what's recorded and `fresh`, whether each output still matches the
+ * post's own inputs. The first gap from the top wins; approvals and reviews are the user's.
+ */
+export const nextStepsOf = (post: Post, fresh: Freshness = UP_TO_DATE): ReadonlyArray<NextStep> => {
+	const stage = stageOf(post);
+	if (stage === "archived") return [];
+	// The video is finished, so nothing upstream matters any more.
+	if (stage === "final" || stage === "posted") return finishedSteps(post, stage);
+	const thisPost = { post: post.slug };
+	const notes = stage === "needs-fix" ? reviewNotes(post) : [];
+	const before = stepsBeforeDraft(post, fresh);
+	if (before !== undefined) return [...notes, ...before];
+	switch (stage) {
 		case "draft":
-			return [
-				userStep(undefined, `watch ${join("<posts>", "mine", post.slug, post.draft.file)}`),
-				userStep(
-					`post review --post ${post.slug} --decision <decision>`,
-					"approve, fix or reject: the user's evening check, CLI only",
-				),
-			];
+			return fresh.draft === "stale"
+				? [agentStep("draft_render", thisPost), ...reviewSteps(post)]
+				: reviewSteps(post);
+		// Until a fix changes the draft's inputs, rendering would do nothing: the notes come first.
 		case "needs-fix":
-			return [
-				agentNote("apply the review notes (beat set, image generate --beat N --reroll)"),
-				agentStep("draft_render", thisPost),
-			];
+			return fresh.draft === "stale"
+				? [...notes, agentStep("draft_render", thisPost)]
+				: [
+						...notes,
+						agentNote(
+							`once the fixes are made, render the draft again: draft render --post ${post.slug}`,
+						),
+					];
 		case "rejected":
-			return [agentStep("post_archive", thisPost)];
+			return fresh.draft === "stale"
+				? [agentStep("draft_render", thisPost), ...reviewSteps(post)]
+				: [
+						userStep(
+							`post archive --post ${post.slug}`,
+							"the user rejected the draft: ask them whether to rework the post or archive it",
+						),
+					];
 		case "approved":
-			return [
-				agentStep("capcut_export", thisPost),
-				userStep(undefined, "polish in CapCut desktop"),
-				agentStep("post_finalize", { ...thisPost, file: "<final.mp4>" }),
-			];
-		case "final":
-			return [
-				agentStep(
-					"post_publish",
-					{ ...thisPost, platform: "<platform>", url: "<url>" },
-					{ note: "instagram, tiktok or youtube" },
-				),
-			];
-		case "posted":
-			return [
-				agentStep(
-					"post_publish",
-					{ ...thisPost, platform: "<another platform>", url: "<url>" },
-					{ note: "for another platform" },
-				),
-				agentStep("post_archive", thisPost, { or: true }),
-			];
+			return fresh.exportMatches
+				? [
+						agentStep("capcut_export", thisPost),
+						userStep(undefined, "polish in CapCut desktop"),
+						agentStep("post_finalize", { ...thisPost, file: "<final.mp4>" }),
+					]
+				: [agentStep("draft_render", thisPost), ...reviewSteps(post)];
 		default:
-			return [];
+			return [agentStep("draft_render", thisPost)];
 	}
 };
 
@@ -217,11 +331,25 @@ export const nextText = (steps: ReadonlyArray<NextStep>): string =>
 				})
 				.join("");
 
-/** `next` and `nextSteps` for a post, as every output that moves a post on returns them. */
-export const nextOf = (post: Post): { next: string; nextSteps: ReadonlyArray<NextStep> } => {
-	const nextSteps = nextStepsOf(post);
-	return { next: nextText(nextSteps), nextSteps };
-};
+/** `next` and `nextSteps` from steps. */
+const nextFields = (
+	nextSteps: ReadonlyArray<NextStep>,
+): { next: string; nextSteps: ReadonlyArray<NextStep> } => ({
+	next: nextText(nextSteps),
+	nextSteps,
+});
+
+/**
+ * `next` and `nextSteps` for a post, as every output that moves a post on returns them. After the
+ * CapCut export (`exported`), the steps start at polishing: exporting again isn't a step.
+ */
+export const nextOf = (ctx: Context, post: Post, options: { readonly exported?: boolean } = {}) =>
+	Effect.map(freshnessOf(ctx, post), (fresh) => {
+		const steps = nextStepsOf(post, fresh);
+		return nextFields(
+			options.exported ? steps.filter((step) => step.tool !== "capcut_export") : steps,
+		);
+	});
 
 /**
  * Who clears what stops a dry run: the user first, whatever it is, since an agent may neither
@@ -259,17 +387,68 @@ export const nextAfterDryRun = (
 	realRun: NextStep,
 	fetchFree?: NextStep,
 ): { next: string; nextSteps: ReadonlyArray<NextStep> } => {
-	const nextSteps = budget.fits
-		? [realRun]
-		: [
-				...clearTheWay(budget),
-				...(fetchFree === undefined || budget.stoppedBy === "missing-key" ? [] : [fetchFree]),
-			];
-	return { next: nextText(nextSteps), nextSteps };
+	return nextFields(
+		budget.fits
+			? [realRun]
+			: [
+					...clearTheWay(budget),
+					...(fetchFree === undefined || budget.stoppedBy === "missing-key" ? [] : [fetchFree]),
+				],
+	);
 };
 
 /** The next command as text, for a `fix`. */
-export const nextStep = (post: Post): string => nextOf(post).next;
+export const nextStep = (ctx: Context, post: Post) => Effect.map(nextOf(ctx, post), (n) => n.next);
+
+/**
+ * Fails unless the user's current review approves the draft, by who acts next: while the draft
+ * waits for the review, or after the user rejected it, the user (`needs-approval`); after they
+ * asked for fixes, the agent (`conflict`), with each note. `command` is what was refused.
+ */
+export const refuseUnapproved = (ctx: Context, post: Post, command: string) =>
+	Effect.gen(function* () {
+		const review = currentReview(post);
+		if (review?.decision === "approve") return;
+		const slug = post.slug;
+		if (post.draft === undefined) {
+			return yield* fail(
+				"not-found",
+				`${slug} has no draft yet, so ${command} can't run.`,
+				yield* nextStep(ctx, post),
+			);
+		}
+		if (review === undefined) {
+			return yield* fail(
+				"needs-approval",
+				`${slug}'s draft waits for the user's review, so ${command} can't run yet.`,
+				`The user watches the draft, then decides in their terminal: post review --post ${slug} --decision <decision>`,
+			);
+		}
+		if (review.decision === "reject") {
+			return yield* fail(
+				"needs-approval",
+				`The user rejected ${slug}'s draft, so ${command} can't run.`,
+				`Ask the user whether to rework the post or archive it: post archive --post ${slug}`,
+			);
+		}
+		const notes = reviewNotes(post).map((step) => step.note ?? "");
+		return yield* fail(
+			"conflict",
+			`The user asked for fixes to ${slug}'s draft, so ${command} can't run yet.`,
+			`${notes.length === 0 ? "Make the fixes" : `Make the fixes: ${notes.join("; ")}`}. Then draft render --post ${slug}; the user reviews the new draft.`,
+		);
+	});
+
+/** The current review, for `post show`'s text: its decision and time, its note, each beat's note. */
+const reviewLines = (post: Post): ReadonlyArray<string> => {
+	const review = currentReview(post);
+	if (review === undefined) return [];
+	return [
+		`  review: ${review.decision}, ${review.at}`,
+		...(review.note === undefined ? [] : [`    note: ${review.note}`]),
+		...(review.beatNotes ?? []).map(({ beat, note }) => `    beat ${beat}: ${note}`),
+	];
+};
 
 const PostSummary = Schema.Struct({
 	slug: Schema.String,
@@ -310,7 +489,7 @@ export const postCreate = defineOperation({
 			...(Object.keys(brief).length > 0 ? { brief } : {}),
 			aiGenerated: true,
 		});
-		return { slug, dir: postDir(ctx, slug), ...nextOf(post) };
+		return { slug, dir: postDir(ctx, slug), ...(yield* nextOf(ctx, post)) };
 	}),
 	render: (o) => `Created ${o.slug}\n  ${o.dir}\nNext: ${o.next}`,
 });
@@ -365,16 +544,16 @@ export const postShow = defineOperation({
 	surface: "cli-and-mcp",
 	spends: false,
 	hints: { readonly: true, destructive: false, idempotent: true, openWorld: false },
-	run: (input, ctx) =>
-		readPost(ctx, input.post).pipe(
-			Effect.map((post) => ({
-				slug: post.slug,
-				stage: stageOf(post),
-				dir: postDir(ctx, post.slug),
-				...nextOf(post),
-				manifest: post,
-			})),
-		),
+	run: Effect.fn("post_show")(function* (input, ctx) {
+		const post = yield* readPost(ctx, input.post);
+		return {
+			slug: post.slug,
+			stage: stageOf(post),
+			dir: postDir(ctx, post.slug),
+			...(yield* nextOf(ctx, post)),
+			manifest: post,
+		};
+	}),
 	render: (o) => {
 		const post = o.manifest as Post;
 		const beats = post.beats?.items ?? [];
@@ -392,6 +571,7 @@ export const postShow = defineOperation({
 				? `  script: ${isScriptApproved(post) ? "approved" : "not approved"}`
 				: "  script: none",
 			post.draft ? `  draft: ${post.draft.file}` : "  draft: none",
+			...reviewLines(post),
 			`Next: ${o.next}`,
 		];
 		return lines.join("\n");

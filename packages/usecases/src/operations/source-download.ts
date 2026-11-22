@@ -21,7 +21,7 @@ import { chooseModel, costOf } from "../models.ts";
 import { roundUsd, usd } from "../money.ts";
 import { defineOperation, p, type RunMode } from "../operation.ts";
 import { Downloader, MediaTools, Transcriber } from "../ports.ts";
-import { postDir, readPost } from "../post-store.ts";
+import { postDir, readPost, refuseArchived } from "../post-store.ts";
 import { NextStep } from "./post.ts";
 import { sourceImport } from "./source.ts";
 
@@ -112,7 +112,7 @@ export const sourceDownload = defineOperation({
 		}
 
 		if (input.url !== undefined && input.post !== undefined) {
-			yield* readPost(ctx, input.post);
+			yield* refuseArchived(yield* readPost(ctx, input.post), "source download");
 			const audioDir = join(postDir(ctx, input.post), "audio");
 			yield* ensureDir(audioDir);
 			const dir = yield* fileStep(

@@ -4,7 +4,7 @@ import { stageOf } from "@shorts-studio/domain/post";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import type { Context } from "../context.ts";
-import { postDir, readPost } from "../post-store.ts";
+import { postDir, readPost, updatePost } from "../post-store.ts";
 import { testContext } from "../test/context.ts";
 import { fakeMediaTools, fakePorts, run, runFailure } from "../test/fakes.ts";
 import { seedPost, withDraft } from "../test/posts.ts";
@@ -107,18 +107,41 @@ describe("post review", () => {
 });
 
 describe("post finalize", () => {
-	it("should refuse to finalize a draft the user hasn't approved", async () => {
-		// GIVEN a draft marked for fixing, and a finished video
+	it("should refuse to finalize a draft the user hasn't reviewed", async () => {
+		// GIVEN a draft waiting for the user's review, and a finished video
 		const ctx = testContext();
 		await seedPost(ctx, SLUG, withDraft());
-		await run(review(ctx, "fix"));
 		const video = finishedVideo(ctx);
 
 		// WHEN it is finalized
 		const error = await runFailure(postFinalize.run({ post: SLUG, file: video }, ctx, MODE));
 
-		// THEN it waits for the user's approval
+		// THEN it waits for the user's review, naming it
 		expect(error.code).toBe("needs-approval");
+		expect(error.fix).toContain(`post review --post ${SLUG} --decision <decision>`);
+		expect((await postOf(ctx)).final).toBeUndefined();
+	});
+
+	it("should refuse to finalize a published post, naming its platform", async () => {
+		// GIVEN an approved draft published on instagram, and a new finished video
+		const ctx = testContext();
+		await seedPost(ctx, SLUG, withDraft());
+		await run(review(ctx, "approve"));
+		await run(
+			postPublish.run(
+				{ post: SLUG, platform: "instagram", url: "https://instagram.com/p/x" },
+				ctx,
+				MODE,
+			),
+		);
+		const video = finishedVideo(ctx);
+
+		// WHEN it is finalized
+		const error = await runFailure(postFinalize.run({ post: SLUG, file: video }, ctx, MODE));
+
+		// THEN the final video is unchanged, and it fails with conflict naming instagram
+		expect(error.code).toBe("conflict");
+		expect(error.message).toContain("instagram");
 		expect((await postOf(ctx)).final).toBeUndefined();
 	});
 
@@ -145,10 +168,82 @@ describe("post finalize", () => {
 });
 
 describe("post publish", () => {
-	it("should keep one record per platform", async () => {
-		// GIVEN a post published on Instagram
+	it("should refuse a draft waiting for the user's review, recording no platform", async () => {
+		// GIVEN a draft the user hasn't reviewed
 		const ctx = testContext();
 		await seedPost(ctx, SLUG, withDraft());
+
+		// WHEN it is published
+		const error = await runFailure(
+			postPublish.run({ post: SLUG, platform: "instagram", url: "https://x.com/1" }, ctx, MODE),
+		);
+
+		// THEN no platform is recorded, and it fails with needs-approval
+		expect(error.code).toBe("needs-approval");
+		expect((await postOf(ctx)).published).toBeUndefined();
+	});
+
+	it("should refuse a draft the user rejected, asking them to rework or archive it", async () => {
+		// GIVEN a draft the user rejected
+		const ctx = testContext();
+		await seedPost(ctx, SLUG, withDraft());
+		await run(review(ctx, "reject"));
+
+		// WHEN it is published
+		const error = await runFailure(
+			postPublish.run({ post: SLUG, platform: "instagram", url: "https://x.com/1" }, ctx, MODE),
+		);
+
+		// THEN no platform is recorded, and the fix asks the user to rework or archive it
+		expect(error.code).toBe("needs-approval");
+		expect(error.fix).toContain("rework");
+		expect(error.fix).toContain("archive");
+		expect((await postOf(ctx)).published).toBeUndefined();
+	});
+
+	it("should publish an approved draft that has no final video", async () => {
+		// GIVEN an approved draft without a final video
+		const ctx = testContext();
+		await seedPost(ctx, SLUG, withDraft());
+		await run(review(ctx, "approve"));
+
+		// WHEN it is published
+		await run(
+			postPublish.run({ post: SLUG, platform: "instagram", url: "https://x.com/1" }, ctx, MODE),
+		);
+
+		// THEN the platform is recorded, and the post is at posted
+		expect(stageOf(await postOf(ctx))).toBe("posted");
+	});
+
+	it("should record another platform for a published post whose draft was rendered again", async () => {
+		// GIVEN an approved draft published on instagram without a final video, then a new render
+		const ctx = testContext();
+		await seedPost(ctx, SLUG, withDraft());
+		await run(review(ctx, "approve"));
+		await run(
+			postPublish.run({ post: SLUG, platform: "instagram", url: "https://x.com/1" }, ctx, MODE),
+		);
+		await Effect.runPromise(
+			updatePost(ctx, SLUG, "test", (post) =>
+				Effect.succeed({ ...post, ...(post.draft && { draft: { ...post.draft, hash: "d2" } }) }),
+			),
+		);
+
+		// WHEN it is published on tiktok
+		const result = await run(
+			postPublish.run({ post: SLUG, platform: "tiktok", url: "https://x.com/2" }, ctx, MODE),
+		);
+
+		// THEN tiktok is recorded too
+		expect(result.platforms).toEqual(["instagram", "tiktok"]);
+	});
+
+	it("should keep one record per platform", async () => {
+		// GIVEN an approved post published on Instagram
+		const ctx = testContext();
+		await seedPost(ctx, SLUG, withDraft());
+		await run(review(ctx, "approve"));
 		const publish = (platform: "instagram" | "tiktok", url: string) =>
 			run(postPublish.run({ post: SLUG, platform, url }, ctx, MODE));
 		await publish("instagram", "https://instagram.com/p/old");
@@ -182,10 +277,27 @@ describe("post publish", () => {
 });
 
 describe("post archive", () => {
+	it("should keep the first time when archived twice, and return it with no next steps", async () => {
+		// GIVEN a post archived the day before
+		const ctx = testContext({ now: () => new Date("2026-11-05T09:00:00.000Z") });
+		await seedPost(ctx, SLUG, withDraft());
+		await run(postArchive.run({ post: SLUG }, ctx, MODE));
+
+		// WHEN it is archived again a day later
+		const later = { ...ctx, now: () => new Date("2026-11-06T09:00:00.000Z") };
+		const result = await run(postArchive.run({ post: SLUG }, later, MODE));
+
+		// THEN archivedAt keeps the day before, and the result returns it with empty nextSteps
+		expect((await postOf(ctx)).archivedAt).toBe("2026-11-05T09:00:00.000Z");
+		expect(result.archivedAt).toBe("2026-11-05T09:00:00.000Z");
+		expect(result.nextSteps).toEqual([]);
+	});
+
 	it("should move the post to archived and keep what was recorded", async () => {
 		// GIVEN a published post
 		const ctx = testContext();
 		await seedPost(ctx, SLUG, withDraft());
+		await run(review(ctx, "approve"));
 		await run(
 			postPublish.run({ post: SLUG, platform: "youtube", url: "https://youtu.be/x" }, ctx, MODE),
 		);
