@@ -20,8 +20,8 @@ The order of the steps. The rules behind them are in [AGENTS.md](../../../AGENTS
 2. `source import --post <slug> --file <audio-or-video> --origin mine|others|ai --kind speech|music`. Use `others` for someone else's reel: it's a guide track, and the post must be published with the platform's in-app sound.
 3. `audio transcribe --post <slug> --dry-run`, then the real run its next step names. It costs a little, counted toward the caps. Add `--language es` only when the auto-detected language is wrong. Music skips this step: `post show` goes straight to `beat plan`.
 4. `beat plan --post <slug>`, then direct the beats with the [story-direction skill](../story-direction/SKILL.md): mark each beat's moment, re-cut with `--by-moment`, then write one image prompt per beat.
-5. Write the story to `script.md` (hook in the first 3 s, the turn, the CTA): concrete subjects, one idea per image, the brand style is added for you.
-6. `script set --post <slug> --file script.md --hook "3 to 7 words"`, then `beat set --post <slug> --from beats.json`.
+5. Write the story (hook in the first 3 s, the turn, the CTA): concrete subjects, one idea per image, the brand style is added for you.
+6. `script set --post <slug> --text <script> --hook "3 to 7 words"` (or `--file script.md`), after the prompts are set with `beat set --post <slug> --beats <beats>` (or `--from beats.json`). Over MCP both go inline, as `post show`'s next steps write them.
 7. **Stop.** Ask the user to read the script and the prompts, and run `script approve --post <slug>` in their own terminal. Never approve it: it refuses without a terminal anyway. Changing a prompt or the audio afterwards needs approving again.
 8. `image generate --post <slug> --dry-run`, show the estimate, then run it for real (the CLI needs `--yes` when it costs money; over MCP the user's approval prompt is the gate).
 9. `draft render --post <slug>`, then give the user the path to `draft.mp4` for the evening check.
@@ -47,5 +47,7 @@ Every error has a `fix`: do what it says. `over-budget` means stop and ask the u
 Without `--yes`, a run that can't go ahead fails as the real run would (`over-budget`, `missing-key`, or `failed` for a setting), not with `needs-confirmation`. A run that spends nothing, such as fetching images already paid for, runs without `--yes`.
 
 A dry run never fails for these: its `budget` says whether the real run could go ahead, and if not, `stoppedBy` says what stops it (`settings`, `missing-key`, or a cap such as `caps.dailyUsd`). Its `nextSteps` then start with the user's step for that. When some beats' images are already paid for, a later step fetches them at no cost (`image generate --post <slug> --beat <n,…>`, without `--yes`): run it.
+
+An error's `nextSteps` work like a result's: its first step is what to do about it, and a step whose `by` is `user` means stop and ask the user, as its fix says. A batch fails with its posts' code: `needs-approval` (exit 3) or `over-budget` (exit 4) when they wait on the user, else the code they share, and its fix names the failed posts and the command on just those.
 
 `nextSteps` in every result says what comes next as data, and follows what's out of date, not only what's missing: run a step whose `by` is `agent` (its `tool` and `args` over MCP, its `cli` in a shell), and hand the user each step whose `by` is `user`.
