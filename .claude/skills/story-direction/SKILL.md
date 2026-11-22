@@ -13,7 +13,7 @@ How to direct a post's beats. The numbers each choice sets (beat lengths, motion
 
 1. `beat plan --post <slug>` and read the transcript beat by beat.
 2. Give every beat a **moment** (below), in a `moments.json`: `[{"beat": 0, "moment": "hook"}, …]`, then `beat set --post <slug> --from moments.json`.
-3. `beat plan --post <slug> --by-moment` re-cuts each stretch to its moment's beat length. Read the new beats.
+3. `beat plan --post <slug> --by-moment` re-cuts each stretch to its moment's beat length. Read the new beats. `post show` offers this step while beats have moments and no prompts. A plain `beat plan` afterwards keeps the re-cut; only `--force` plans again, which drops the moments' re-cut and any prompts.
 4. Write one image prompt per new beat, adding a `motion` only where the default would fight the image (below), and `beat set --from beats.json`.
 5. Put a hook title on the script: `script set --post <slug> --file script.md --hook "3 to 7 words"`.
 6. After the user approves the script and images exist, `draft render`, then watch it.
