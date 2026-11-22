@@ -7,7 +7,15 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!docs/vendors", "!pnpm-lock.yaml"]
+    "includes": [
+      "**",
+      "!docs/vendors",
+      "!pnpm-lock.yaml",
+      // `openspec update` generates these skills and rewrites them on every run, so they keep
+      // OpenSpec's own formatting.
+      "!.agents/skills/openspec-*",
+      "!.claude/skills/openspec-*"
+    ]
   },
   "formatter": {
     "enabled": true,
