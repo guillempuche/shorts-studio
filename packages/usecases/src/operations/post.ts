@@ -100,7 +100,10 @@ const stepsBeforeDraft = (post: Post, fresh: Freshness): ReadonlyArray<NextStep>
 				}),
 			];
 		}
-		const withoutPrompt = beats.items.filter((b) => b.prompt === undefined).map((b) => b.index);
+		// An imported image needs no prompt: image generate leaves it alone.
+		const withoutPrompt = beats.items
+			.filter((b) => b.prompt === undefined && b.image?.source !== "imported")
+			.map((b) => b.index);
 		if (withoutPrompt.length > 0) {
 			const setPrompts = (or: boolean) =>
 				agentStep(
@@ -330,17 +333,20 @@ export const refuseUnapproved = (ctx: Context, post: Post, command: string) =>
 		if (review?.decision === "approve") return;
 		const slug = post.slug;
 		if (post.draft === undefined) {
+			const { next, nextSteps } = yield* nextOf(ctx, post);
 			return yield* fail(
 				"not-found",
 				`${slug} has no draft yet, so ${command} can't run.`,
-				yield* nextStep(ctx, post),
+				next,
+				nextSteps,
 			);
 		}
 		if (review === undefined) {
 			return yield* fail(
 				"needs-approval",
 				`${slug}'s draft waits for the user's review, so ${command} can't run yet.`,
-				`The user watches the draft, then decides in their terminal: post review --post ${slug} --decision <decision>`,
+				`Ask the user to watch the draft, then decide in their terminal: post review --post ${slug} --decision <decision>`,
+				reviewSteps(post),
 			);
 		}
 		if (review.decision === "reject") {
@@ -348,6 +354,12 @@ export const refuseUnapproved = (ctx: Context, post: Post, command: string) =>
 				"needs-approval",
 				`The user rejected ${slug}'s draft, so ${command} can't run.`,
 				`Ask the user whether to rework the post or archive it: post archive --post ${slug}`,
+				[
+					userStep(
+						`post archive --post ${slug}`,
+						"the user rejected the draft: ask them whether to rework the post or archive it",
+					),
+				],
 			);
 		}
 		const notes = reviewNotes(post).map((step) => step.note ?? "");
@@ -355,6 +367,7 @@ export const refuseUnapproved = (ctx: Context, post: Post, command: string) =>
 			"conflict",
 			`The user asked for fixes to ${slug}'s draft, so ${command} can't run yet.`,
 			`${notes.length === 0 ? "Make the fixes" : `Make the fixes: ${notes.join("; ")}`}. Then draft render --post ${slug}; the user reviews the new draft.`,
+			[...reviewNotes(post), agentStep("draft_render", { post: slug })],
 		);
 	});
 

@@ -200,3 +200,16 @@ describe("budget show for one post", () => {
 		expect(result.posts).toEqual([{ post: "saved/faves", usd: 0 }]);
 	});
 });
+
+describe("budget show for a collection that isn't there", () => {
+	it("should fail with not-found", async () => {
+		// GIVEN no saved collections
+		const ctx = testContext();
+
+		// WHEN a misspelt collection's budget is shown
+		const error = await runFailure(budgetShow.run({ post: "saved/nope" }, ctx, MODE));
+
+		// THEN it is not found
+		expect(error.code).toBe("not-found");
+	});
+});

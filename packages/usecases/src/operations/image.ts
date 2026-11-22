@@ -623,6 +623,14 @@ export const imageGenerate = defineOperation({
 		/** Checks the post can have images made now, then plans each chosen beat. */
 		const planFor = Effect.fnUntraced(function* (post: Post) {
 			yield* checkReady(ctx, post, input.post);
+			// Again on this read: under the lock the plan may have changed since the first check.
+			if (input.beat !== undefined) {
+				yield* beatsOfPost(
+					input.beat,
+					input.post,
+					(post.beats?.items ?? []).map((b) => b.index),
+				);
+			}
 			const chosen = (post.beats?.items ?? []).filter(
 				(b) => only === undefined || only.includes(b.index),
 			);

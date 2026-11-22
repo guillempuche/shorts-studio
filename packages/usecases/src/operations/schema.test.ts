@@ -103,15 +103,14 @@ describe("schema show, closed inputs", () => {
 		const result = await run(schemaShow.run({ name: "beat_set" }, testContext(), MODE));
 
 		// THEN its input takes no other field
+		type Node = { additionalProperties?: unknown; items?: Node; anyOf?: ReadonlyArray<Node> };
 		const { input } = result.schema as {
-			input: {
-				additionalProperties?: unknown;
-				properties: { beats: { items?: { additionalProperties?: unknown } } };
-			};
+			input: { additionalProperties?: unknown; properties: { beats: Node } };
 		};
 		expect(input.additionalProperties).toBe(false);
-		// AND neither does each item of beats
-		expect(input.properties.beats.items?.additionalProperties).toBe(false);
+		// AND neither does each item of beats, given as a list
+		const list = input.properties.beats.anyOf?.find((branch) => branch.items !== undefined);
+		expect(list?.items?.additionalProperties).toBe(false);
 	});
 
 	it("should leave the post file's schema as it is", async () => {

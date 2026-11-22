@@ -267,9 +267,16 @@ export const sourceTranscribe = defineOperation({
 
 		if (mode.dryRun) {
 			// A file whose length can't be read is listed as failed; the others are still estimated.
+			// A missing ffprobe isn't one file's fault: it fails the dry run, as every file would.
 			const outcomes = yield* Effect.forEach(todo, (file) =>
 				Effect.map(Effect.result(costOfFile(file)), (outcome) => ({ file, outcome })),
 			);
+			const missingTool = outcomes.find(
+				({ outcome }) => Result.isFailure(outcome) && outcome.failure.code === "missing-tool",
+			);
+			if (missingTool !== undefined && Result.isFailure(missingTool.outcome)) {
+				return yield* missingTool.outcome.failure;
+			}
 			const costs = outcomes.flatMap(({ outcome }) =>
 				Result.isSuccess(outcome) ? [outcome.success] : [],
 			);
@@ -292,7 +299,8 @@ export const sourceTranscribe = defineOperation({
 				estimateUsd,
 				dryRun: true,
 				budget,
-				...nextAfterDryRun(budget, again),
+				// With nothing it could read, the real run would only fail the same files again.
+				...(costs.length === 0 && failures.length > 0 ? {} : nextAfterDryRun(budget, again)),
 			};
 		}
 

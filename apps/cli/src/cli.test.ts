@@ -15,7 +15,15 @@ import { DateTime, Effect, Exit, Fiber, Layer, Runtime, Schema } from "effect";
 import { Command } from "effect/cli";
 import { TestConsole } from "effect/testing";
 import { describe, expect, it, vi } from "vitest";
-import { aliasCommand, batchCode, cliOutput, jsonRequested, nounCommands, root } from "./cli.ts";
+import {
+	aliasCommand,
+	batchCode,
+	batchError,
+	cliOutput,
+	jsonRequested,
+	nounCommands,
+	root,
+} from "./cli.ts";
 import { platform } from "./platform.ts";
 
 /**
@@ -1107,5 +1115,24 @@ describe("--json however the CLI is called", () => {
 		// THEN no question is asked, and stdout holds one usage error object
 		expect(run.ok).toBe(false);
 		expect(JSON.parse(run.out).error.code).toBe("usage");
+	});
+});
+
+describe("a mixed batch's fix", () => {
+	it("should name the posts that wait on the user apart from the ones to run again", () => {
+		// GIVEN one post over the cap and one that failed at the provider
+		const error = batchError(
+			[
+				{ post: "a", code: "over-budget" },
+				{ post: "b", code: "provider" },
+			],
+			2,
+			(posts) => `test fail --post ${posts.join(",")}`,
+		);
+
+		// THEN the batch is over budget, a waits on the user, and only b is run again
+		expect(error.code).toBe("over-budget");
+		expect(error.fix).toContain("a wait on the user");
+		expect(error.fix).toContain("test fail --post b");
 	});
 });

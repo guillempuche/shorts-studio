@@ -137,6 +137,7 @@ export const createPost = Effect.fn("createPost")(function* (
 			"conflict",
 			`Post "${post.slug}" already exists.`,
 			`Show it with: post show --post ${post.slug}`,
+			[agentStep("post_show", { post: post.slug })],
 		);
 	}
 	yield* ensureDir(dir);
@@ -196,6 +197,7 @@ export const refuseArchived = (post: Post, command: string): Effect.Effect<void,
 					"conflict",
 					`${post.slug} is archived; it no longer changes, so ${command} didn't run.`,
 					"An archived post can't be taken out of the archive. For new work, create a post: post create --post <slug>",
+					[agentStep("post_create", { post: "<slug>" })],
 				),
 			);
 

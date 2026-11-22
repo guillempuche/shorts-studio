@@ -331,3 +331,20 @@ describe("post archive", () => {
 		expect(post.published).toHaveLength(1);
 	});
 });
+
+describe("refusals on a draft, with the next steps", () => {
+	it("should give the user's review as the step when the draft waits for it", async () => {
+		// GIVEN a draft the user hasn't reviewed
+		const ctx = testContext();
+		await seedPost(ctx, SLUG, withDraft());
+
+		// WHEN it is published
+		const error = await runFailure(
+			postPublish.run({ post: SLUG, platform: "instagram", url: "https://x.com/1" }, ctx, MODE),
+		);
+
+		// THEN the steps are the user's, ending with post review
+		expect(error.nextSteps.every((step) => step.by === "user")).toBe(true);
+		expect(error.nextSteps.at(-1)?.cli).toContain(`post review --post ${SLUG}`);
+	});
+});

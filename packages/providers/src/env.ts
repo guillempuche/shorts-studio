@@ -43,6 +43,8 @@ export const addressChecks = (ctx: ProviderContext, provider: string): ReadonlyA
 			status: "warn",
 			detail: `${provider} requests go to ${address}, not ${provider}'s own service`,
 			fix: `Unset ${variable} to reach ${provider} itself; keep it only while testing.`,
+			// What its paid calls would fail with, not a missing tool.
+			code: "provider",
 		},
 	];
 };

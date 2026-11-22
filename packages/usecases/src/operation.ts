@@ -69,7 +69,8 @@ export const p = {
 	 * flag that isn't valid JSON, or doesn't match, is a usage error before anything runs.
 	 */
 	json: <A>(schema: Schema.Codec<A, unknown>, description: string): Param<A> => ({
-		field: schema.annotate({ description }),
+		// Over MCP, JSON text too: a next step's argument is a string placeholder an agent may fill as text.
+		field: Schema.Union([schema, Schema.fromJsonString(schema)]).annotate({ description }),
 		flag: (name) =>
 			described(
 				Flag.String(name).pipe(Flag.withSchema(Schema.fromJsonString(schema))),
