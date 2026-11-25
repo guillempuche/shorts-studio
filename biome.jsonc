@@ -14,7 +14,10 @@
       // `openspec update` generates these skills and rewrites them on every run, so they keep
       // OpenSpec's own formatting.
       "!.agents/skills/openspec-*",
-      "!.claude/skills/openspec-*"
+      "!.claude/skills/openspec-*",
+      // Biome's Markdown formatter strips the indentation of YAML front matter, which turns this
+      // file's nested settings (scopes, gates, roles) into empty keys.
+      "!.claude/git-workflow.md"
     ]
   },
   "formatter": {
