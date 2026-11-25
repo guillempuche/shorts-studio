@@ -25,3 +25,4 @@
 
 - [ ] 4.1 Shared files in the data folder written to a temporary file and renamed, under a lock
 - [ ] 4.2 The make-shorts skill: one agent session per story
+- [ ] 4.3 The verify skill: a `concurrency` flow that runs two renders on one post, fills the render slots, checks MCP's `conflict` and Ctrl-C's exit 130, and measures peak memory; the slots' cache folder can be pointed into the sandbox, or the flow is `not walked`

@@ -10,3 +10,4 @@
 - [ ] 1.8 Convert the result like an imported clip and save it in the beat's clip slot (video-beats) with origin `ai`; up to 0.5 s short is saved with `hold`
 - [ ] 1.9 Review marks record the beat's first and last frame, and count while the beat keeps them
 - [ ] 1.10 An AI clip records its source image's hash; out of date when the image changes
+- [ ] 1.11 The verify skill: every new provider (voices, music, clips) is a `PaidService` with a URL override, so the sandbox blocks it; a `sound` flow checks audio with `ffprobe` and `silencedetect`, and beat finding on `clicks.wav`'s known tempo

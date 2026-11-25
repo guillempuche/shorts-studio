@@ -20,3 +20,4 @@
 - [ ] 3.4 `post review --note-at`; `post review` prints the waiting notes first, takes in the current draft's, and marks older ones
 - [ ] 3.5 Show the command to run on the page; no way to decide from it
 - [ ] 3.6 Docs: reviewing in the Claude app's browser and in any other browser
+- [ ] 3.7 The verify skill: a `page` flow where the user starts `post watch` and the agent walks the page in the built-in browser (screenshots, a note at a moment, reload on a new draft), and checks with `curl` that a wrong `Host`, a missing token and an unselected post are refused

@@ -6,3 +6,4 @@
 - [ ] 1.4 `attempt pick` and `attempt reject`, CLI-only
 - [ ] 1.5 `post history` and `attempt report --by model`
 - [ ] 1.6 Docs: the data folder as a private git repository, `merge=union` for the two logs, media backed up with rclone
+- [ ] 1.7 The verify skill: an `attempts` flow that walks `image generate --try` as a dry run and against the dead port, and checks `merge=union` with two clones of a scratch data repository; `attempt pick` and `attempt reject` are the user's

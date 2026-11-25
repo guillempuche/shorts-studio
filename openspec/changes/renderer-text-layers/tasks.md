@@ -35,3 +35,4 @@
 - [ ] 4.3 `doctor` checks Takumi always: a failure with `takumi`, a warning with `ass`
 - [ ] 4.4 Drawing commands fail with `missing-tool` when Takumi doesn't load
 - [ ] 4.5 Docs: architecture, providers, and the README's comparison table
+- [ ] 4.6 The verify skill: a `binary` flow that builds and runs the Bun binary through `scripts/smoke-binary.ts`, and a `render` step that compares one frame drawn by `ass` and by `takumi` and checks `text-overlay.mov` keeps transparency

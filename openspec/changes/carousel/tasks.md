@@ -21,3 +21,4 @@
 - [ ] 3.2 It needs rendered slides and records each PNG's hash
 - [ ] 3.3 Changing a slide's text, image, crop or layout undoes the approval; a look change doesn't
 - [ ] 3.4 The make-shorts skill: write, check and fix, render, then stop for the user
+- [ ] 3.5 The verify skill: a `slides` flow that walks `carousel set`, `carousel check` and `carousel render`, looks at each slide, and checks going from 10 slides to 6 leaves none behind; approved carousels are built in memory

@@ -21,3 +21,4 @@
 - [ ] 3.2 The starting set: `bold-outline`, `boxed`, `photo-bottom`, `photo-top`, `text-only`, `cover-hook`
 - [ ] 3.3 Reference pictures for each layout, checked in tests
 - [ ] 3.4 A fork's layouts in the data folder's `layouts/`, never with a shipped name; `layout check` with sample text in every size
+- [ ] 3.5 The verify skill: a `look` flow with a sandbox `brand.json` and fonts that renders offline and checks the missing-font error and `layout check`; `font add --google` gets a URL override pointed at the dead port, or stays `not walked`

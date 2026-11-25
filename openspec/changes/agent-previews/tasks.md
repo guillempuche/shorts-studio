@@ -23,3 +23,4 @@
 - [ ] 3.4 Fixes stored apart from the transcript; dropped and reported when it changes; included in `captions.srt`
 - [ ] 3.5 `slide set --slide N`, under the carousel's limits
 - [ ] 3.6 The make-shorts skill: preview, check, fix, then render
+- [ ] 3.7 The verify skill: a `preview` flow that checks MCP returns the picture itself and looks at it, and walks `draft check`, `caption fix` and `caption break` on a sandbox post

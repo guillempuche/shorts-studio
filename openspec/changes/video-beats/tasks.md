@@ -24,3 +24,4 @@
 
 - [ ] 3.1 Test clips: rotated, 60 fps, variable frame rate, HDR (HLG, Dolby Vision 8.4 and 5), landscape, 720p, a 10-minute 4K file, shorter than the beat
 - [ ] 3.2 Measure a draft with 10 clip beats against 10 picture beats: time and memory
+- [ ] 3.3 The verify skill: a `clips` flow on the test clips of 3.1, added to its `sample-media.sh`, that looks at the crop of each clip beat and checks the `missing-tool` error with an ffmpeg without `zscale` first on `PATH`
