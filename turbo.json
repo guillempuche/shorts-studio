@@ -7,6 +7,9 @@
     "test": {
       "outputs": []
     },
+    "//#test:scripts": {
+      "outputs": []
+    },
     "test:integration": {
       "cache": false
     }

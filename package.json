@@ -14,7 +14,9 @@
     "prepare": "lefthook install",
     "schemas": "node scripts/schemas.ts && biome format --write schemas",
     "skills:sync": "node scripts/skills-sync.ts",
-    "test": "turbo run test",
+    "verify:flows": "node scripts/verify-flows.ts",
+    "test": "turbo run test test:scripts",
+    "test:scripts": "vitest run --config scripts/vitest.config.ts",
     "test:integration": "turbo run test:integration"
   },
   "devDependencies": {

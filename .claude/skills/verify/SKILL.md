@@ -18,19 +18,14 @@ Tests and types pass on changes that still fail when used. Run what changed the 
 
 ## 1. Which flows
 
-List what the branch changes: `git diff --name-only origin/main...` plus `git status --short`. Walk every flow the paths name, and also what the change adds that no flow describes yet.
+```bash
+pnpm verify:flows            # against origin/main; pass another base to compare with it
+```
 
-| Changed path                                     | Flow       | Walk                                                                                                                                                                                |
-| ------------------------------------------------ | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/usecases/src/operations/`, `apps/cli/` | `cli`      | The command's `--help`, then the command on a sandbox post, with and without `--json`. Check the output, the [exit code](../../../docs/architecture.md#exit-codes) and `nextSteps`. |
-| `packages/usecases/src/operations/`, `apps/mcp/` | `mcp`      | `tools/list` shows the tool and its schema; `tools/call` on a sandbox post gives what the CLI's `--json` gives.                                                                     |
-| `packages/providers/`                            | `provider` | The command that uses it with `--dry-run`, then for real against the dead port: it fails with the error and `fix` it should, and spends nothing.                                    |
-| `packages/domain/`, render code                  | `render`   | `beat plan` and `draft render` on a sandbox post; extract frames and look at them.                                                                                                  |
-| A schema (`post.json`, config, brand)            | `schema`   | `pnpm schemas` leaves nothing uncommitted; `schema show` prints the new field.                                                                                                      |
-| `.agents/skills/` naming commands or flags       | `skill`    | Every command and flag the skill names exists in `--help` today.                                                                                                                    |
-| Docs, OpenSpec, CI, a refactor no user sees      | none       | Write `No flow: <reason>` and go to step 5.                                                                                                                                         |
+It prints the flows of [`scripts/verify-flows.ts`](../../../scripts/verify-flows.ts) that the branch's changes need (commits, uncommitted work and new files), each with what to walk. Walk every one, and also what the change adds that no flow describes yet. Exit codes are in [docs/architecture.md](../../../docs/architecture.md#exit-codes).
 
-A change that adds a kind of output or a command adds its flow to this table in the same PR. A flow that takes more than a few lines goes in `references/<flow>.md`, and its row says when to read it.
+- **Nothing printed** (docs, OpenSpec, CI, tests, a refactor no user sees): write `No flow: <reason>` and go to step 5.
+- **The change adds a command or a kind of output:** add its flow to the map in the same PR. Its test fails while a file under `apps/`, `packages/` or `bin/` belongs to no flow. A flow that takes more than a few lines to walk goes in `references/<flow>.md`, linked from here with when to read it.
 
 ## 2. Set up the sandbox
 
@@ -65,7 +60,7 @@ A step that can't be walked here is `not walked`, with the reason. It is never `
 
 ## 5. Write `## Verification`
 
-The `pr` skill puts this section in the PR body as it is, in place of its own `## Verification`.
+The `pr` skill puts this section in the PR body as it is, in place of its own `## Verification`. The Verification workflow checks it on every pull request with `scripts/check-verification.ts`, so keep its shape exactly. To check it before pushing: `PR_BODY="$(cat body.md)" node scripts/check-verification.ts`.
 
 ```markdown
 ## Verification
