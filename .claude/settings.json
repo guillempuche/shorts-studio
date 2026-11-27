@@ -33,6 +33,7 @@
   "claudeMdExcludes": ["**/docs/vendors/**"],
   "enabledPlugins": {
     "commit@ai-standards": true,
+    "plan-ship@ai-standards": true,
     "pr@ai-standards": true,
     "readability-improver@ai-standards": true,
     "test-bdd@ai-standards": true

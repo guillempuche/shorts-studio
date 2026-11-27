@@ -1,7 +1,7 @@
 # Codex settings for this repository. Codex reads this file only in a folder you've marked as
 # trusted. Setup steps: docs/getting-started.md#codex.
 
-# The ai-standards plugin marketplace: test-bdd, commit and pr. Fetch it with
+# The ai-standards plugin marketplace: test-bdd, commit, pr and plan-ship. Fetch it with
 # `codex plugin marketplace upgrade`. If that finds no Git marketplaces, run
 # `codex plugin marketplace add guillempuche/ai-standards` once.
 [marketplaces.ai-standards]
@@ -15,6 +15,9 @@ enabled = true
 enabled = true
 
 [plugins."pr@ai-standards"]
+enabled = true
+
+[plugins."plan-ship@ai-standards"]
 enabled = true
 
 # The MCP servers Claude Code reads from .mcp.json; keep both lists in step.

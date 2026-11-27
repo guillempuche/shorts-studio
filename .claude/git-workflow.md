@@ -27,6 +27,13 @@ roles:
   code-review: code-review
   readability: readability-improver:readability-improver
   security: security-review
+
+blast-radius:
+  - Spending (packages/providers/, the ledger, money and caps, the paid operations) - say whether a run can now cost more, reserve twice, or skip its dry run.
+  - The user's decisions (inputs.ts, context.ts, script approve, post review) - say whether an agent's shell or MCP could now get past the terminal check.
+  - Keys and the Keychain - say whether a key could now be printed, logged, or read when it was unset.
+  - Releases and dependencies (.github/, bin/, flake.nix, the lockfile, the CLI version) - say what changes for someone who installs the next release.
+  - Agent rules and verification (AGENTS.md, .agents/, .claude/, scripts/verify-flows.ts, scripts/check-verification.ts) - say what agents now do differently, or what verification no longer catches.
 ---
 
 Settings for the `commit` and `pr` skills. Formatting runs in the lefthook pre-commit hook, so no formatter is listed. Changes under `openspec/` are `docs` with the scope `openspec`.
