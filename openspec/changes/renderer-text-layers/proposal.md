@@ -1,5 +1,7 @@
 # Text layers with Takumi
 
+Builds on: nothing
+
 ## Why
 
 Captions and the hook are ASS subtitles today. ASS can colour and fade text, but it can't make a caption pop in, put a shape behind a word, or lay out a carousel slide. Carousels and covers need text over pictures too, and they should look like the videos.

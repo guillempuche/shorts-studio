@@ -1,29 +1,22 @@
 # Source this, don't run it: `. .agents/skills/verify/scripts/sandbox.sh`
 #
 # Points shorts-studio at scratch folders, fake keys and a dead port, so a verify run spends
-# nothing and touches none of the user's posts, data or Keychain keys. The provider list comes
-# from the code (each `PaidService` id and each `KeySpec` env name), so a new provider is covered
-# without editing this file.
+# nothing and touches none of the user's posts, data or Keychain keys. The sandbox itself is
+# scripts/dev-sandbox.sh, which bin/shorts-studio uses in every worktree; this file gives it a
+# scratch folder of its own and says what it set. The provider list comes from the code, so a new
+# provider is covered without editing either file.
 
 repo="$(git rev-parse --show-toplevel)" || return 1
-providers="$repo/packages/providers/src"
 
+# A folder of its own, never a worktree's .sandbox/, because the run ends by deleting it.
 SANDBOX="${SANDBOX:-$(mktemp -d "${TMPDIR:-/tmp}/shorts-verify.XXXXXX")}" || return 1
-export SANDBOX
-export SHORTS_DATA_DIR="$SANDBOX/data" SHORTS_POSTS_DIR="$SANDBOX/posts"
-mkdir -p "$SHORTS_DATA_DIR" "$SHORTS_POSTS_DIR" "$SANDBOX/media"
+export SANDBOX SHORTS_SANDBOX=1 SHORTS_SANDBOX_DIR="$SANDBOX"
+checkout="$repo"
+. "$repo/scripts/dev-sandbox.sh" || return 1
+mkdir -p "$SANDBOX/media"
 
 # Node's fetch refuses port 9 before sending anything, so a provider call fails on this machine.
-for id in $(grep -ho 'PaidService = { id: "[a-z0-9-]*"' $(ls "$providers"/*.ts | grep -v "\.test\.ts$") | grep -o '"[a-z0-9-]*"' | tr -d '"'); do
-	variable="SHORTS_$(printf '%s' "$id" | tr 'a-z-' 'A-Z_')_URL"
-	export "$variable=http://127.0.0.1:9"
-	echo "verify sandbox: $variable=http://127.0.0.1:9"
-done
-
-# A fake value for every key, so nothing falls back to the user's Keychain.
-for key in $(grep -ho 'KeySpec = { env: "[A-Z0-9_]*"' $(ls "$providers"/*.ts | grep -v "\.test\.ts$") | grep -o '"[A-Z0-9_]*"' | tr -d '"'); do
-	export "$key=fake-verify-key"
-	echo "verify sandbox: $key set to a fake value"
-done
-
+env | grep '^SHORTS_[A-Z0-9_]*_URL=' | sed 's/^/verify sandbox: /'
+env | grep '=fake-sandbox-key$' | sed 's/=.*/ set to a fake value/; s/^/verify sandbox: /'
+echo "verify sandbox: Keychain lookups use the account $USER, which doesn't exist"
 echo "verify sandbox: posts and data under $SANDBOX"

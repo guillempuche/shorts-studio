@@ -1,0 +1,10 @@
+# Codex's local environment for this repository (the Codex app shows it in Settings, under
+# Environments). When Codex makes a worktree for a new chat it runs the setup script there. It
+# calls the script Claude Code's session hook calls too: scripts/worktree-hook.sh says what it
+# does. The SessionStart hook in .codex/hooks.json covers worktrees made any other way, once
+# Codex trusts the project's hooks.
+version = 1
+name = "shorts-studio"
+
+[setup]
+script = "sh scripts/worktree-hook.sh session-start --codex"

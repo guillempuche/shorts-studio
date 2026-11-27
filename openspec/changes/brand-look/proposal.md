@@ -1,5 +1,7 @@
 # Brand look: fonts and layouts
 
+Builds on: renderer-text-layers
+
 ## Why
 
 Captions, carousel slides and covers should look like one brand, on every machine. Today `config.json` names the caption font (`captions.font`, "Arial" by default), and each machine draws whatever font it has under that name. HyperFrames even swaps Arial for Inter on purpose. A name isn't enough: the look needs the font files themselves.

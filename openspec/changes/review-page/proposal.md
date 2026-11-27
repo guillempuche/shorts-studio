@@ -1,5 +1,7 @@
 # Review page
 
+Builds on: agent-previews, carousel
+
 ## Why
 
 To review a draft today, the user opens `draft.mp4` in a player, works out which beat is on screen from the times in `post show`, and types beat numbers into `post review`. Players like VLC or QuickTime don't notice when the agent renders again, so the user reopens files by hand. With several stories a day, this is the slowest part of the loop, and it's the part only the user can do.

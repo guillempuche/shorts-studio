@@ -5,12 +5,17 @@ pre-commit:
   commands:
     biome:
       glob: "*.{json,js,ts}"
-      run: node_modules/.bin/biome check --write --no-errors-on-unmatched --max-diagnostics=none {staged_files}
+      # A new worktree has no node_modules until its first session installs them.
+      run: |
+        [ -x node_modules/.bin/biome ] || { echo "↷ biome not installed here: skipping (pnpm install; CI will check)"; exit 0; }
+        node_modules/.bin/biome check --write --no-errors-on-unmatched --max-diagnostics=none {staged_files}
       stage_fixed: true
     skills:
       # .claude/skills holds copies of .agents/skills; refuse a commit where they differ.
       glob: "{.agents,.claude}/skills/**"
-      run: node scripts/skills-sync.ts --check
+      run: |
+        command -v node >/dev/null 2>&1 || { echo "↷ node unavailable: skipping the skills check (CI will check)"; exit 0; }
+        node scripts/skills-sync.ts --check
 # Slower checks run before a push, not on every commit, where they would get skipped.
 pre-push:
   parallel: true

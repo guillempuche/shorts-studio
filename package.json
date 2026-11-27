@@ -5,7 +5,7 @@
     "node": ">=26"
   },
   "scripts": {
-    "cli": "node apps/cli/src/main.ts",
+    "cli": "bin/shorts-studio",
     "check": "biome check . && syncpack lint",
     "check-links": "node scripts/check-links.ts",
     "check-types": "turbo run check-types && tsc --noEmit",

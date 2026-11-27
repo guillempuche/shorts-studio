@@ -26,6 +26,8 @@ client_secret*.json
 # Agents
 .claude/settings.local.json
 .claude/worktrees/
+# A worktree's scratch posts and data (scripts/dev-sandbox.sh).
+/.sandbox/
 
 # OS and editors
 .DS_Store

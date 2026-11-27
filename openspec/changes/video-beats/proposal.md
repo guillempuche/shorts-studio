@@ -1,5 +1,7 @@
 # Video beats
 
+Builds on: renderer-text-layers
+
 ## Why
 
 Every beat is one picture today, which ffmpeg zooms or pans. Posts will start using video too: the user's own footage, and AI clips from `clip animate` (voice-music-animate). Nothing says how a draft uses a clip yet. `post review --animate` marks beats, and voice-music-animate makes clips, but the draft, the CapCut export and the previews only know pictures. This change gives a beat a clip slot that every clip source fills the same way.

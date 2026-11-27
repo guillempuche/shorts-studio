@@ -44,6 +44,8 @@ You are responsible for following each platform's terms when you download and re
 
 ## Agents
 
+To build several changes at once, give each its own worktree and agent session: [Working in worktrees](worktrees.md).
+
 ### Claude Code
 
 - **MCP server:** in a clone, `.mcp.json` registers it. With an installed binary, point your client at `shorts-studio mcp serve`. Claude Code asks you once to approve the project's server. The server runs on your machine over stdio, so there is nothing to sign in to. Keys come from your environment or the Keychain. Paid tools (image generation and transcription) ask before every call, and approvals are denied (set in `.claude/settings.json`).

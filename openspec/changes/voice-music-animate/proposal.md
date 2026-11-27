@@ -1,5 +1,7 @@
 # Voice, music and animation
 
+Builds on: video-beats
+
 ## Why
 
 Posts without their own audio need a voice or music. An approved draft sometimes needs one moving shot, usually the hook.
