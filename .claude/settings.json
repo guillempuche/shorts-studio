@@ -31,6 +31,31 @@
     ]
   },
   "claudeMdExcludes": ["**/docs/vendors/**"],
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "exec sh \"$CLAUDE_PROJECT_DIR/scripts/worktree-hook.sh\" session-start --json",
+            "timeout": 600
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "mcp__shorts-studio__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "exec sh \"$CLAUDE_PROJECT_DIR/scripts/worktree-hook.sh\" mcp-guard",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  },
   "enabledPlugins": {
     "commit@ai-standards": true,
     "plan-ship@ai-standards": true,

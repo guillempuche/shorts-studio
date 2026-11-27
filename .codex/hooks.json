@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0; [ -f \"$root/scripts/worktree-hook.sh\" ] || exit 0; exec sh \"$root/scripts/worktree-hook.sh\" session-start --json --codex",
+            "timeout": 600,
+            "statusMessage": "Getting this checkout ready"
+          }
+        ]
+      }
+    ]
+  }
+}

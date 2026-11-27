@@ -11,7 +11,7 @@ Tests and types pass on changes that still fail when used. Run what changed the 
 
 ## Gotchas
 
-- **Never unset a key to test "missing key".** The CLI then falls back to the user's real Keychain key. Set `USER` to an account that doesn't exist as well.
+- **Never unset a key to test "missing key".** The CLI then falls back to the Keychain. `sandbox.sh` sets `USER` to an account that doesn't exist, so the lookup finds nothing; keep it that way.
 - **Commands that record the user's decision are theirs.** Every operation that calls `requireUser` (`grep -rn "requireUser(" packages/usecases/src/operations`) refuses in an agent's shell. Never work around that with a pseudo-terminal. Build the state in memory (step 3) or mark the step `not walked: needs the user`.
 - **A paid provider without a dead port isn't safe to call.** `doctor` must show a `SHORTS_<ID>_URL … 127.0.0.1:9` warning for every paid provider the change touches. If one is missing, the provider has no `PaidService` id or no URL override: fix the provider, or leave its step `not walked`.
 - **Anything that writes outside `$SANDBOX`** (a cache folder, a vault, a download) must be pointed into it first, or its step is `not walked`.
@@ -44,7 +44,7 @@ bin/shorts-studio doctor
 For each step: do it, look, and write down what you saw, not what you expected.
 
 - **CLI:** keep the command, the exit code and the part of the output that proves the step, never a whole JSON body.
-- **MCP:** start `bin/shorts-studio mcp serve` in the sandbox's shell and send JSON-RPC lines on stdin: `initialize`, `notifications/initialized`, `tools/list`, `tools/call`.
+- **MCP:** start `bin/shorts-studio mcp serve` in the sandbox's shell, write its process id to `$SANDBOX/mcp.pid` (`echo $! > "$SANDBOX/mcp.pid"`: the next command's shell won't know `$!`), and send JSON-RPC lines on stdin: `initialize`, `notifications/initialized`, `tools/list`, `tools/call`.
 - **Spending commands:** `--dry-run` first and show the estimate; the real run only against the dead port.
 - **States past the user's decision:** build the post in memory with `packages/usecases/src/test/{context,posts,fakes}.ts`, from a scratch `.ts` in `$SANDBOX` run with `node`.
 - **Pictures and video:** look at every picture the change makes. For a video, extract a frame per beat (`ffmpeg -ss <t> -i draft.mp4 -frames:v 1 frame-<n>.png`) and check that the text is placed and readable, nothing is cut off, and the motion is the one expected. Pictures stay in `$SANDBOX`, never in a commit.
@@ -92,4 +92,4 @@ The `pr` skill puts this section in the PR body as it is, in place of its own `#
 
 ## 6. Leave nothing running
 
-Stop any `mcp serve` you started (`pkill -f 'shorts-studio mcp serve'`), check with `pgrep -f`, and delete `$SANDBOX`.
+Stop the `mcp serve` you started, and only that one: `kill "$(cat "$SANDBOX/mcp.pid")"`. A pattern for `pkill` would also stop other sessions' servers. Then delete `$SANDBOX`.
