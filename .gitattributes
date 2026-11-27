@@ -1,2 +1,12 @@
 * text=auto eol=lf
 docs/vendors/** linguist-vendored
+
+# Lines two branches add under the same heading are both kept when one is rebased on the other,
+# so parallel worktrees don't conflict there (docs/worktrees.md).
+CHANGELOG.md merge=union
+
+# Files nobody writes by hand: GitHub collapses them in reviews.
+.claude/skills/** linguist-generated
+pnpm-lock.yaml linguist-generated
+flake.lock linguist-generated
+schemas/*.json linguist-generated

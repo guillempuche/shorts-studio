@@ -259,13 +259,15 @@ const envOverrides = <S extends Schema.Codec<unknown, unknown>>(
 
 /**
  * `SHORTS_` variables that aren't settings: the folders, a provider's address
- * (`SHORTS_FAL_URL`), and the installer's.
+ * (`SHORTS_FAL_URL`), the installer's, and the dev sandbox's (`scripts/dev-sandbox.sh`).
  */
 const NOT_SETTINGS = new Set([
 	"SHORTS_DATA_DIR",
 	"SHORTS_POSTS_DIR",
 	"SHORTS_INSTALL_DIR",
 	"SHORTS_VERSION",
+	"SHORTS_SANDBOX",
+	"SHORTS_SANDBOX_DIR",
 ]);
 const URL_VARIABLE = /^SHORTS_([A-Z0-9]+(?:_[A-Z0-9]+)*)_URL$/;
 

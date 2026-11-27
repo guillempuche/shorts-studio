@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir } from "@shorts-studio/usecases/test/context";
 import { DateTime, Redacted } from "effect";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { elapsedSeconds, makeContext, processStartedAt } from "./node.ts";
 
 describe("makeContext", () => {
@@ -375,8 +375,8 @@ describe("makeContext", () => {
 		expect(ctx.capsFrom.dailyUsd).toBe("default");
 	});
 
-	it("should not report the variables that aren't settings: folders, addresses and the installer's", () => {
-		// GIVEN the folders, a provider's address and the installer's variables
+	it("should not report the variables that aren't settings: folders, addresses, the installer's and the sandbox's", () => {
+		// GIVEN the folders, a provider's address, the installer's and the dev sandbox's variables
 		// WHEN the context is made
 		const ctx = makeContext({
 			SHORTS_DATA_DIR: join(tempDir(), "data"),
@@ -385,6 +385,8 @@ describe("makeContext", () => {
 			SHORTS_FISH_AUDIO_URL: "http://127.0.0.1:9",
 			SHORTS_INSTALL_DIR: "/opt/shorts-studio",
 			SHORTS_VERSION: "0.1.0",
+			SHORTS_SANDBOX: "1",
+			SHORTS_SANDBOX_DIR: "/tmp/verify-run",
 		});
 
 		// THEN nothing is reported
@@ -447,6 +449,36 @@ describe("makeContext", () => {
 		expect(String(key)).not.toContain("from-env");
 		expect(JSON.stringify({ key })).not.toContain("from-env");
 	});
+
+	it.runIf(process.platform === "darwin")(
+		"should look a key up in the Keychain under the account USER names",
+		async () => {
+			// GIVEN a fake `security` that records what it's asked and finds nothing
+			const bin = tempDir();
+			const asked = join(bin, "asked");
+			writeFileSync(
+				join(bin, "security"),
+				`#!/bin/sh\nprintf '%s\\n' "$@" > "${asked}"\nexit 44\n`,
+				{ mode: 0o755 },
+			);
+			vi.stubEnv("PATH", `${bin}:${process.env["PATH"]}`);
+			onTestFinished(() => {
+				vi.unstubAllEnvs();
+			});
+			// AND the dev sandbox's account, with the key unset
+			const ctx = makeContext({ SHORTS_DATA_DIR: "/d", USER: "shorts-sandbox" });
+
+			// WHEN the key is asked for
+			const key = await ctx.secret({ env: "FAL_KEY", keychain: "fal-key" });
+
+			// THEN the Keychain was asked for that account, so the real user's keys stay out of reach
+			expect(readFileSync(asked, "utf8").split("\n")).toEqual(
+				expect.arrayContaining(["-a", "shorts-sandbox", "-s", "fal-key"]),
+			);
+			// AND nothing was found
+			expect(key).toBeUndefined();
+		},
+	);
 
 	it("should name the marker of the agent whose shell it runs in", () => {
 		// GIVEN an agent's marker in the environment, and another environment without it
