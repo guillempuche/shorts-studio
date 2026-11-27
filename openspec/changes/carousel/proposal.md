@@ -1,5 +1,7 @@
 # Carousels
 
+Builds on: renderer-text-layers, brand-look
+
 ## Why
 
 Carousels are the other daily format: 5–10 pictures that people swipe through, each with a line or two of text over an image. A carousel tells its post's story with the post's own images. The agent writes and checks it, and the user, who guides the story, reviews it like a draft.

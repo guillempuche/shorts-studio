@@ -1,5 +1,7 @@
 # Attempt history and the posts repository
 
+Builds on: nothing
+
 ## Why
 
 Images, clips, voices and music get made many times before one is kept, often with different models for the same job. Today a new attempt overwrites the old file, and only the cost is logged, so there is no way to see what was tried, compare models side by side, go back to an earlier attempt, or learn which prompts and models work.

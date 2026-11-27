@@ -1,5 +1,7 @@
 # Daily loop
 
+Builds on: renderer-text-layers, brand-look
+
 ## Why
 
 Five posts a day only works if the agent can run the whole loop from one skill. The rough edges only show up in real use.

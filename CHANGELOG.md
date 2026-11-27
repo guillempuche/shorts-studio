@@ -6,6 +6,7 @@ Notable changes, newest first. The release workflow publishes each version's sec
 
 ### Added
 
+- Build several changes at once in git worktrees ([docs/worktrees.md](docs/worktrees.md)). In a worktree, `bin/shorts-studio` runs in a sandbox: scratch posts, fake keys, paid providers unreachable. Opening a session there installs the packages and says which change it builds, and Claude Code refuses the `shorts-studio` MCP tools, which would run the main checkout's code.
 - Install with `nix run github:guillempuche/shorts-studio` or native binaries (`install.sh`, `install.ps1`).
 - `doctor` and `schema show`.
 - Run one command on several posts with `--post a,b`, `--day` or `--in-stage`.

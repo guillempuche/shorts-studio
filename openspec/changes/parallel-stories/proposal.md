@@ -1,5 +1,7 @@
 # Parallel stories
 
+Builds on: nothing
+
 ## Why
 
 The user works on several stories at once, often with one agent session per story. The pieces are partly there:

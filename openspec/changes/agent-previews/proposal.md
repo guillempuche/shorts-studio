@@ -1,5 +1,7 @@
 # Agent previews and fixes
 
+Builds on: renderer-text-layers, brand-look
+
 ## Why
 
 An agent working on a post today can only render the whole draft (about 25 s) and read JSON. It can't see what it made, and to fix one word it changes inputs and renders everything again. A good feedback loop needs three things: a picture of exactly what's being judged in under a second, problems reported as data, and edits that touch only what the feedback names.
